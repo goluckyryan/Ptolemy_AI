@@ -1,0 +1,127 @@
+Input File: test_input.txt
+Angle Range: 0 - 180 step 5
+Parsing generated input file: test_input.txt.in
+Running DWBA calculation...
+Kinematics:
+Incoming: k=1.31091 eta=0.704348 Ecm=18.8434
+Outgoing: k=1.07 eta=0.451623 Ecm=24.1675
+=================================================================
+        PROJECTILE BOUND STATE PARAMETERS
+E = -2.2240 MEV     KAPPA = 0.23144
+ PROJECTILE MASS = 1.01 AMU     TARGET MASS = 1.01 AMU     REDUCED MASS = 468.90 MEV/C**2
+ L = 0  N = 0
+ POTENTIAL: V=72.1500 R0=1.2500 A=0.6500
+            VSO=6.0000 RSO0=1.2500 ASO=0.6500
+            RC0=1.2500
+
+        TARGET BOUND STATE PARAMETERS
+E = -7.5487 MEV     KAPPA = 0.59386
+ PROJECTILE MASS = 1.01 AMU     TARGET MASS = 32.97 AMU     REDUCED MASS = 909.58 MEV/C**2
+ L = 2  N = 0
+ POTENTIAL: V=50.0000 R0=1.2500 A=0.6500
+            VSO=6.0000 RSO0=1.2500 ASO=0.6500
+            RC0=1.2500
+
+        OPTICAL MODEL SCATTERING FOR THE INCOMING CHANNEL
+E LAB = 20.0000 MEV
+ POTENTIAL: V=89.7186 R0=1.1496 A=0.7594
+            VI=2.3480 RI0=1.3361 AI=0.5342
+            VSI=0.0000 RSI0=0.0000 ASI=0.0000
+            VSO=3.5570 RSO0=0.9720 ASO=1.0110
+            RC0=1.3030
+
+        OPTICAL MODEL SCATTERING FOR THE OUTGOING CHANNEL
+ POTENTIAL: V=51.0880 R0=1.1788 A=0.6728
+            VI=2.2586 RI0=1.1788 AI=0.6728
+            VSI=0.0000 RSI0=0.0000 ASI=0.0000
+            VSO=5.2979 RSO0=0.9857 ASO=0.5900
+            RC0=1.3008
+=================================================================
+Bound State Calculation: E=-7.5487 MeV, L=2, J=1.5000, MatchR=6.0000 fm, mu=909.5820, factor=0.0467
+BS Iter 0: V=50.0000 Nodes=1 Diff=1.9813
+Final Bound State V: 46.4494 MeV
+BS Final: V=46.4494 Norm=0.0000 MaxAmp=0.6476
+Bound State Calculation: E=-2.2240 MeV, L=0, J=0.5000, MatchR=3.2000 fm, mu=468.9037, factor=0.0241
+BS Iter 0: V=72.1500 Nodes=0 Diff=-0.2575
+BS Iter 50: V=67.7314 Nodes=0 Diff=-0.1174
+BS Iter 100: V=65.5798 Nodes=0 Diff=-0.0608
+BS Iter 150: V=64.4352 Nodes=0 Diff=-0.0332
+BS Iter 200: V=63.8022 Nodes=0 Diff=-0.0186
+BS Iter 250: V=63.4453 Nodes=0 Diff=-0.0106
+BS Iter 300: V=63.2420 Nodes=0 Diff=-0.0060
+BS Iter 350: V=63.1255 Nodes=0 Diff=-0.0035
+BS Iter 400: V=63.0585 Nodes=0 Diff=-0.0020
+BS Iter 450: V=63.0199 Nodes=0 Diff=-0.0012
+Final Bound State V: 62.9977 MeV
+BS Final: V=62.9977 Norm=0.0000 MaxAmp=0.5106
+Target BS: Binding=7.5487 Norm=(0.0000,0.0000)
+Projectile BS: Binding=2.2240 Norm=(0.0000,0.0000)
+Calculating Transfer Integrals...
+WavElj Debug: R_last=30.0000 R_prev=29.9000 k=1.3109 eta=0.7043 rho_last=39.3274
+WavElj Debug: R_last=30.0000 R_prev=29.9000 k=1.0700 eta=0.4516 rho_last=32.1000
+Calculating Cross Sections...
+Transfer S-Matrix:
+La  Lb  Re(S)        Im(S)        Abs(S)
+  0   2 0.0000e+00 0.0000e+00 0.0000e+00
+  1   1 6.5372e+03 -6.5372e+03 9.2449e+03
+  1   2 0.0000e+00 0.0000e+00 0.0000e+00
+  1   3 -1.1194e+03 1.1194e+03 1.5831e+03
+  2   0 4.8061e+02 6.5642e+02 8.1355e+02
+  2   1 -1.0524e+03 -1.0524e+03 1.4883e+03
+  2   2 0.0000e+00 0.0000e+00 0.0000e+00
+  2   3 2.6679e+04 2.6679e+04 3.7730e+04
+  2   4 4.4582e+03 1.1146e+04 1.2004e+04
+  3   1 8.1452e+04 8.1452e+04 1.1519e+05
+  3   2 0.0000e+00 0.0000e+00 0.0000e+00
+  3   3 8.6832e+04 8.6832e+04 1.2280e+05
+  3   4 4.2066e+04 1.0517e+05 1.1327e+05
+  3   5 2.5026e+05 2.1014e-305 2.5026e+05
+  4   2 0.0000e+00 0.0000e+00 0.0000e+00
+  4   3 6.9330e+04 -1.3096e+05 1.4818e+05
+  4   4 5.6343e+03 -4.5470e+03 7.2402e+03
+  4   5 2.6713e+04 8.6818e+04 9.0835e+04
+  4   6 -8.9040e+02 -1.6621e+04 1.6645e+04
+  5   3 -2.1708e+05 6.5123e+05 6.8645e+05
+  5   4 -1.5777e+05 1.7749e+05 2.3748e+05
+  5   5 1.1262e+05 2.2524e+05 2.5182e+05
+  5   6 -1.4361e+02 -6.4623e+02 6.6200e+02
+  5   7 4.5755e+04 9.1510e+04 1.0231e+05
+Angle (deg)   dSigma/dOmega (mb/sr)
+0.0           0.0000e+00
+5.0           0.0000e+00
+10.0           0.0000e+00
+15.0           0.0000e+00
+20.0           0.0000e+00
+25.0           0.0000e+00
+30.0           0.0000e+00
+35.0           0.0000e+00
+40.0           0.0000e+00
+45.0           0.0000e+00
+50.0           0.0000e+00
+55.0           0.0000e+00
+60.0           0.0000e+00
+65.0           0.0000e+00
+70.0           0.0000e+00
+75.0           0.0000e+00
+80.0           0.0000e+00
+85.0           0.0000e+00
+90.0           0.0000e+00
+95.0           0.0000e+00
+100.0           0.0000e+00
+105.0           0.0000e+00
+110.0           0.0000e+00
+115.0           0.0000e+00
+120.0           0.0000e+00
+125.0           0.0000e+00
+130.0           0.0000e+00
+135.0           0.0000e+00
+140.0           0.0000e+00
+145.0           0.0000e+00
+150.0           0.0000e+00
+155.0           0.0000e+00
+160.0           0.0000e+00
+165.0           0.0000e+00
+170.0           0.0000e+00
+175.0           0.0000e+00
+180.0           0.0000e+00
+Calculation complete.
