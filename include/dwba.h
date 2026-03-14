@@ -26,6 +26,7 @@ struct Channel {
   double eta; // Coulomb parameter
   double mu;  // Reduced mass
   ChannelPotential Pot;
+  int JSPS = 1;  // 2*spin of projectile (deuteron=2, proton=1)
 
   // Wave functions
   std::vector<std::complex<double>> WaveFunction; // Radial wave function
@@ -57,6 +58,7 @@ public:
   void SetReaction(const std::string &target, const std::string &projectile,
                    const std::string &ejectile, const std::string &recoil);
   void SetEnergy(double Elab);
+  void SetProjectileWFFile(const std::string &filename, double grid_h, double spam);
   void SetExcitation(double Ex);
   void SetAngles(double min, double max, double step);
   void SetIncomingPotential(const ChannelPotential &pot);
@@ -93,15 +95,21 @@ private:
   std::vector<double> ThetaWeights;
 
   // Transfer S-matrix elements (indexed by La)
-  // We might need a more complex structure if we want to store by (La, Lb).
-  // For now, let's store a struct or map?
-  // Or just a vector of structs {La, Lb, S}.
   struct TransferSMatrixElement {
-    int La;
-    int Lb;
+    int Lx;
+    int Li;
+    int Lo;
+    int JPI;  // 2*J_incoming (doubled)
+    int JPO;  // 2*J_outgoing (doubled)
     std::complex<double> S;
   };
   std::vector<TransferSMatrixElement> TransferSMatrix;
+
+  // Projectile WF table (optional: loaded from Ptolemy-output file)
+  std::vector<double> ProjectileWFTable;
+  double ProjectileWFGridH = 0.0;
+  double ProjectileWFSpam  = 1.0;
+  bool   ProjectileWFLoaded = false;
 
   // Methods corresponding to Fortran subroutines
   void WavSet(Channel &ch);

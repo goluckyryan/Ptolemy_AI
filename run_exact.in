@@ -1,0 +1,11 @@
+reset
+reaction: 33Si(2H,1H)34Si
+elab: 20
+qvalue: 5.3241
+excitation: 0
+incoming: v=89.7186 r0=1.14958 a=0.759415 vi=2.348 ri0=1.33608 ai=0.534247 vsi=10.218 rsi0=1.38139 asi=0.729867 vso=3.557 rso0=0.972 aso=1.011 rc0=1.303
+outgoing: v=50.639 r0=1.179 a=0.673 vi=2.397 ri0=1.179 ai=0.673 vsi=8.142 rsi0=1.291 asi=0.536 vso=5.274 rso0=0.986 aso=0.590 vsoi=-0.128 rsoi0=0.986 asoi=0.590 rc0=1.301
+boundstate: n=0 l=2 j=1.5 binding=7.54866
+projectilews: n=0 l=0 j=0.5 binding=2.2246
+angles: min=0 max=30 step=5
+end

@@ -130,6 +130,18 @@ void PtolemyParser::ParseLine(const std::string &line, DWBA &dwba) {
           pot.RSO0 = val;
         else if (key == "aso")
           pot.ASO = val;
+        else if (key == "vsoi")
+          pot.VSOI = val;
+        else if (key == "rsoi0")
+          pot.RSOI0 = val;
+        else if (key == "asoi")
+          pot.ASOI = val;
+        else if (key == "vsi")
+          pot.VSI = val;
+        else if (key == "rsi0")
+          pot.RSI0 = val;
+        else if (key == "asi")
+          pot.ASI = val;
         else if (key == "rc0")
           pot.RC0 = val;
       }
@@ -138,34 +150,50 @@ void PtolemyParser::ParseLine(const std::string &line, DWBA &dwba) {
       dwba.SetIncomingPotential(pot);
     else
       dwba.SetOutgoingPotential(pot);
-  } else if (command == "boundstate") {
+  } else if (command == "qvalue") {
+    // Stored via SetEnergy after energy is set; no-op here as kinematics
+    // computed in SetEnergy using Q from reaction parser or explicit qvalue.
+    // For now accept and ignore — Q is set by SetEnergy from reaction string.
+    // TODO: pass Q explicitly to DWBA if needed.
+  } else if (command == "boundstate" || command == "projectilews") {
     int n = 0, l = 0;
     double j = 0.5, binding = 0;
-    std::string part;
-    while (ss >> part) {
-      if (part.find("n=") == 0)
-        n = std::stoi(part.substr(2));
-      if (part.find("l=") == 0)
-        l = std::stoi(part.substr(2));
-      if (part.find("j=") == 0)
-        j = std::stod(part.substr(2));
-      if (part.find("binding=") == 0)
-        binding = std::stod(part.substr(8));
-    }
-    // Assume this is Target Bound State (x in B)
-    // We need a potential for the bound state.
-    // Usually same geometry as Incoming or Outgoing?
-    // Or standard geometry.
-    // Let's use a standard geometry for now: r0=1.25, a=0.65.
+    // Bound state potential parameters (read from input)
     ChannelPotential pot;
-    pot.V = 50.0; // Initial guess
+    pot.V = 50.0;   // Initial guess — will be adjusted by bound state solver
     pot.R0 = 1.25;
     pot.A = 0.65;
     pot.VSO = 6.0;
-    pot.RSO0 = 1.25;
+    pot.RSO0 = 1.10;
     pot.ASO = 0.65;
-    pot.RC0 = 1.25;
+    pot.RC0 = 1.30;
+    pot.VI = 0; pot.RI0 = 0; pot.AI = 0;
+    pot.VSI = 0; pot.RSI0 = 0; pot.ASI = 0;
+    pot.VSOI = 0; pot.RSOI0 = 0; pot.ASOI = 0;
 
-    dwba.SetTargetBoundState(n, l, j, binding, pot);
+    std::string part;
+    while (ss >> part) {
+      size_t eq = part.find('=');
+      if (eq != std::string::npos) {
+        std::string key = part.substr(0, eq);
+        std::string valstr = part.substr(eq + 1);
+        if (key == "n")       n = std::stoi(valstr);
+        else if (key == "l")  l = std::stoi(valstr);
+        else if (key == "j")  j = std::stod(valstr);
+        else if (key == "binding") binding = std::stod(valstr);
+        else if (key == "v")   pot.V    = std::stod(valstr);
+        else if (key == "r0")  pot.R0   = std::stod(valstr);
+        else if (key == "a")   pot.A    = std::stod(valstr);
+        else if (key == "vso") pot.VSO  = std::stod(valstr);
+        else if (key == "rso0") pot.RSO0 = std::stod(valstr);
+        else if (key == "aso") pot.ASO  = std::stod(valstr);
+        else if (key == "rc0") pot.RC0  = std::stod(valstr);
+      }
+    }
+
+    if (command == "boundstate")
+      dwba.SetTargetBoundState(n, l, j, binding, pot);
+    else  // projectilews
+      dwba.SetProjectileBoundState(n, l, j, binding, pot);
   }
 }
