@@ -313,14 +313,17 @@ void DWBA::InelDc() {
   // where r_core is the core-core separation, evaluated at r_core = (RNCORE/RNSCAT) * rb
   // This is added per (ra,rb) in the inner loop for POST form.
   // Use integer mass numbers (A) for radius scaling, not masses in MeV
-  int A_a = Incoming.Projectile.A;   // deuteron: A=2
-  int A_b = Outgoing.Projectile.A;   // proton: A=1
-  int A_B = Outgoing.Target.A;       // 34Si: A=34
+  int A_A = Incoming.Target.A;       // 33Si: A=33  (AMBGA = target A)
+  int A_b = Outgoing.Projectile.A;   // proton: A=1  (AMB = ejectile b)
+  int A_B = Outgoing.Target.A;       // 34Si: A=34  (AMBGB = residual B)
   // BSPROD stripping/projectile-vertex: ISC=2 (outgoing channel)
-  // RNSCAT = R0_out * A_B^(1/3)   [outgoing p-B scattering radius]
-  // RNCORE = RNSCAT * (A_a^(1/3) + A_b^(1/3)) / (A_B^(1/3) + A_b^(1/3))
+  // Ptolemy BSSET (source.mor ~4829):
+  //   RNSCAT = RSCTS(2) = R0_out * A_B^(1/3)
+  //   RNCORE = RNSCAT * (AMBGA3 + AMB3) / (AMBGB3 + AMB3)
+  //         = RNSCAT * (A_A^(1/3) + A_b^(1/3)) / (A_B^(1/3) + A_b^(1/3))
+  // BUG FIX: previously used A_a (projectile=deuteron=2) instead of A_A (target=33Si=33)
   double RNSCAT_post = Outgoing.Pot.R0 * std::pow((double)A_B, 1.0/3.0);
-  double RNCORE_post = RNSCAT_post * (std::pow((double)A_a, 1.0/3.0) + std::pow((double)A_b, 1.0/3.0))
+  double RNCORE_post = RNSCAT_post * (std::pow((double)A_A, 1.0/3.0) + std::pow((double)A_b, 1.0/3.0))
                                    / (std::pow((double)A_B, 1.0/3.0) + std::pow((double)A_b, 1.0/3.0));
   double VOPT_post   = -Outgoing.Pot.V;  // negative of outgoing real depth (MeV)
   double AOPT_post   = Outgoing.Pot.A;
@@ -1023,7 +1026,7 @@ void DWBA::InelDc() {
               double VEFF = InterpolateV(PrjBS_ch.V_real, PrjBS_ch.StepSize,
                                          PrjBS_ch.NSteps, PrjBS_ch.MaxR, rp);
               if (std::abs(VEFF) > 1e-10) {
-                // Ptolemy RCORE formula
+                // Ptolemy RCORE formula (BSPROD source.mor ~line 4860)
                 double dS = S1 - S2;
                 double dT = T1 - T2;
                 double rcore2 = dS*dS*ra*ra + dT*dT*rb*rb + 2.0*dS*dT*ra*rb*x;
@@ -1199,9 +1202,10 @@ void DWBA::InelDc() {
         }
 
         // Store: (Lx, Li, Lo, JPI, JPO) — SFROMI will apply 9-J coupling
-        if (Lx==2 && (Li+Lo)<=6 && JPI<=4 && JPO<=5) {
-          std::printf("INELDC Li=%d Lo=%d Lx=%d JPI=%d JPO=%d |Int|=%.5e sfromi_norm=%.5e |elemS|=%.5e\n",
-            Li, Lo, Lx, JPI, JPO, std::abs(Integral), sfromi_norm, std::abs(Integral * sfromi_norm));
+        {
+          auto S_elem = Integral * sfromi_norm;
+          std::printf("INELDC Li=%d Lo=%d Lx=%d JPI=%d JPO=%d S=(%+.5e,%+.5e) |S|=%.5e sfromi=%.5e\n",
+            Li, Lo, Lx, JPI, JPO, S_elem.real(), S_elem.imag(), std::abs(S_elem), sfromi_norm);
         }
         TransferSMatrix.push_back({Lx, Li, Lo, JPI, JPO, Integral * sfromi_norm});
 
