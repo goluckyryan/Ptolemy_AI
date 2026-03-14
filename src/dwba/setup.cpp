@@ -181,6 +181,31 @@ void DWBA::SetProjectileWFFile(const std::string &filename, double grid_h, doubl
             << " fm, SPAM=" << spam << "\n";
 }
 
+void DWBA::SetProjectileWFFromFile(const std::vector<std::pair<double,double>>& wf_data,
+                                   double h_ext, double spam) {
+  if (wf_data.empty()) return;
+  // Interpolate onto uniform grid
+  int N = static_cast<int>(wf_data.back().first / h_ext) + 2;
+  ProjectileWFTable.assign(N, 0.0);
+  for (int I = 0; I < N; I++) {
+    double r = I * h_ext;
+    // Find bracket
+    int j2 = -1;
+    for (int k = 1; k < (int)wf_data.size(); k++) {
+      if (wf_data[k].first >= r) { j2 = k; break; }
+    }
+    if (j2 <= 0) { ProjectileWFTable[I] = wf_data[0].second; continue; }
+    int j1 = j2 - 1;
+    double frac = (r - wf_data[j1].first) / (wf_data[j2].first - wf_data[j1].first);
+    ProjectileWFTable[I] = wf_data[j1].second + frac*(wf_data[j2].second - wf_data[j1].second);
+  }
+  ProjectileWFGridH = h_ext;
+  ProjectileWFSpam = spam;
+  ProjectileWFLoaded = true;
+  std::cout << "Loaded projectile WF from parsed data: " << N << " points, h=" << h_ext
+            << " fm, SPAM=" << spam << "\n";
+}
+
 // ---------------------------------------------------------------
 // Calculate — main orchestration function
 // ---------------------------------------------------------------

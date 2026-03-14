@@ -64,7 +64,7 @@ void PtolemyParser::ParseLine(const std::string &line, DWBA &dwba) {
         dwba.SetProjectileBoundState(0, 0, 0.5, 2.224, pot);
       }
     }
-  } else if (command == "energy") {
+  } else if (command == "energy" || command == "elab") {
     double e;
     ss >> e;
     dwba.SetEnergy(e);
@@ -195,5 +195,35 @@ void PtolemyParser::ParseLine(const std::string &line, DWBA &dwba) {
       dwba.SetTargetBoundState(n, l, j, binding, pot);
     else  // projectilews
       dwba.SetProjectileBoundState(n, l, j, binding, pot);
+  } else if (command == "projectile_wf_file") {
+    // Read external projectile bound state wavefunction
+    // Format: projectile_wf_file: <path> h=<step> spam=<spectroscopic_amplitude>
+    std::string path;
+    ss >> path;
+    double h_ext = 0.0625;
+    double spam_ext = 1.0;
+    std::string part;
+    while (ss >> part) {
+      if (part.find("h=") == 0) h_ext = std::stod(part.substr(2));
+      if (part.find("spam=") == 0) spam_ext = std::stod(part.substr(5));
+    }
+    // Read the WF file: columns are (index, r, phi=u/r)
+    std::ifstream wffile(path);
+    if (!wffile.is_open()) {
+      std::cerr << "Warning: Cannot open projectile_wf_file: " << path << std::endl;
+    } else {
+      std::vector<std::pair<double,double>> wf_data;
+      std::string wfline;
+      while (std::getline(wffile, wfline)) {
+        std::stringstream wfss(wfline);
+        int idx; double r, phi;
+        if (wfss >> idx >> r >> phi) {
+          wf_data.push_back({r, phi});
+        }
+      }
+      if (!wf_data.empty()) {
+        dwba.SetProjectileWFFromFile(wf_data, h_ext, spam_ext);
+      }
+    }
   }
 }

@@ -2776,3 +2776,107 @@ into SFROMI with the correct 9-J weighting.
 
 3. Once dual-JP is working: revisit POST form vs PRIOR form for magnitude
 
+
+---
+
+## CalculateBoundState Validation (2026-03-14): PASS — details in test_subroutines/VALIDATION_bound.md
+
+### Summary
+- `CalculateBoundState` (bound.cpp) matches Ptolemy BOUND output to **< 0.003%** at all r
+- Tested: n in ³⁴Si 0d₃/₂ (E=-7.5354 MeV, V_sol=47.069 MeV) — perfect match
+- Tested: n in deuteron 0s₁/₂ (E=-2.225 MeV, V_sol=63.306 MeV) — Fortran↔C++ identical
+- Normalization: ∫φ²r²dr = 1.00000000 in both cases
+- Standalone Fortran re-implementation confirms C++ algorithm is correct
+- `CalculateKinematics` not separately tested here (requires DWBA class setup)
+
+## XSectn/SFROMI/BETCAL Validation (2026-03-14): PARTIAL PASS — details in test_subroutines/VALIDATION_xsectn.md
+
+### What Passed (C++ BETCAL + AMPCAL + XSECTN — injected S-matrix):
+- All 12 KOFFS TOTMX match Ptolemy to <0.04%
+- All 7 angles (0–30°) match Ptolemy to <0.02%
+- 0°=1.8634 (ref 1.863), 15°=2.5346 (ref 2.535), 30°=0.9049 (ref 0.905) mb/sr
+- BETCAL CG coefficients, Coulomb phases, sqrt_factorial: ALL CORRECT
+- AMPCAL PLM recurrence: CORRECT
+- XSECTN FMNEG × |F|² summation: CORRECT
+
+### What Failed (C++ SFROMI — full end-to-end):
+- `./dwba` gives 17.99 mb/sr at 0° vs 1.863 Ptolemy (9.66× excess)
+- **Bug A**: RACAH coefficient uses 1/√10 instead of 1/√20 (factor √2 error)
+- **Bug B**: Radial integral |Int| is 4.23× too large vs Fortran XIREAL/XIIMAG
+- Root cause: SFROMI normalization and/or GRDSET grid construction in C++ InelDc
+
+### Test file: test_subroutines/test_xsectn_cpp.cpp
+### Compiled and run: g++ -O2 -std=c++17 -o test_xsectn_cpp test_xsectn_cpp.cpp -lm
+
+## WavElj Validation (2026-03-14): CONDITIONAL PASS
+
+**Core wavelj.cpp (WavSet + WavElj) is correct:**
+- ✅ Numerov integrator, overflow/rescaling, Wronskian S-matrix extraction all match Ptolemy
+- ✅ Step-size convergence <0.1% (h=0.1 vs 0.05) for most partial waves
+- ✅ Unitarity |S|≤1 for all L=0–15
+- ✅ Outgoing p+34Si: L=7 |S|=0.975 vs Ptolemy 0.974 (0.14%), L=12 |S|=1.000 vs 0.9999 (0.01%)
+- ✅ Spin-orbit splitting (JP=2L±1) works correctly
+
+**Known bug in potential_eval.cpp (NOT wavelj.cpp):**
+- ❌ EvaluatePotential uses factor **4** for SO radial form; Ptolemy WOODSX uses **2**
+- This doubles spin-orbit coupling, causing ~1-6% |S| deviation for low L
+- Fix: change `VSO * 4.0 * (1.0/r) * deriv` → `VSO * 2.0 * (1.0/r) * deriv` in potential_eval.cpp
+
+Details in `test_subroutines/VALIDATION_wavelj.md`
+
+## InelDc Validation (2026-03-14): CONDITIONAL PASS — details in test_subroutines/VALIDATION_ineldc.md
+
+### Root Cause of 4.23× Transfer Integral Excess: PRIOR vs POST Vertex Form Mismatch
+
+- **Fortran**: IVRTEX=1 (POST form) → vertex = V_np(rp) × phi_P(rp), with phi_T(rx) as non-vertex WF
+- **C++ default** (#else, no USE_POST_FORM): PRIOR form → vertex = V_nA(rx) × phi_T(rx), with phi_P(rp)
+- **V_nA radius**: ~4.01 fm vs **V_np radius**: ~1.25 fm → PRIOR samples wider volume → larger integral
+- **Measured ratio**: PRIOR/POST ≈ 4.68 (simplified WFs) vs observed 4.23× → consistent
+- **Fix**: Define USE_POST_FORM at compile time, or make POST form the default
+
+### Structural Validation Results (all PASS):
+- Coordinate transform (S1, T1, S2, T2, JACOB) ✅
+- Integration measure (JACOB × ra × rb × u_a × u_b) ✅
+- Bound state convention (phi = u/r) ✅
+- A12 angular coupling (XN, XLAM, ThreeJ, signs) ✅
+- Phi integration (CUBMAP, adaptive PHI0, sin(phi) measure) ✅
+
+### Bug 9 Re-analysis: "Missing ri²·ro²" is NOT a bug (RETRACTED)
+
+Previous analysis claimed C++ was missing ri·ro in the measure. Re-analysis shows:
+- Fortran: RIROWTS = JACOB·ri·ro·weights, DW = u_a(ri)·u_b(ro), total = JACOB·ri·ro·u_a·u_b
+- C++: total = u_a(ra)·u_b(rb)·JACOB·ra·rb·WOW·DIFWT = JACOB·ra·rb·u_a·u_b  
+- Both WavElj (C++) and WAVELJ (Fortran) store u(r) (Numerov reduced WF), not chi(r) = u(r)/r
+- The measures are IDENTICAL — no missing factors
+- Bug 9 was a misanalysis: the reported 12.5× was actually the 4.23× prior/post vertex issue
+
+## SFROMI Bug A Investigation (2026-03-14): NO √2 NORMALIZATION ERROR FOUND
+
+### Task: Investigate claimed √2 error in RACAH/ATERM coefficient in SFROMI
+
+### Verification performed:
+1. **RACAH coefficient**: `RACAH(4,3,0,1,1,4) = W(2,3/2,0,1/2;1/2,2) = 1/√10 = 0.316228` — verified with sympy wigner_6j. **CORRECT in C++.**
+
+2. **TEMP_aterm**: `sqrt((JBIGB+1)/(JBIGA+1)) = sqrt((0+1)/(3+1)) = sqrt(1/4) = 0.5` — matches Ptolemy source.mor line 25631 exactly. Uses **nuclear spins** (J=3/2 for 33Si, J=0 for 34Si), NOT neutron j values. **CORRECT in C++.**
+
+3. **ATERM formula**: `ATERM = 0.5 * sqrt(5) * 0.97069 * 1.0 * 0.316228 = 0.34319` — matches Ptolemy computation. **CORRECT.**
+
+4. **ATERM sign flip**: `ITEST = JX-JBP+2*(LBP+LBT) = 1-1+2*(0+2) = 4, ITEST/2+1=3, MOD(3,2)=1 → flip sign`. **CORRECT.**
+
+5. **FACTOR_sfromi**: `2*sqrt(ka*kb/(Ea*Eb))` — matches Ptolemy comment "FACTOR = 2*SQRT(KI*KF/EI*EF)". **CORRECT.**
+
+6. **sfromi_norm**: `FACTOR * |ATERM| / sqrt(2*Li+1)` — matches Ptolemy `TEMP = FACTOR*ATERM(LXP+1)/DSQRT(2*LASI+1)`. **CORRECT.**
+
+7. **Phase factor**: `i^(Li+Lo+2*Lx+1)` — matches Ptolemy `ITEST = LASI+LASO+2*LXP+1`. **CORRECT.**
+
+8. **Double 9-J coupling in XSectn**: Statistical factors `sqrt((JPI+1)(JPO+1)(2*Lx+1)(JBP+1))` and 9-J symbols — matches Ptolemy SFROMI source.mor lines 29160-29210. **CORRECT.**
+
+### Current cross section comparison:
+- C++ 0° = 18.63 mb/sr vs Ptolemy 1.863 → ratio **10.0×** (exact factor 10)
+- S-matrix magnitudes: low-Li (0-4) ratio ~3.7-4.6×, high-Li (12-15) ratio ~0.4-1.0×
+- Phases shifted by ~π for all Li — characteristic of InelDc integral bug
+
+### Conclusion:
+**There is NO √2 normalization error in SFROMI/RACAH/ATERM.** The entire normalization chain in xsectn.cpp and the SFROMI-related code in ineldc.cpp correctly matches the Ptolemy Fortran source. The 10× excess in cross section is entirely due to **InelDc radial integral errors** (Bug B), not normalization coefficients.
+
+The claimed "1/√10 → 1/√20 factor √2 error" does not exist. The RACAH value 1/√10 = 0.316228 is mathematically correct for W(2, 3/2, 0, 1/2; 1/2, 2).

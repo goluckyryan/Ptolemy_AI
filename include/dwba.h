@@ -78,6 +78,8 @@ public:
                            const ChannelPotential &pot);
   void SetProjectileBoundState(int n, int l, double j, double bindingEnergy,
                                const ChannelPotential &pot);
+  void SetProjectileWFFromFile(const std::vector<std::pair<double,double>>& wf_data,
+                               double h_ext, double spam);
 
   // Main calculation
   void Calculate();

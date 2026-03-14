@@ -232,7 +232,8 @@ void DWBA::InelDc() {
       } else if (idx_i < (int)ProjectileWFTable.size()) {
         phi = ProjectileWFTable[idx_i];
       }
-      PrjBS_ch.WaveFunction[I] = std::complex<double>(phi * ProjectileWFSpam, 0.0);
+      // Do NOT multiply by SPAM here — SPAM is already in ATERM
+      PrjBS_ch.WaveFunction[I] = std::complex<double>(phi, 0.0);
     }
   }
 
@@ -379,25 +380,27 @@ void DWBA::InelDc() {
 
   // Clipped interpolation for plain phi (non-vertex side):
   // phi'(r) = phi_max for r < r_peak; phi(r) for r >= r_peak
+  // Ptolemy Pass 2 uses ITYPE=1 (PHI V PHI), NO clipping.
+  // The bound state WFs are phi=u/r, always positive for 0-node states.
   auto InterpolateClipped = [&](const std::vector<std::complex<double>> &wf,
-                                const std::vector<double> &grid,
+                                const std::vector<double> &/*grid*/,
                                 int nsteps, double stepsize, double maxr,
-                                double r, double phi_max, double r_peak) -> double {
-    if (r < r_peak) return phi_max;
+                                double r, double /*phi_max*/, double /*r_peak*/) -> double {
     if (r >= maxr || r < 0) return 0.0;
     double idx = r / stepsize;
     int ii = static_cast<int>(idx);
     if (ii >= nsteps - 1) return 0.0;
     double frac = idx - ii;
-    return std::abs(wf[ii].real() * (1.0 - frac) + wf[ii + 1].real() * frac);
+    return wf[ii].real() * (1.0 - frac) + wf[ii + 1].real() * frac;
   };
 
   // Clipped IVPHI interpolation for vertex product (V*phi at vertex side):
   // IVPHI'(r) = IVPHI_max for r < r_vert_peak; IVPHI(r) for r >= r_vert_peak
+  // InterpolateIVPHI: interpolate V(r)*phi(r) product WITHOUT clipping
+  // Ptolemy Pass 2 uses ITYPE=1 (PHI V PHI), no clipping.
   auto InterpolateIVPHI = [&](const std::vector<double> &ivphi,
                                double stepsize, int nsteps, double maxr,
-                               double r, double ivphi_max, double r_vert_peak) -> double {
-    if (r < r_vert_peak) return ivphi_max;
+                               double r, double /*ivphi_max*/, double /*r_vert_peak*/) -> double {
     if (r >= maxr || r < 0) return 0.0;
     double idx = r / stepsize;
     int ii = static_cast<int>(idx);
@@ -848,7 +851,7 @@ void DWBA::InelDc() {
           if (rp2 < 0) rp2 = 0;
           double rx = std::sqrt(rx2);
           double rp = std::sqrt(rp2);
-#ifdef USE_POST_FORM
+#ifndef USE_PRIOR_FORM
           {
             double phi_T  = InterpolateClipped(TgtBS_ch.WaveFunction, TgtBS_ch.RGrid,
                                                TgtBS_ch.NSteps, TgtBS_ch.StepSize,
@@ -891,7 +894,7 @@ void DWBA::InelDc() {
         WVWMAX_pre = std::max(WVWMAX_pre, bsprod_val(2.0, 2.0, 1.0));
         WVWMAX_pre = std::max(WVWMAX_pre, bsprod_val(3.0, 3.0, 1.0));
         WVWMAX_pre = std::max(WVWMAX_pre, bsprod_val(1.0, 1.0, 1.0));
-#ifdef USE_POST_FORM
+#ifndef USE_PRIOR_FORM
         // POST form WVWMAX: also sample ra=2*rb ridge (where rp→0)
         for (double rb_scan : {1.0, 1.5, 2.0, 2.5, 3.0})
           WVWMAX_pre = std::max(WVWMAX_pre, bsprod_val(2.0*rb_scan, rb_scan, 1.0));
@@ -994,7 +997,7 @@ void DWBA::InelDc() {
               //   where IVPHI_P = phi_P * V_np (clipped at its max)
               //   and phi_T' = phi_T clipped at its max
               // Then Vbx = 1.0 (already included in IVPHI)
-#ifdef USE_POST_FORM
+#ifndef USE_PRIOR_FORM
               // POST form: vertex at rp (USEPROJECTILE + USECORE, Ptolemy default NUCONL=3)
               // Ptolemy BSPROD NUCONL=3 formula (source.mor ~4640-4660):
               //   FPFT_nuconly = phi_T(rx) * [V_np(rp)*phi_P(rp)]
@@ -1004,52 +1007,52 @@ void DWBA::InelDc() {
               //   VEFF = V_np(rp)  [the vertex potential at rp]
               //   FACTOR = 1 + DELVNU / VEFF
               //   FPFT = FACTOR * FPFT_nuconly
+              // POST form: phi_T at rx, vertex V_np at rp
               double phi_T  = InterpolateClipped(TgtBS_ch.WaveFunction, TgtBS_ch.RGrid,
                                                  TgtBS_ch.NSteps, TgtBS_ch.StepSize,
                                                  TgtBS_ch.MaxR, rx, phi_T_max, r_T_peak);
-              // NUCONLY vertex: V_np(rp) * phi_P(rp) (clipped)
+              // NUCONLY vertex: V_np(rp) * phi_P(rp)
               double ivphi_P_nuconly = InterpolateIVPHI(IVPHI_P, h_common, NSteps_common,
                                                 h_common * NSteps_common, rp,
                                                 IVPHI_P_max, r_P_vert_peak);
-              // Ptolemy exact RCORE formula from source.mor:
-              // RCORE = sqrt(((S1-S2)*RA)^2 + ((T1-T2)*RB)^2 + 2*(S1-S2)*RA*(T1-T2)*RB*X)
-              double dS = S1 - S2;  // ≈ 0.9715
-              double dT = T1 - T2;  // ≈ 0.0572
-              double rcore2 = dS*dS*ra*ra + dT*dT*rb*rb + 2.0*dS*dT*ra*rb*x;
-              if (rcore2 < 0) rcore2 = 0;
-              double r_core = std::sqrt(rcore2);
-              // RSCAT = rb (IOUTSW=TRUE for stripping/projectile vertex, ISC=2)
-              double r_scat = rb;
-              // DELVNU = VOPT * (WS(r_core, RNCORE, AOPT) - WS(r_scat, RNSCAT, AOPT))
-              double fcore = 1.0 / (1.0 + std::exp((r_core - RNCORE_post) / AOPT_post));
-              double fscat = 1.0 / (1.0 + std::exp((r_scat - RNSCAT_post) / AOPT_post));
-              double DELVNU = VOPT_post * (fcore - fscat);  // VOPT_post < 0
-              // VEFF = V_np(rp) evaluated without clipping (actual vertex potential)
+              
+              // USECORE: Ptolemy BSPROD NUCONL=3 formula
+              // FACTOR = 1 + DELV/VEFF, where DELV = DELVNU (nuclear)
+              // FPFT = FACTOR * V_np(rp) * phi_P(rp) * phi_T(rx)
+              double ivphi_P;
               double VEFF = InterpolateV(PrjBS_ch.V_real, PrjBS_ch.StepSize,
                                          PrjBS_ch.NSteps, PrjBS_ch.MaxR, rp);
-              // Ptolemy FACTOR = 1 + DELVNU/VEFF; FPFT = FACTOR * FPFT_nuconly
-              // = (V_np + DELVNU) * phi_P  (algebraically)
-              // Implement directly to avoid division-by-zero when V_np(rp)→0:
-              // ivphi_P = phi_P(rp) * (V_np(rp) + DELVNU)
-              // For the clipping region (rp < r_P_vert_peak): phi_P is clipped to max,
-              // and V_np is at its max value; add DELVNU as-is.
-              // phi_P_at_rp uses unclipped InterpolateClipped (correct for rp>peak)
-              double phi_P_at_rp2 = InterpolateClipped(PrjBS_ch.WaveFunction, PrjBS_ch.RGrid,
-                                                       PrjBS_ch.NSteps, PrjBS_ch.StepSize,
-                                                       PrjBS_ch.MaxR, rp, phi_P_max, r_P_peak);
-              // For clipped region (rp < r_P_vert_peak): use IVPHI_P_max as V_np*phi_P,
-              // then add DELVNU*phi_P separately.
-              double ivphi_P;
-              if (rp < r_P_vert_peak) {
-                // In clipped region: IVPHI_P_max = V_np_max * phi_P_max
-                // Add DELVNU * phi_P_clipped (phi_P is at its max here)
-                ivphi_P = IVPHI_P_max + DELVNU * phi_P_max;
+              if (std::abs(VEFF) > 1e-10) {
+                // Ptolemy RCORE formula
+                double dS = S1 - S2;
+                double dT = T1 - T2;
+                double rcore2 = dS*dS*ra*ra + dT*dT*rb*rb + 2.0*dS*dT*ra*rb*x;
+                if (rcore2 < 0) rcore2 = 0;
+                double r_core = std::sqrt(rcore2);
+                double r_scat = rb;
+                double fcore = 1.0 / (1.0 + std::exp((r_core - RNCORE_post) / AOPT_post));
+                double fscat = 1.0 / (1.0 + std::exp((r_scat - RNSCAT_post) / AOPT_post));
+                double DELVNU = VOPT_post * (fcore - fscat);
+                double FACTOR = 1.0 + DELVNU / VEFF;
+                ivphi_P = FACTOR * ivphi_P_nuconly;
+                // Debug: print USECORE values for first few points
+                if (Li == 0 && Lo == 2 && Lx == 2 && JPI == 2 && JPO == 3 && ra > 2.5 && ra < 3.5 && rb > 2.5 && rb < 3.5) {
+                  static int uc_dbg = 0;
+                  if (uc_dbg < 5) {
+                    std::printf("[USECORE_DBG] ra=%.2f rb=%.2f rp=%.3f rc=%.3f rs=%.2f VEFF=%.1f DELVNU=%.2f FACTOR=%.4f ivphi_nc=%.4f ivphi=%.4f\n",
+                      ra, rb, rp, r_core, r_scat, VEFF, DELVNU, FACTOR, ivphi_P_nuconly, ivphi_P);
+                    uc_dbg++;
+                  }
+                }
               } else {
-                // Outside peak: ivphi_P = (V_np(rp) + DELVNU) * phi_P(rp)
-                ivphi_P = (VEFF + DELVNU) * phi_P_at_rp2;
+                ivphi_P = ivphi_P_nuconly;
               }
               double phi_P  = 1.0;   // Already included in ivphi_P
-              double Vbx    = ivphi_P;  // = (V_eff * phi_P)(rp) with USECORE
+#ifdef NO_USECORE_DBG
+              double Vbx    = ivphi_P_nuconly;
+#else
+              double Vbx    = ivphi_P;
+#endif
 #else
               // PRIOR form: vertex at rx
               double ivphi_T = InterpolateIVPHI(IVPHI_T, h_common, NSteps_common,
@@ -1097,9 +1100,10 @@ void DWBA::InelDc() {
         // Debug: print integrand peak info for dominant term (Li=0,Lo=2,Lx=2)
 #ifndef USE_ZR
         if (Li == 0 && Lo == 2 && Lx == 2) {
-          std::printf("[INTEGRAND_PEAK] Li=%d Lo=%d Lx=%d: max|kernel|=%.4e"
-                      " at ra=%.2f rb=%.2f rx=%.2f rp=%.2f\n",
-                      Li, Lo, Lx, max_integrand_dbg, max_ra_p, max_rb_p, max_rx_p, max_rp_p);
+          std::printf("[INTEGRAND_PEAK] Li=%d Lo=%d Lx=%d JPI=%d JPO=%d: max|kernel|=%.4e"
+                      " at ra=%.2f rb=%.2f rx=%.2f rp=%.2f |Integral|=%.4e\n",
+                      Li, Lo, Lx, JPI, JPO, max_integrand_dbg, max_ra_p, max_rb_p, max_rx_p, max_rp_p,
+                      std::abs(Integral));
         }
 #endif
 
