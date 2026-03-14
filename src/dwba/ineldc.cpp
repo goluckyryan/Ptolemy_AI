@@ -81,14 +81,6 @@ static void CubMap(int maptyp, double xlo, double xmid, double xhi, double gamma
 }
 
 
-void DWBA::GrdSet() {
-  // NOTE: phi_ab integration now uses CUBMAP adaptive PHI0 in InelDc.
-  // ThetaGrid is kept for compatibility but no longer used in the phi loop.
-  // The phi integration uses NPPHI=10 CUBMAP points on [0, PHI0] per (ra,rb) pair.
-  int NTheta = 10;   // retained for compatibility; not used in phi integration
-  GaussLegendre(NTheta, -1.0, 1.0, ThetaGrid, ThetaWeights);
-}
-
 void DWBA::InelDc() {
   // ===========================================================
   // Finite-Range DWBA integration
@@ -514,155 +506,8 @@ void DWBA::InelDc() {
         if ((Li + Lo + Lx) % 2 != 0) continue;
 
       // ---- Precompute A12 angular coupling coefficients for (Li, Lo, Lx) ----
-      // These depend only on (Li, Lo, Lx, lT, lP), NOT on JPI/JPO or (ra,rb).
-      //
-      // Reference: Ptolemy INELDC/A12 subroutine (source.mor lines 1453-1899)
-      //
-      // The A12 angular kernel at each (ra, rb, phi_ab) quadrature
-      // point is: cos(MT × phi_T(ra,rb,phi_ab) + MP × phi_P(ra,rb,phi_ab) - MU × phi_ab)
-      // where phi_T = arccos((T1×rb + S1×ra×cos(phi_ab)) / rx) and similarly phi_P.
-      // This is Ptolemy INELDC comment (line ~17959): COSTHE = COS(MT*PHIT+MP*PHIP-MU*PHI).
-      // The DMSVAL storage: DMSVAL(JA12M+2) = DINTS(MU) - 2 is an OFFSET for the recursion
-      // (ARG starts at (2-MU_first)*PHI so that after the first recursion step it gives -MU*PHI).
-      // (Ptolemy INELDC lines 17939-17949, DMSVAL stores MT, MP, MU-2)
-      //
-      // For lP=0 (MP=0): ARG = MT × phi_T - (MU-2) × phi_ab = MT × phi_T + (2-MU) × phi_ab
-      // Each (MT, MU) pair has its own cos argument computed at each quadrature point.
-      //
-      // A12_terms stores: (MT_int, MU_int, amplitude) tuples, NOT cos-indexed buckets.
-      // At each phi_ab quadrature point, we compute:
-      //   A12_val = sum_{(MT,MU)} amplitude × cos(MT × phi_T + (2-MU) × phi_ab)
-      std::vector<std::tuple<int,int,double>> A12_terms; // (MT, MU, amplitude)
-      //
-      // Ptolemy A12 structure (HALFSW=FALSE, i.e. LBT and LBP both even):
-      //   XN  = 0.5 * sqrt((2Li+1)*(2LBT+1)*(2LBP+1))
-      //   MT  loops from -LBT to +LBT step 2 (EVEN values only!)
-      //   MX  = MT + MP  (MP=0 for LBP=lP=0)
-      //   OUTTMP(LX,MT) = XLAM(LBT,MT) * XLAM(LBP,MP=0) * XN * ThreeJ(LBT,MT,LBP,0,LX,-MX)
-      //   MU  loops from MOD(LI,2) to LI step 2 (same parity as Li)
-      //   MUPOS = |MX-MU|
-      //   OUTTER = XLAM(LI,MU) * XLAM(LO,MUPOS) * sqrt(2*LO+1)
-      //   TTT = ThreeJ(LI,MU,LO,MX-MU,LX,-MX)
-      //   A12 += OUTTMP * OUTTER * TTT * doubling_MU   [doubled for MU!=0]
-      //
-      // XLAM table — Ptolemy A12 recurrence (source.mor lines 1613-1656)
-      // DINTS(N) = N (integer array, not 2N+1).
-      // XN = 0.5 * sqrt(DINTS(2*Li+1)*DINTS(2*lT+1)*DINTS(2*lP+1))
-      //    = 0.5 * sqrt((2*Li+1)*(2*lT+1)*(2*lP+1))
-      {
-      // xlam(L, |M|) = Wigner d^L_{|M|,0}(pi/2) — verified by standalone Fortran test.
-      // Ptolemy source.mor lines 1619-1644 (HALFSW=FALSE, even-M path).
-      // Recurrence: start OUTTER=1, m_cur=0.
-      //   For each LL=1..L: m_cur = 1-m_cur (alternates 0→1→0→1...)
-      //     OUTTER *= sqrt((LL+m_cur-1)/(LL+m_cur))
-      //     if m_cur==1: OUTTER = -OUTTER  [sign convention]
-      //     xlam(LL, m_cur) = OUTTER
-      //     For MM = m_cur+2, m_cur+4, ..., LL:
-      //       xlam(LL, MM) = -xlam(LL, MM-2) * sqrt((LL-MM+2)*(LL+MM-1)/((LL+MM)*(LL-MM+1)))
-      // This exactly reproduces d^L_{M,0}(pi/2).
-      auto xlam_correct = [](int L, int am) -> double {
-        am = std::abs(am);
-        if (am > L) return 0.0;
-        if ((L + am) % 2 != 0) return 0.0;  // must have same parity
-
-        // Build the table up to level L using Ptolemy recurrence
-        // We only need the path to xlam(L, am), so walk the full recurrence.
-        double outter = 1.0;
-        int m_cur = 0;
-        // Flat cache: xlam_cache[(ll, mm)] = value
-        // Use a simple 2D array indexed by (ll, mm/2+1).
-        // Max indices: L up to ~10 typically; allocate on stack.
-        static double xlam_cache[20][20];  // [ll][mm/2]
-        xlam_cache[0][0] = 1.0;  // xlam(0,0)=1
-
-        for (int ll = 1; ll <= L; ll++) {
-          m_cur = 1 - m_cur;   // alternate 0→1→0→...
-          outter *= std::sqrt((double)(ll + m_cur - 1) / (double)(ll + m_cur));
-          if (m_cur == 1) outter = -outter;
-          xlam_cache[ll][m_cur / 2] = outter;  // store xlam(ll, m_cur)
-          // Higher M by inner recursion (step 2)
-          for (int mm = m_cur + 2; mm <= ll; mm += 2) {
-            int idx = mm / 2;
-            xlam_cache[ll][idx] = -xlam_cache[ll][idx - 1] *
-              std::sqrt((double)(ll - mm + 2) * (double)(ll + mm - 1) /
-                       ((double)(ll + mm) * (double)(ll - mm + 1)));
-          }
-        }
-        return xlam_cache[L][am / 2];
-      };
-
-      double XN_a12 = 0.5 * std::sqrt((2.0*Li+1.0)*(2.0*lT+1.0)*(2.0*lP+1.0));
-
-      A12_terms.clear();
-      // Outer: MT loops from -lT to +lT step 2 (ALL EVEN values, including negative).
-      // Matching Ptolemy INELDC A12 subroutine (source.mor lines 1773-1899).
-      // For lP=0: MP=0 only, MX = MT (since MX = MT + MP = MT + 0).
-      //
-      // CORRECT: The cos argument in the AngKernel is cos(MT*phi_T - MU*phi_ab).
-      // In Ptolemy INELDC: COSTHE = COS(MT*PHIT + MP*PHIP - MU*PHI) (per comment at line ~17959).
-      //
-      // OUTTMP(LX, MT) = XLAM(lT, |MT|) * XN * ThreeJ(lT, MT, lP=0, 0, Lx, -MT)
-      // OUTTER(LI, LO, MU, MUPOS) = XLAM(Li, |MU|) * XLAM(Lo, |MX-MU|) * sqrt(2Lo+1)
-      //   with SIGN: ITES = IP3+IP2; IP3=lT if MT<0; IP2=LOMNMN if MX_minus_MU<0.
-      //   if ITES odd: OUTTER = -OUTTER.
-      //
-      // Compute LOMNMN: minimum Lo with right parity (Lo same parity as LBT+LBP+LI mod 2 = Li mod 2)
-      {
-        int min_Lo_tri = std::abs(Li - Lx);
-        int lo_parity = Li % 2;  // Ptolemy: (LBT+LBP+Li+LOMIN) even → LOMIN same parity as Li
-        int LOMNMN = min_Lo_tri;
-        if (LOMNMN % 2 != lo_parity) LOMNMN++;  // adjust to correct parity
-
-      for (int MT = -lT; MT <= lT; MT += 2) {
-        int Mx = MT;  // MX = MT + MP, MP=0
-        double xlam_T = xlam_correct(lT, std::abs(MT));
-        double xlam_P = xlam_correct(lP, 0);
-        double outtmp = xlam_T * xlam_P * XN_a12
-                      * ThreeJ((double)lT, (double)MT, (double)lP, 0.0, (double)Lx, (double)(-Mx));
-        if (std::abs(outtmp) < 1e-15) continue;
-
-        // MU: same parity as Li, from (Li%2) to Li step 2 (always non-negative)
-        for (int MU = (Li % 2); MU <= Li; MU += 2) {
-          int MX_minus_MU = Mx - MU;  // can be negative; cos(|MX_minus_MU|*phi) kernel
-          if (std::abs(MX_minus_MU) > Lo) continue;
-          double xlam_Li = xlam_correct(Li, std::abs(MU));
-          double xlam_Lo = xlam_correct(Lo, std::abs(MX_minus_MU));
-          double outter = xlam_Li * xlam_Lo * std::sqrt(2.0*Lo + 1.0);
-          // ITES sign correction (Ptolemy lines 1838-1853):
-          int ITES = 0;
-          if (MT < 0) ITES += lT;           // IP3 = LBT if MT<0 (lT=2 even → no effect)
-          if (MX_minus_MU < 0) ITES += LOMNMN;  // IP2 = LOMNMN if MX-MU < 0
-          if (ITES % 2 != 0) outter = -outter;
-          // TTT inner ThreeJ:
-          double ttt = ThreeJ((double)Li, (double)MU, (double)Lo, (double)MX_minus_MU,
-                              (double)Lx, (double)(-Mx));
-          double A12_val = outtmp * outter * ttt;
-          // Debug: print all A12 values for validation cases
-          {
-            std::printf("  [A12_DBG_Li%d_Lo%d_Lx%d] MT=%d MU=%d coeff=%.8f (pre-doubling)\n",
-                        Li, Lo, Lx, MT, MU, A12_val);
-          }
-          if (std::abs(A12_val) < 1e-15) continue;
-          // Doubling for MU!=0 (Ptolemy: IF HALFSW OR MU!=0 TEMP=2*TEMP, HALFSW=FALSE here)
-          double doubling = (MU != 0) ? 2.0 : 1.0;
-          // Store as (MT, MU, amplitude) — the cos argument is evaluated per quadrature point.
-          // For each MT, the cos arg: MT × phi_T + (2-MU) × phi_ab (Ptolemy DMSVAL convention).
-          // Since we sum over all MT from -lT to +lT, store each (MT, MU) separately.
-          A12_terms.push_back({MT, MU, A12_val * doubling});
-        }
-      }
-      // Debug: print A12_terms for all validation cases
-      {
-        std::printf("[A12_TERMS] Li=%d Lo=%d Lx=%d lT=%d lP=%d XN=%.5f LOMNMN=%d\n",
-                    Li, Lo, Lx, lT, lP, XN_a12, std::abs(Li - Lx));
-        for (auto &[MT_k, MU_k, c_k] : A12_terms) {
-          std::printf("  MT=%2d MU=%d coeff=%.8f\n", MT_k, MU_k, c_k);
-        }
-        std::printf("  Total A12_terms: %d\n", (int)A12_terms.size());
-      }
-      } // close LOMNMN scope
-      } // close XLAM/xlam_correct scope
-      // end A12 precompute
+      // Extracted to DWBA::ComputeA12Terms() in a12.cpp
+      std::vector<std::tuple<int,int,double>> A12_terms = ComputeA12Terms(Li, Lo, Lx, lT, lP);
 
       // J-split loop: compute I(Li,Lo,Lx,JPI,JPO) for each (JPI,JPO) pair
       for (auto &[JPI, chi_a] : chi_a_byJPI) {
@@ -740,10 +585,7 @@ void DWBA::InelDc() {
           //   cos_phiT = (T1_c*rb + S1_c*ra*1)/rx = (T1_c*zr_scale + S1_c) = 1.0 (exact)
           //   phi_T_angle = 0
           // => A12_val = sum_k coeff_k * cos(MT_k*0 - MU_k*0) = sum_k coeff_k
-          double A12_at_zero = 0.0;
-          for (auto &[MT_k, MU_k, coeff] : A12_terms) {
-            A12_at_zero += coeff;
-          }
+          double A12_at_zero = EvalA12(A12_terms, 0.0, 0.0);
           // Sanity: verify rx/ra = 1 numerically
           double rx_check = S1_c + T1_c * zr_scale;  // should be 1.0
 
@@ -1081,11 +923,7 @@ void DWBA::InelDc() {
               double phi_T_angle = std::acos(cos_phiT);
 
               // A12 angular coupling kernel — same formula as rectangular
-              double A12_val = 0.0;
-              for (auto &[MT_k, MU_k, coeff] : A12_terms) {
-                double arg = MT_k * phi_T_angle - MU_k * phi_ab;
-                A12_val += coeff * std::cos(arg);
-              }
+              double A12_val = EvalA12(A12_terms, phi_T_angle, phi_ab);
 
               // phi_weight = PHI0 * phi_wts[k] * sin(phi) = DPHI in Ptolemy GRDSET
               AngKernel += phi_weight * phi_T * Vbx * phi_P * A12_val;

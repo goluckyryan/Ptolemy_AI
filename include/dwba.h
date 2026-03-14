@@ -5,6 +5,7 @@
 #include "Potentials.h"
 #include <complex>
 #include <string>
+#include <tuple>
 #include <vector>
 
 // Structure to hold potential parameters for a channel
@@ -119,6 +120,9 @@ private:
   void WavElj(Channel &ch, int L, int Jp);
   void GrdSet();
   void InelDc();
+  std::vector<std::tuple<int,int,double>> ComputeA12Terms(int Li, int Lo, int Lx, int lT, int lP);
+  double EvalA12(const std::vector<std::tuple<int,int,double>>& A12_terms,
+                 double phi_T_angle, double phi_ab);
   void XSectn();
 
   // Helpers
