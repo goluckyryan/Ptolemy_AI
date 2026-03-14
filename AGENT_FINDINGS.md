@@ -2880,3 +2880,27 @@ Previous analysis claimed C++ was missing ri·ro in the measure. Re-analysis sho
 **There is NO √2 normalization error in SFROMI/RACAH/ATERM.** The entire normalization chain in xsectn.cpp and the SFROMI-related code in ineldc.cpp correctly matches the Ptolemy Fortran source. The 10× excess in cross section is entirely due to **InelDc radial integral errors** (Bug B), not normalization coefficients.
 
 The claimed "1/√10 → 1/√20 factor √2 error" does not exist. The RACAH value 1/√10 = 0.316228 is mathematically correct for W(2, 3/2, 0, 1/2; 1/2, 2).
+
+## InelDc Factor Hunt — Iter 1 (2026-03-14)
+
+### Bug Found & Fixed: RNCORE mass variable (commit be176e2)
+- RNCORE formula used projectile A (deuteron=2) instead of target A (33Si=33)
+- Ptolemy BSPROD: RNCORE = RNSCAT * (A_target^1/3 + A_ejectile^1/3)/(A_residual^1/3 + A_ejectile^1/3)
+- Wrong: RNCORE/RNSCAT = 0.533, correct: 0.993
+- Impact: 3.32 → 2.34 mb/sr (1.42× reduction)
+
+### Remaining 1.26× excess analysis
+- S-matrix ratios vary by partial wave: 1.26× to 2.89× → not a constant factor
+- Phase patterns differ for Li=0 vs Li=2 → integral kernel itself differs
+- Verified correct: all normalization, coordinates, bound state, elastic S-matrix
+- Conjugation of outgoing DW matters: with conj=2.34, without=0.84, target=1.86
+- Ptolemy does NOT conjugate chi_out; C++ does conjugate it
+- Cross section formula may need adjustment for conjugation convention
+- Kinematic differences (relativistic vs non-relativistic masses) contribute ~0.5%
+
+### Next steps for Iter 2:
+1. Investigate DW conjugation convention more carefully — Ptolemy uses chi_out×chi_in
+2. Check if xsectn.cpp BETCAL phase formula needs adjustment for conjugation
+3. Compare A12 coefficients term-by-term with Ptolemy
+4. Try matching Ptolemy's non-relativistic kinematics exactly
+5. Check if Ptolemy's two-pass interpolation scheme matters (H function stabilization)
