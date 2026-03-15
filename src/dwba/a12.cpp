@@ -100,7 +100,6 @@ std::vector<std::tuple<int,int,double>> DWBA::ComputeA12Terms(
     }
   }
 
-
   return A12_terms;
 }
 

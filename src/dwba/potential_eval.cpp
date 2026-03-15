@@ -63,7 +63,7 @@ void EvaluatePotential(double r, const ChannelPotential& pot, double& V_real, do
         double ex_so = std::exp((r - R_so) / pot.ASO);
         double denom_so = 1.0 + ex_so;
         double deriv = - (1.0 / pot.ASO) * ex_so / (denom_so * denom_so);
-        V_so_real = pot.VSO * 2.0 * (1.0/r) * deriv;
+        V_so_real = -pot.VSO * 4.0 * (1.0/r) * deriv;  // WAVSET: 4*L.S*VSO/r*df/dr; negated so Lambda*Vso>0 is repulsive for J=L+1/2, VSO>0
     } else {
         V_so_real = 0.0;
     }
@@ -74,7 +74,7 @@ void EvaluatePotential(double r, const ChannelPotential& pot, double& V_real, do
         double ex_soi = std::exp((r - R_soi) / pot.ASOI);
         double denom_soi = 1.0 + ex_soi;
         double deriv = - (1.0 / pot.ASOI) * ex_soi / (denom_soi * denom_soi);
-        V_so_imag = pot.VSOI * 2.0 * (1.0/r) * deriv;
+        V_so_imag = -pot.VSOI * 4.0 * (1.0/r) * deriv;
     } else {
         V_so_imag = 0.0;
     }
