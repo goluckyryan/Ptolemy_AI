@@ -189,7 +189,7 @@ void DWBA::InelDc() {
       EvaluatePotential(r, PrjBS_ch.Pot, PrjBS_ch.V_real[i], PrjBS_ch.V_imag[i],
                         PrjBS_ch.V_so_real[i], PrjBS_ch.V_so_imag[i],
                         PrjBS_ch.V_coulomb[i], PrjBS_ch.Projectile.Z,
-                        PrjBS_ch.Target.Z, PrjBS_ch.Target.A);
+                        PrjBS_ch.Target.Z, PrjBS_ch.Target.A, PrjBS_ch.Projectile.A);
     }
     std::cout << "  PrjBS V_real rebuilt: V_sol=" << PrjBS_ch.Pot.V << " MeV"
               << "  R_np=" << PrjBS_ch.Pot.R0 * std::pow(PrjBS_ch.Target.A, 1.0/3.0)

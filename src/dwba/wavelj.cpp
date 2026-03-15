@@ -39,6 +39,7 @@ void DWBA::WavSet(Channel &ch) {
   ch.V_coulomb.resize(ch.NSteps);
 
   double A_target = ch.Target.A;
+  double A_projectile = ch.Projectile.A;
 
   for (int i = 0; i < ch.NSteps; ++i) {
     double r = i * ch.StepSize;
@@ -55,7 +56,7 @@ void DWBA::WavSet(Channel &ch) {
 
     EvaluatePotential(r, ch.Pot, ch.V_real[i], ch.V_imag[i], ch.V_so_real[i],
                       ch.V_so_imag[i], ch.V_coulomb[i], ch.Projectile.Z,
-                      ch.Target.Z, A_target);
+                      ch.Target.Z, A_target, A_projectile);
   }
 }
 
