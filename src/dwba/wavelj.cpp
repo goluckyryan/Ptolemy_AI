@@ -80,11 +80,11 @@ void DWBA::WavSet(Channel &ch) {
 //   SDOTL = 0.25*(JP*(JP+2) - JSPS*(JSPS+2)) - L*(L+1)
 //   spin_dot_L = SDOTL / JSPS
 // where JP = Jp (doubled integer), JSPS = ch.JSPS (doubled integer, 2*spin).
-// For proton (JSPS=1):  JP=2L+1 → spin_dot_L = L/2;
-//                        JP=2L-1 → spin_dot_L = -(L+1)/2
-// For deuteron (JSPS=2): JP=2L+2 → spin_dot_L = L/2;
-//                         JP=2L   → spin_dot_L = -1/2;
-//                         JP=2L-2 → spin_dot_L = -(L+1)/2
+// For proton (JSPS=1):  JP=2L+1 → spin_dot_L = L     (J=L+1/2);
+//                        JP=2L-1 → spin_dot_L = -(L+1) (J=L-1/2)
+// For deuteron (JSPS=2): JP=2L+2 → spin_dot_L = L     (J=L+1);
+//                         JP=2L   → spin_dot_L = -1    (J=L);
+//                         JP=2L-2 → spin_dot_L = -(L+1) (J=L-1)
 // ---------------------------------------------------------------------------
 void DWBA::WavElj(Channel &ch, int L, int Jp) {
   int N = ch.NSteps;
