@@ -3021,3 +3021,35 @@ The ~2.9× factor in radial integrals must be traced in InelDc:
 2. Check distorted wave normalization
 3. Check form factor normalization
 4. Check integration grid/method
+
+## 16O(d,p)17O Validation (2026-03-15)
+
+**Reaction:** ¹⁶O(d,p)¹⁷O(g.s.) at 20 MeV, l=2, j=5/2
+**Reference:** Ptolemy FR with Handbook Ch 5.5 optical parameters (Table 5 & 6)
+
+### Cross Sections (CM frame, mb/sr)
+| Angle | Ptolemy FR | C++ FR | Ratio |
+|-------|-----------|--------|-------|
+| 0°    | 46.058    | 6.765  | 0.15  |
+| 15°   | 36.786    | 4.181  | 0.11  |
+| 30°   | 11.137    | 1.466  | 0.13  |
+| 40°   | 1.928     | 0.590  | 0.31  |
+| 60°   | 3.641     | 0.057  | 0.02  |
+
+**Shape:** C++ monotonically decreasing — WRONG (no l=2 minimum/secondary max)
+**Ptolemy shape:** Correct l=2 pattern: peak at 0°, minimum ~40°, secondary max ~60°
+**Magnitude:** C++ is ~7-15× too small
+
+### Diagnosis
+- S-matrix elements differ by 1.2-2× in |S| and have 0.5-3 radian phase errors
+- The transfer integral (INELDC) has systematic errors
+- Same class of bug seen in 33Si validation but more severe here
+- Bound state potentials agree well (52.83 vs 52.93 MeV)
+- Kinematics agree (Ecm=17.75 MeV)
+- Zero-range: Ptolemy does NOT support ZR; would need DWUCK4
+
+### Files
+- `test_subroutines/VALIDATION_16Odp.md` — full validation report
+- `16O_dp_cm.out` — Ptolemy CM-frame reference output
+- `o16dp_handbook.in` — C++ input with handbook parameters
+
