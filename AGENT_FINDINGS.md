@@ -2904,3 +2904,25 @@ The claimed "1/√10 → 1/√20 factor √2 error" does not exist. The RACAH va
 3. Compare A12 coefficients term-by-term with Ptolemy
 4. Try matching Ptolemy's non-relativistic kinematics exactly
 5. Check if Ptolemy's two-pass interpolation scheme matters (H function stabilization)
+
+---
+
+## GRDSET Validation (2026-03-14): PASS
+
+Validated C++ GrdSet coordinate transform against Fortran GRDSET for 33Si(d,p)34Si stripping.
+
+**Key results:**
+- S1, T1, S2, T2 coefficients: match to ~1e-11 ✅
+- JACOB = S1³ = 7.3142: correctly computed and applied ✅
+- T2 = −S1 identity: verified ✅
+- RIROWTS numerical match: within 1e-6 ✅
+- Coordinate transform (rx, rp from ri, ro, φ): exact match ✅
+- PHI CUBMAP: C++ uses same CUBMAP(MAPPHI=2) as Fortran ✅
+
+**Architectural difference:** C++ uses NPSUM=150, NPDIF=75 plain GL instead of
+Fortran's NPSUM=15, NPDIF=10 with CUBMAP compression. Mathematically equivalent
+with sufficient points.
+
+**Previous bugs (now fixed):** T1/S2 swap and missing JACOB factor — both confirmed fixed.
+
+See: `test_subroutines/VALIDATION_grdset.md` for full details.
