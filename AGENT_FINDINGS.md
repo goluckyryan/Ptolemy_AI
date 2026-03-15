@@ -2926,3 +2926,98 @@ with sufficient points.
 **Previous bugs (now fixed):** T1/S2 swap and missing JACOB factor — both confirmed fixed.
 
 See: `test_subroutines/VALIDATION_grdset.md` for full details.
+
+## Deuteron Spin-1 Fix Investigation (2026-03-15): NO CODE CHANGE NEEDED
+- **WavElj SDOTL formula**: Already uses general Ptolemy formula (0.25*(JP*(JP+2)-JSPS*(JSPS+2))-L(L+1))/JSPS — works for any spin. ✅
+- **InelDc JP loop**: JA_dw=2 gives 3 JP states per L for deuteron. ✅ Matches Fortran INELDC.
+- **Comment bug fixed**: wavelj.cpp comments incorrectly stated spin_dot_L = L/2, -1/2, -(L+1)/2. Correct values: L, -1, -(L+1). Commit c8268b7.
+- **Cross section unchanged**: 0° = 2.3403 mb/sr (target 1.863), angular shape still wrong
+- **Conclusion**: Spin-1 deuteron treatment was already correct. Residual 1.26× excess at 0° and wrong angular shape (monotonic decrease vs peak at 15°) are NOT due to spin-1 handling.
+- **S-matrix diagnostic note**: wavelj.cpp stores SMatrix[L] per L only, overwriting for each JP. This is cosmetic — the actual wavefunctions are correctly stored per-JP in chi_a_byJPI map in InelDc.
+
+## J-Split Fix Investigation (2026-03-15): INVESTIGATION COMPLETE — SHAPE BUG IS NOT J-SPLIT
+
+### Task
+Implement dual J=L±½ partial waves (J-split) in InelDc to fix angular distribution shape.
+
+### Findings
+
+#### J-split is ALREADY implemented
+The code already computes all (JPI, JPO) partial wave combinations:
+- InelDc loops over JPI from |2Li-JA_dw| to 2Li+JA_dw (deuteron spin-1 gives up to 3 values)
+- InelDc loops over JPO from |2Lo-JB_dw| to 2Lo+JB_dw (proton spin-½ gives 2 values)
+- WavElj correctly produces J-dependent distorted waves with spin-orbit splitting
+- 9-J coupling in SFROMI correctly assembles S_koffs from all (JPI,JPO) integrals
+- BETCAL distributes S_koffs across Mx channels via CG coefficients
+
+#### BETCAL Normalization Discrepancy
+An S-matrix injection test revealed that even with CORRECT Ptolemy S_koffs values, the angular distribution is wrong. Specific comparison:
+- BETAS(Mx=0, Lo=0): C++ matches Ptolemy within 0.1% ✓
+- BETAS(Mx=0, Lo=1): C++ is 1.449× too small ✗
+- BETAS(Mx=0, Lo≥2): systematic 1.45× discrepancy persists
+
+The 1.449 factor is consistent across all Lo≥1, giving ~2.1× excess cross section at 0°.
+
+#### Possible causes of 1.449× factor (NOT resolved):
+1. INTRCF interpolation of S-matrix elements (unlikely with lstep=1)
+2. Missing normalization in Ptolemy's S→SMAG/SPHASE→BETAS pipeline
+3. UNMOD phase unwrapping affecting the phased S computation
+
+#### Reference Data Mismatch
+The task's reference values (0°=1.863 mb/sr) are from bound_test.out which uses JBIGB=4 (34Si J=2+), NOT the 0+ ground state transition. The correct 0+ reference from si33dp.out is:
+- 0°: 0.397 mb/sr
+- 5°: 0.406
+- 10°: 0.461
+- 15°: 0.538 ← peak
+- 20°: 0.520
+- 25°: 0.370
+- 30°: 0.189
+
+C++ output (0+ transition):
+- 0°: 2.340 mb/sr (monotonically falling to 0.410 at 30°)
+
+### Shape Fix Status: FAIL
+The J-split is correctly implemented. The monotonic angular distribution is NOT caused by missing J=L-½ waves. The actual cause is a normalization/phasing error in the BETCAL or SFROMI-to-BETCAL pipeline that affects Lo≥1 terms differently from Lo=0.
+
+### Files examined
+- src/dwba/ineldc.cpp (J-split loop structure: correct)
+- src/dwba/xsectn.cpp (9-J assembly, BETCAL, AMPCAL: structure correct)
+- src/dwba/wavelj.cpp (spin-orbit J-dependent waves: correct)
+- Ptolemy source: BETCAL (source.mor:3357), SFROMI (source.mor:29002), SETSPT (source.mor:28833), PHSPRT (source.mor:24577), DSGMAL (fortlib.mor:1945)
+
+### Next Steps
+1. Debug the INTRCF (continued fraction interpolation) routine — may introduce extra factors
+2. Compare raw SMATR/SMATI values (before SMAG/SPHASE conversion) with C++ values
+3. Check if ALLOC4/REAL*4 precision affects the S_koffs→BETAS pipeline
+4. The 1.449× factor may come from the phase-space or kinematic normalization in the S-matrix storage
+
+## BETCAL Normalization Investigation (2026-03-15): PASS (xsectn.cpp is correct)
+
+### Root cause: NOT in BETCAL
+The reported 1.449× factor was a **misdiagnosis**. The actual issue is:
+- Raw radial integrals from InelDc are ~2.9× too large (non-uniform across entries)
+- This causes wrong S_koffs magnitudes AND wrong angular shape
+- BETCAL and AMPCAL formulas in xsectn.cpp are verified correct
+
+### Verification
+- Python reproduction of Ptolemy cross sections from Ptolemy BETAS: PERFECT MATCH
+- All BETCAL components verified: FACTOR_BET, CG, phases, filters, sf correction
+- All AMPCAL components verified: PLM, FMNEG, factor 10
+
+### Current C++ vs Ptolemy (0+ transition):
+- C++:    0°=2.340, 5°=2.167, 10°=1.766, 15°=1.345 (monotonic decrease)
+- Ptolemy: 0°=0.397, 5°=0.406, 10°=0.461, 15°=0.538 (peak at 15°)
+- Ratio varies: 5.9× at 0° to 2.5× at 15° (non-uniform → InelDc integration issue)
+
+### Critical Discovery: Ptolemy BETAS output
+- For PRINT 4, Ptolemy outputs BOTH elastic and reaction BETAS
+- Elastic BETAS have JT=0/2, JP=0,2,4 → NOT used for reaction cross section
+- Reaction BETAS have JT=3/2, JP=1,3 → these give correct 0+ cross section
+- Previous analysis confusingly mixed elastic and reaction BETAS
+
+### Next steps: FIX INELDC (src/dwba/ineldc.cpp)
+The ~2.9× factor in radial integrals must be traced in InelDc:
+1. Compare individual integrals H(Li,Lo,Lx) term by term
+2. Check distorted wave normalization
+3. Check form factor normalization
+4. Check integration grid/method
