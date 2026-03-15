@@ -1,27 +1,44 @@
 #!/bin/bash
-#run the original ptolemy using Cleopatra and the file "DWBA" in working directory
-if [ ! -f "cleopatra.txt" ]; then
-    echo "Running Cleopatra (Ptolemy) and copying results..."
-    cd ../digios/analysis/working
-    ../Cleopatra/Cleopatra.sh DWBA 1 1 1 0 0 0 180 5
-    #cp the results to the Cpp_AI directory
-    cd ../../../Cpp_AI
-    cp ../digios/analysis/working/DWBA cleopatra.txt
-    cp ../digios/analysis/working/DWBA.in ptolemy_input.txt
-    cp ../digios/analysis/working/DWBA.out ptolemy_output.txt
-    cp ../digios/analysis/working/DWBA.Xsec.txt ptolemy_Xsec.txt
-else
-    echo "Cleopatra results (cleopatra.txt) already exist. Skipping Ptolemy run and file copy."
-fi
+# Build and run the C++ DWBA code
+# Usage: ./run_test.sh [input.in] [angle_min] [angle_max] [angle_step]
 
-# Compile C++ code
-echo "Compiling C++ code..."
-g++ -std=c++17 -Iinclude src/main.cpp src/dwba/*.cpp src/input/*.cpp -o dwba
+INPUT="${1:-}"
+AMIN="${2:-0}"
+AMAX="${3:-180}"
+ASTEP="${4:-5}"
+
+# Compile
+echo "Compiling..."
+g++ -std=c++17 -O2 -Iinclude -DHAVE_INELDC_FR \
+    src/main.cpp \
+    src/dwba/wavelj.cpp \
+    src/dwba/potential_eval.cpp \
+    src/dwba/rcwfn.cpp \
+    src/dwba/math_utils.cpp \
+    src/dwba/bound.cpp \
+    src/dwba/ineldc.cpp \
+    src/dwba/ineldc_zr.cpp \
+    src/dwba/a12.cpp \
+    src/dwba/setup.cpp \
+    src/dwba/grdset.cpp \
+    src/dwba/xsectn.cpp \
+    src/dwba/av18_potential.cpp \
+    src/input/InputGenerator.cpp \
+    src/input/Isotope.cpp \
+    src/input/Potentials.cpp \
+    src/input/PtolemyParser.cpp \
+    -o dwba
+
 if [ $? -ne 0 ]; then
     echo "Compilation failed!"
     exit 1
 fi
+echo "Compiled OK -> dwba"
 
-# Run C++ DWBA
-echo "Running C++ DWBA..."
-./dwba test_input.txt 0 180 5 > cpp_output.txt 2>&1
+# Run
+if [ -n "$INPUT" ]; then
+    echo "Running: ./dwba $INPUT $AMIN $AMAX $ASTEP"
+    ./dwba "$INPUT" "$AMIN" "$AMAX" "$ASTEP"
+else
+    echo "No input file specified. Usage: ./run_test.sh <input.in> [amin] [amax] [astep]"
+fi
