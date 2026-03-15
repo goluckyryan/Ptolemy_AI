@@ -3130,3 +3130,60 @@ No finite-range InelDc included (stub provided).
 ### Normalization: D0² = 14424 MeV²·fm³ (D0=-120.1)
 Expected range: Handbook gives D0² ≈ 1.5×10⁴ MeV²·fm³, consistent.
 
+
+
+## XSectn Made Reaction-Generic — 2026-03-15
+
+### Changes Made:
+- **XSectn()** no longer has hardcoded quantum numbers for 33Si(d,p)34Si
+- Quantum numbers now derived from DWBA member variables:
+  - `JA = Incoming.JSPS` (2×spin of projectile)
+  - `JB = Outgoing.JSPS` (2×spin of ejectile)
+  - `JBT = (int)round(2.0 * TargetBS.j)` (2×j of neutron in target)
+  - `JBP = (int)round(2.0 * ProjectileBS.j)` (2×j of neutron in projectile)
+  - `JT = (int)round(2.0 * SpinTarget)` (2×J of target nucleus)
+- `LDELMN_primary` computed dynamically instead of hardcoded -2
+
+### New DWBA Fields:
+- `SpinTarget` (J of target nucleus A): default from heuristic (even-even → 0, else TargetBS.j)
+- `SpinResidual` (J of residual nucleus B): same heuristic
+- Parser keywords: `target_spin:` and `residual_spin:` in .in files
+- `SetTargetSpin(double J)` / `SetResidualSpin(double J)` setters
+
+### Also Updated:
+- `ineldc.cpp` JBIGA/JBIGB: now uses SpinTarget/SpinResidual (was hardcoded 3/0)
+- `ineldc_zr.cpp` JBIGA/JBIGB: now uses SpinTarget/SpinResidual (was even-even heuristic)
+- `main.cpp`: handles `.in` files directly (no double-extension)
+- `ineldc_zr.cpp`: InelDc() stub guarded with `#ifndef HAVE_INELDC_FR`
+
+### Regression Tests:
+- 33Si(d,p)34Si FR: 0°=2.3403, 5°=2.1665, 15°=1.3447 mb/sr — **IDENTICAL** to before ✓
+- 33Si(d,p)34Si ZR: 0°=5.9817, 5°=5.5413, 15°=3.4449 mb/sr — **IDENTICAL** to before ✓
+
+### 16O(d,p)17O ZR with Generic XSectn:
+| Angle | Old (hardcoded XSectn) | New (generic XSectn) | Ptolemy FR |
+|-------|------------------------|---------------------|------------|
+| 0°    | 455.5                  | 497.2               | 46.058     |
+| 15°   | 280.7                  | 308.7               | 36.786     |
+| 30°   | 97.9                   | 108.1               | 11.137     |
+| 45°   | 23.7                   | 26.9                | —          |
+| 60°   | 4.24                   | 5.16                | 3.641      |
+
+### Shape Analysis:
+- XSectn now correctly uses JBT=5, JT=0 for 16O (was 3, 3 from 33Si hardcoding)
+- The ~9% change in cross sections comes from corrected 9-J coupling coefficients
+- Angular shape is STILL monotonically decreasing — no l=2 diffraction minimum
+- This confirms: the missing diffraction pattern is NOT caused by XSectn quantum numbers
+- The issue is upstream in the radial integrals / partial wave phases (InelDcZR)
+- The zero-range approximation fundamentally changes the radial overlap integral,
+  which can suppress the interference pattern that creates the diffraction minimum
+
+### Input File Format:
+```
+target_spin: 1.5     # J of target nucleus (33Si = 3/2)
+residual_spin: 0.0   # J of residual nucleus (34Si = 0)
+```
+
+### Build Commands:
+FR: `g++ -std=c++17 -O2 -Iinclude -DHAVE_INELDC_FR src/main.cpp src/dwba/*.cpp src/input/*.cpp -o dwba_new`
+ZR: `g++ -std=c++17 -O2 -Iinclude src/main_zr.cpp src/dwba/setup.cpp src/dwba/ineldc_zr.cpp ... -o dwba_ZR_new`
