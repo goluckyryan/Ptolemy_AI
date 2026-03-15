@@ -106,7 +106,7 @@ $$\sigma_L = \arg\left[\Gamma(L+1+i\eta)\right] = \sum_{n=1}^{L} \arctan\!\left(
 
 Same Numerov integration with real WS potential adjusted to give the correct binding energy $E_B$:
 
-$$V_{sol}$$ found by bisection so that $u_L(r)$ has exactly $n$ nodes and $u_L \to e^{-\kappa r}$ for $r \to \infty$, where $\kappa = \sqrt{2\mu |E_B|/\hbar^2}$.
+$V_{sol}$ found by bisection so that $u_L(r)$ has exactly $n$ nodes and $u_L \to e^{-\kappa r}$ for $r \to \infty$, where $\kappa = \sqrt{2\mu |E_B|/\hbar^2}$.
 
 ### Normalization
 $$\int_0^\infty u_L^2(r)\, dr = 1, \quad \phi_L(r) = u_L(r)/r$$

@@ -26,7 +26,7 @@ $$ \frac{d^2 u_L}{dr^2} + \left[ k^2 - \frac{2\mu}{\hbar^2} U(r) - \frac{L(L+1)}
 ### Implementation ([WavElj](file:///home/ryan/ptolemy_2019/Cpp_AI/src/dwba/dwba.cpp#394-554))
 -   **Algorithm**: Numerov method (4th order) or Runge-Kutta to integrate $u_L(r)$ from the origin ($r=0$) to a matching radius ($R_{match}$).
 -   **Matching**: At $R_{match}$ (where nuclear potential is negligible), the internal solution is matched to the asymptotic Coulomb functions ($F_L, G_L$) to determine the **Phase Shift** $\delta_L$ and **S-Matrix** $S_L$.
-    $$ u_L(r) \xrightarrow{r \to \infty} \frac{i}{2} [ H_L^-(kr) - S_L H_L^+(kr) ] $$
+$$ u_L(r) \xrightarrow{r \to \infty} \frac{i}{2} [ H_L^-(kr) - S_L H_L^+(kr) ] $$
 -   **Code**: `DWBA::WavElj` performs this integration and calculates $S_L$.
 
 ---
