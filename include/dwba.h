@@ -84,6 +84,7 @@ public:
 
   // Main calculation
   void Calculate();
+  void CalculateZR();  // Zero-Range DWBA
   void PrintParameters();
 
 private:
@@ -120,6 +121,7 @@ private:
   void WavElj(Channel &ch, int L, int Jp);
   void GrdSet();
   void InelDc();
+  void InelDcZR();  // Zero-Range transfer integral
   std::vector<std::tuple<int,int,double>> ComputeA12Terms(int Li, int Lo, int Lx, int lT, int lP);
   double EvalA12(const std::vector<std::tuple<int,int,double>>& A12_terms,
                  double phi_T_angle, double phi_ab);

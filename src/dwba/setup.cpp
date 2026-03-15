@@ -228,6 +228,24 @@ void DWBA::Calculate() {
   XSectn();
 }
 
+void DWBA::CalculateZR() {
+  CalculateKinematics();
+  PrintParameters();
+
+  // Setup grids and potentials
+  WavSet(Incoming);
+  WavSet(Outgoing);
+
+  // Setup Angular Integration Grid (still needed for ThetaGrid)
+  GrdSet();
+
+  // Zero-Range transfer integral (replaces InelDc)
+  InelDcZR();
+
+  // Cross sections (same as FR)
+  XSectn();
+}
+
 // ---------------------------------------------------------------
 // PrintParameters
 // ---------------------------------------------------------------
