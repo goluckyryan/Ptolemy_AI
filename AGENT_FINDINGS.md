@@ -3187,3 +3187,93 @@ residual_spin: 0.0   # J of residual nucleus (34Si = 0)
 ### Build Commands:
 FR: `g++ -std=c++17 -O2 -Iinclude -DHAVE_INELDC_FR src/main.cpp src/dwba/*.cpp src/input/*.cpp -o dwba_new`
 ZR: `g++ -std=c++17 -O2 -Iinclude src/main_zr.cpp src/dwba/setup.cpp src/dwba/ineldc_zr.cpp ... -o dwba_ZR_new`
+
+## R0MASS Fix — 2026-03-15
+
+### Bug
+EvaluatePotential used R = r0 * At^(1/3) for ALL projectiles.
+Ptolemy uses R = r0 * (At^(1/3) + Ap^(1/3)) when A_proj > 2.5.
+For 148Sm+α: 30% error in potential radii (6.877 vs 5.290 fm).
+
+### Fix
+In EvaluatePotential: compute R0MASS = cbrt(A_heavy) + cbrt(A_light) if A_light > 2.5.
+Applied to ALL potential terms (V, VI, VSI, VSO, VSOI, RC).
+Added A_projectile parameter with default=1.0 for backward compatibility.
+Updated callers: WavSet, InelDc, and all test binaries.
+Commit: 370282e
+
+### Impact
+- 148Sm(α,α): dramatically improved σ/σ_Ruth (see plot in Discord)
+- 17O(p,p): NO CHANGE (A_proj=1 ≤ 2.5) ✅
+- 16O(d,d): NO CHANGE (A_proj=2 ≤ 2.5) ✅
+- 33Si(d,p)34Si DWBA: NO CHANGE ✅
+- S-matrix: 73/73 PASS across all 3 handbook elastic cases
+
+### Remaining Issues
+- Cross sections at large angles (>60°) still show deviations at diffractive minima
+  due to ~0.01% k mismatch (mass table differences) and two-point vs single-point
+  S-matrix extraction differences. These are expected and physically insignificant
+  (minima positions shift by ~1° with tiny k changes).
+
+---
+
+## 2026-03-15 Session Summary — S-matrix phase fix + summation bug diagnosis
+
+### Bugs Fixed This Session
+
+**Bug F1 — Two-point S-matrix matching → handbook single-point method**
+- `wavelj.cpp`: replaced two-point Numerov matching (unreliable phase) with handbook method
+- A = W(F,u) = F'·u - u'·F, B = W(u,G) = u'·G - G'·u, S = (B+iA)/(B-iA)
+- 5-point stencil for u'(R), Rcwfn derivatives for F',G'
+- Validated: matches Ptolemy S-matrix to 10^-8 at high L ✅
+- Committed in previous session
+
+**Bug F2 — R0MASS radius convention for α/heavy-ion projectiles**
+- `potential_eval.cpp`: added `computeR0MASS()` helper
+- For A_proj > 2.5: R = r0 × (At^{1/3} + Ap^{1/3}) [was: r0 × At^{1/3}]
+- Fix committed: `370282e`
+- For 148Sm+α: R was 5.290 fm, should be 6.877 fm (30% error in all radii)
+- After fix: forward-angle σ/σ_Ruth agrees with Ptolemy to <1% ✅
+- No effect on (d,p) or (p,p) reactions (A_proj ≤ 2.5) ✅
+
+### Remaining Known Bugs in Summation Formula
+
+**Bug S1 — ATERM hardcoded for 33Si(d,p)34Si** (in `ineldc.cpp`)
+- `RACAH_val = 0.316227766` — hardcoded, only correct for lT=2, jBT=3/2, jBP=1/2
+- `SPAMP = 0.97069` — hardcoded spectroscopic amplitude
+- `SPAMT = 1.0` — hardcoded
+- Condition `Lx == TargetBS.l` only works when lT=2
+- For 16O(d,p)17O lT=0 case: ATERM=0 → no transfer → 7× underestimate
+- Fix needed: compute ATERM generically from (JA, JB, JBT, JBP, lT, lP) and SpinResidual
+
+**Bug S2 — ATERM RACAH value was wrong (previous fix)**
+- Was using RACAH(4,3,0,1,1,4) = 2.5149 — WRONG
+- Correct: RACAH(4,3,0,1,1,4) = 1/sqrt(10) = 0.31623
+- This was corrected in ineldc.cpp but only as a hardcoded constant
+
+### Cross Section Status (2026-03-15)
+- 33Si(d,p)34Si at 0°: C++ = 2.4143 mb/sr vs Ptolemy 1.863 mb/sr (~30% high)
+- 16O(d,p)17O at 0°: C++ = 6.8 mb/sr vs Ptolemy 46.1 mb/sr (7× too small, wrong shape)
+- Angular shape: monotone for both — missing l=2 diffraction minimum at ~40°
+- Root cause: ATERM hardcoded + possible i^(Li+Lo+2Lx+1) phase accumulation bug
+
+### Elastic Validation Status (2026-03-15)
+- 148Sm(α,α): σ/σ_Ruth forward angles <1% after R0MASS fix ✅
+- 17O(p,p): S-matrix |S| validated ✅
+- 16O(d,d): S-matrix |S| validated ✅
+- S-matrix arg(S) now correct after handbook single-point method ✅
+
+### Next Session Plan
+1. Fix ATERM to be fully generic (use actual reaction QNs, not hardcoded 33Si values)
+2. Run ZR for 16O(d,p)17O lT=0 ground state — simplest test of interference pattern
+3. Compare 16O ZR shape to Ptolemy ZR → diagnose i^L phase chain
+4. If ZR shape correct → move to FR (apply Bug 9 fix: ri²·ro² in integrand)
+5. If ZR shape wrong → find phase bug in BETCAL/AMPCAL accumulation
+
+### Key File Locations
+- `ineldc.cpp` — ATERM fix needed (lines ~1001-1040)
+- `xsectn.cpp` — BETCAL/AMPCAL/XSECTN (coherent Lo sum)
+- `wavelj.cpp` — S-matrix extraction (fixed ✅)
+- `potential_eval.cpp` — R0MASS (fixed ✅)
+- `AGENT_FINDINGS.md` — this file
+
