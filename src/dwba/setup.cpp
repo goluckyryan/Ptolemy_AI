@@ -142,6 +142,9 @@ void DWBA::SetProjectileBoundState(int n, int l, double j, double bindingEnergy,
   ProjectileBS.Pot = pot;
 }
 
+void DWBA::SetTargetSpin(double J)    { SpinTarget   = J; }
+void DWBA::SetResidualSpin(double J)  { SpinResidual = J; }
+
 void DWBA::SetProjectileWFFile(const std::string &filename, double grid_h, double spam) {
   // Load tabulated phi=u/r from file with columns: step  r  phi
   // Ptolemy prints on a subsampled grid; we interpolate onto grid_h
@@ -212,6 +215,22 @@ void DWBA::SetProjectileWFFromFile(const std::vector<std::pair<double,double>>& 
 
 void DWBA::Calculate() {
   CalculateKinematics();
+
+  // Default nuclear spins if not explicitly set
+  if (SpinTarget < -0.5) {
+    // Heuristic: even-even nucleus → J=0, else use bound state j
+    bool target_ee = (Incoming.Target.A % 2 == 0) && (Incoming.Target.Z % 2 == 0);
+    SpinTarget = target_ee ? 0.0 : TargetBS.j;
+    std::cout << "[DWBA] SpinTarget defaulted to " << SpinTarget
+              << (target_ee ? " (even-even)" : " (from TargetBS.j)") << "\n";
+  }
+  if (SpinResidual < -0.5) {
+    bool residual_ee = (Outgoing.Target.A % 2 == 0) && (Outgoing.Target.Z % 2 == 0);
+    SpinResidual = residual_ee ? 0.0 : TargetBS.j;
+    std::cout << "[DWBA] SpinResidual defaulted to " << SpinResidual
+              << (residual_ee ? " (even-even)" : " (from TargetBS.j)") << "\n";
+  }
+
   PrintParameters();
 
   // Setup grids and potentials
@@ -230,6 +249,21 @@ void DWBA::Calculate() {
 
 void DWBA::CalculateZR() {
   CalculateKinematics();
+
+  // Default nuclear spins if not explicitly set
+  if (SpinTarget < -0.5) {
+    bool target_ee = (Incoming.Target.A % 2 == 0) && (Incoming.Target.Z % 2 == 0);
+    SpinTarget = target_ee ? 0.0 : TargetBS.j;
+    std::cout << "[DWBA] SpinTarget defaulted to " << SpinTarget
+              << (target_ee ? " (even-even)" : " (from TargetBS.j)") << "\n";
+  }
+  if (SpinResidual < -0.5) {
+    bool residual_ee = (Outgoing.Target.A % 2 == 0) && (Outgoing.Target.Z % 2 == 0);
+    SpinResidual = residual_ee ? 0.0 : TargetBS.j;
+    std::cout << "[DWBA] SpinResidual defaulted to " << SpinResidual
+              << (residual_ee ? " (even-even)" : " (from TargetBS.j)") << "\n";
+  }
+
   PrintParameters();
 
   // Setup grids and potentials

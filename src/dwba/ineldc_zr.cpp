@@ -25,11 +25,13 @@
 static const double HBARC_ZR = 197.32697;
 static const double AMU_ZR   = 931.494;
 
-// Stub for InelDc — not used in ZR binary but referenced by Calculate()
+// Stub for InelDc — only compiled when FR ineldc.cpp is not linked
+#ifndef HAVE_INELDC_FR
 void DWBA::InelDc() {
   std::cerr << "ERROR: InelDc() called in ZR binary — use CalculateZR() instead.\n";
   std::abort();
 }
+#endif
 
 void DWBA::InelDcZR() {
   // ===========================================================
@@ -355,24 +357,9 @@ void DWBA::InelDcZR() {
                 std::printf("[ZR-ATERM] SixJ{%d, %.1f, 0.5; %.1f, %d, %d} = %.6f, sign=%.0f, RACAH=%.6f\n",
                             TargetBS.l, jT_bs, jP_bs, ProjectileBS.l, Lx, sj, sign_val, RACAH_val);
 
-                // JBIGA/JBIGB: nuclear spins of target and residual
-                int JBIGA, JBIGB;
-                int target_A = Incoming.Target.A;
-                int target_Z = Incoming.Target.Z;
-                bool target_even_even = (target_A % 2 == 0) && (target_Z % 2 == 0);
-                if (target_even_even) {
-                  JBIGA = 0;  // e.g. 16O (J=0)
-                } else {
-                  JBIGA = (int)(2 * TargetBS.j);  // e.g. 33Si: j=3/2 → JBIGA=3
-                }
-                int residual_A = Outgoing.Target.A;
-                int residual_Z = Outgoing.Target.Z;
-                bool residual_even_even = (residual_A % 2 == 0) && (residual_Z % 2 == 0);
-                if (residual_even_even) {
-                  JBIGB = 0;  // e.g. 34Si (J=0)
-                } else {
-                  JBIGB = (int)(2 * TargetBS.j);  // e.g. 17O: j=5/2 → JBIGB=5
-                }
+                // JBIGA/JBIGB: nuclear spins from DWBA object (generic)
+                int JBIGA = (int)std::round(2.0 * SpinTarget);    // 2*J(target)
+                int JBIGB = (int)std::round(2.0 * SpinResidual);  // 2*J(residual)
 
                 double TEMP_aterm = std::sqrt((JBIGB + 1.0) / (JBIGA + 1.0));
 

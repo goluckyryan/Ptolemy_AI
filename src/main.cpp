@@ -21,16 +21,25 @@ int main(int argc, char* argv[]) {
     std::cout << "Input File: " << inputFile << std::endl;
     std::cout << "Angle Range: " << angleMin << " - " << angleMax << " step " << angleStep << std::endl;
 
-    // Generate Ptolemy input file
-    GenerateInput(inputFile, angleMin, angleMax, angleStep);
+    // Determine the Ptolemy input file to parse
+    std::string ptolemyInputFile;
     
-    // Parse the generated input file and run DWBA
-    std::string ptolemyInputFile = inputFile + ".in";
+    // If the file already ends with .in, use it directly
+    if (inputFile.size() > 3 && inputFile.substr(inputFile.size()-3) == ".in") {
+        ptolemyInputFile = inputFile;
+    } else {
+        // Generate Ptolemy input file
+        GenerateInput(inputFile, angleMin, angleMax, angleStep);
+        ptolemyInputFile = inputFile + ".in";
+    }
     
     DWBA dwba;
     PtolemyParser parser;
     
-    std::cout << "Parsing generated input file: " << ptolemyInputFile << std::endl;
+    // Override angles from command line
+    dwba.SetAngles(angleMin, angleMax, angleStep);
+    
+    std::cout << "Parsing input file: " << ptolemyInputFile << std::endl;
     parser.ParseFile(ptolemyInputFile, dwba);
     
     std::cout << "Running DWBA calculation..." << std::endl;

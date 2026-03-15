@@ -1017,10 +1017,9 @@ void DWBA::InelDc() {
             // JBIGA = 2*J(target nucleus A = 33Si) = 2*1.5 = 3  → (JBIGA+1) = 4
             // TEMP = sqrt(1/4) = 0.5
             // (NUCLEAR spins of target and residual, NOT the neutron quantum numbers)
-            // For 33Si(d,p)34Si: JBIGA=3 (33Si, J=3/2), JBIGB=0 (34Si, J=0)
-            // TODO: make these settable from input; hardcoded for 33Si(d,p)34Si
-            const int JBIGA = 3;  // 2*J(target 33Si) = 2*(3/2)
-            const int JBIGB = 0;  // 2*J(residual 34Si) = 2*0
+            // Nuclear spins from DWBA object (generic for any reaction)
+            const int JBIGA = (int)std::round(2.0 * SpinTarget);    // 2*J(target)
+            const int JBIGB = (int)std::round(2.0 * SpinResidual);  // 2*J(residual)
             double TEMP_aterm = std::sqrt((JBIGB + 1.0) / (JBIGA + 1.0));  // sqrt(1/4) = 0.5
             double SPAMP = 0.97069;  // AV18 spectroscopic amplitude
             double SPAMT = 1.0;      // Target spec amplitude

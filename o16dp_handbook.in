@@ -7,5 +7,7 @@ incoming: v=88.955 r0=1.149 a=0.751 vi=2.348 ri0=1.345 ai=0.603 vsi=10.218 rsi0=
 outgoing: v=49.544 r0=1.146 a=0.675 vi=2.061 ri0=1.146 ai=0.675 vsi=7.670 rsi0=1.302 asi=0.528 vso=5.296 rso0=0.934 aso=0.590 vsoi=-0.106 rsoi0=0.934 asoi=0.590 rc0=1.419
 boundstate: n=0 l=2 j=2.5 binding=4.1431 r0=1.25 a=0.65 vso=6.0 rso0=1.25 aso=0.65 rc0=1.25
 projectilews: n=0 l=0 j=0.5 binding=2.2246 r0=1.0 a=0.5 vso=0 rso0=1.0 aso=0.5 rc0=1.2
+target_spin: 0.0
+residual_spin: 2.5
 angles: min=0 max=60 step=5
 end

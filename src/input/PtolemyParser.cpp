@@ -195,6 +195,14 @@ void PtolemyParser::ParseLine(const std::string &line, DWBA &dwba) {
       dwba.SetTargetBoundState(n, l, j, binding, pot);
     else  // projectilews
       dwba.SetProjectileBoundState(n, l, j, binding, pot);
+  } else if (command == "target_spin") {
+    double spin;
+    ss >> spin;
+    dwba.SetTargetSpin(spin);
+  } else if (command == "residual_spin") {
+    double spin;
+    ss >> spin;
+    dwba.SetResidualSpin(spin);
   } else if (command == "projectile_wf_file") {
     // Read external projectile bound state wavefunction
     // Format: projectile_wf_file: <path> h=<step> spam=<spectroscopic_amplitude>

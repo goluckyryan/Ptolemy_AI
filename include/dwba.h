@@ -82,6 +82,10 @@ public:
   void SetProjectileWFFromFile(const std::vector<std::pair<double,double>>& wf_data,
                                double h_ext, double spam);
 
+  // Nuclear spins (needed for generic XSectn / ATERM)
+  void SetTargetSpin(double J);       // J of target nucleus A (e.g. 33Si: 1.5, 16O: 0)
+  void SetResidualSpin(double J);     // J of residual nucleus B (e.g. 34Si: 0, 17O: 2.5)
+
   // Main calculation
   void Calculate();
   void CalculateZR();  // Zero-Range DWBA
@@ -93,6 +97,10 @@ private:
   BoundState TargetBS, ProjectileBS;
   double AngleMin, AngleMax, AngleStep;
   double Ex;
+
+  // Nuclear spins (set by parser or defaulted in Calculate/CalculateZR)
+  double SpinTarget   = -1.0;   // J of target nucleus A (-1 = not set, use heuristic)
+  double SpinResidual = -1.0;   // J of residual nucleus B (-1 = not set, use heuristic)
 
   // Integration Grid
   std::vector<double> ThetaGrid;

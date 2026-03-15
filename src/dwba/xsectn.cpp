@@ -62,19 +62,22 @@ void DWBA::XSectn() {
   (void)kb;  // used in cross-section formula via kinematic prefactor (absorbed in FACTOR_BET)
 
   // -----------------------------------------------
-  // Reaction-specific doubled quantum numbers
-  //   33Si(d,p)34Si:
-  //     a = deuteron (spin 1),  b = proton (spin 1/2)
-  //     A = 33Si (J=3/2),       B = 34Si (J=0)
-  //     neutron orbit in 33Si: l=2, j=3/2   -> JBT=3
-  //     neutron orbit in d:    l=0, j=1/2   -> JBP=1
+  // Reaction-generic doubled quantum numbers (read from DWBA object)
+  //   JA  = 2*spin(projectile)    e.g. deuteron=2, proton=1
+  //   JB  = 2*spin(ejectile)      e.g. proton=1, deuteron=2
+  //   JBT = 2*j(neutron in target bound state)
+  //   JBP = 2*j(neutron in projectile bound state)
+  //   JT  = 2*J(target nucleus)
   // -----------------------------------------------
-  const int JA  = 2;   // 2 * j_deuteron = 2*1
-  const int JB  = 1;   // 2 * j_proton   = 2*(1/2)
-  const int JBT = 3;   // 2 * j_neutron_in_target  = 2*(3/2)
-  const int JBP = 1;   // 2 * j_neutron_in_proj    = 2*(1/2)
-  const int JT  = 3;   // 2 * J_target   = 2*(3/2)  [conserved]
+  const int JA  = Incoming.JSPS;                             // 2*j_projectile
+  const int JB  = Outgoing.JSPS;                             // 2*j_ejectile
+  const int JBT = (int)std::round(2.0 * TargetBS.j);        // 2*j_neutron_in_target
+  const int JBP = (int)std::round(2.0 * ProjectileBS.j);    // 2*j_neutron_in_proj
+  const int JT  = (int)std::round(2.0 * SpinTarget);        // 2*J_target_nucleus
   (void)JT;
+
+  std::printf("[XSectn] Generic QNs: JA=%d JB=%d JBT=%d JBP=%d JT=%d\n",
+              JA, JB, JBT, JBP, JT);
 
   // JP_conserved (2*J_total) runs from |JA-JB| to JA+JB (Ptolemy ANGSET line ~28894)
   // JPBASE = |JA - JB| = |2 - 1| = 1
@@ -331,10 +334,12 @@ void DWBA::XSectn() {
     [[maybe_unused]] int IODD_check = std::abs(LDELMN_bf) % 2;
   }
 
-  // For 33Si(d,p)34Si: lT=2, lP=0, LxMax_bs=2
-  //   NDEL_primary = 2+1-MOD(2+0+2,2)=3, LDELMN_primary=-2, IODD=0 -> FACTOR_BET=+0.5/ka
-  int LDELMN_primary = -2;
-  int IODD_global = std::abs(LDELMN_primary) % 2;  // = 0
+  // Compute LDELMN_primary dynamically from quantum numbers
+  int NDEL_primary = LxMax_bs + 1 - ((LxMax_bs + lP + lT) % 2);
+  int LDELMN_primary = 1 - NDEL_primary;
+  int IODD_global = std::abs(LDELMN_primary) % 2;
+  std::printf("  [BETCAL] NDEL_primary=%d LDELMN_primary=%d IODD=%d\n",
+              NDEL_primary, LDELMN_primary, IODD_global);
   double FACTOR_BET = (IODD_global != 0) ? (-0.5 / ka) : (0.5 / ka);  // = +0.5/ka
   std::printf("  [BETCAL] FACTOR_BET=%.4e (IODD=%d, ka=%.4f)\n",
               FACTOR_BET, IODD_global, ka);
