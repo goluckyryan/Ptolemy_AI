@@ -316,5 +316,5 @@ void DWBA::InelDcZR() {
     } // end Lo loop
   } // end Li loop
 
-  std::printf("[ZR] Transfer integrals computed: %d entries.\n", total_entries);
+
 }
