@@ -93,26 +93,13 @@ std::vector<std::tuple<int,int,double>> DWBA::ComputeA12Terms(
       double ttt = ThreeJ((double)Li, (double)MU, (double)Lo, (double)MX_minus_MU,
                           (double)Lx, (double)(-Mx));
       double A12_val = outtmp * outter * ttt;
-      // Debug: print all A12 values for validation cases
-      {
-        std::printf("  [A12_DBG_Li%d_Lo%d_Lx%d] MT=%d MU=%d coeff=%.8f (pre-doubling)\n",
-                    Li, Lo, Lx, MT, MU, A12_val);
-      }
       if (std::abs(A12_val) < 1e-15) continue;
       // Doubling for MU!=0
       double doubling = (MU != 0) ? 2.0 : 1.0;
       A12_terms.push_back({MT, MU, A12_val * doubling});
     }
   }
-  // Debug: print A12_terms summary
-  {
-    std::printf("[A12_TERMS] Li=%d Lo=%d Lx=%d lT=%d lP=%d XN=%.5f LOMNMN=%d\n",
-                Li, Lo, Lx, lT, lP, XN_a12, LOMNMN);
-    for (auto &[MT_k, MU_k, c_k] : A12_terms) {
-      std::printf("  MT=%2d MU=%d coeff=%.8f\n", MT_k, MU_k, c_k);
-    }
-    std::printf("  Total A12_terms: %d\n", (int)A12_terms.size());
-  }
+
 
   return A12_terms;
 }

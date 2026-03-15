@@ -146,13 +146,6 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
                   + spin_dot_L * f_conv * Vso;
     double f_im = f_conv * Wi + spin_dot_L * f_conv * Vsoi;
     f[i] = std::complex<double>(f_re, f_im);
-
-    // Debug output for L=0 at key radii
-    if (L == 0 && (i == 10 || i == 30 || i == 50 || i == 80 || i == 100)) {
-      std::printf("  WavElj L=0 i=%3d r=%5.2f: Vr=%8.3f Wi=%7.3f Vc=%6.3f "
-                  "f_re=%9.5f f_im=%+9.5f\n",
-                  i, r, Vr, Wi, Vc, f_re, f_im);
-    }
   }
 
   // --- Standard Numerov integration (Ptolemy WAVELJ form) ---
@@ -245,20 +238,6 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
 
   if (ch.SMatrix.size() <= (size_t)L) ch.SMatrix.resize(L + 1);
   ch.SMatrix[L] = std::complex<double>(SJR, SJI);
-
-  // Debug output for selected partial waves
-  if (L == 12 || L == 7 || L == 5 || L == 2 || L == 0) {
-    std::printf("  [WavElj L=%2d JP=%d] FL=%.5f GL=%.5f FLP=%.5f GLP=%.5f\n",
-                L, Jp, FL, GL, FLP, GLP);
-    std::printf("               ur=%.4e ui=%.4e upr=%.4e upi=%.4e\n",
-                ur, ui, upr, upi);
-    std::printf("               Ar=%.4e Ai=%.4e Br=%.4e Bi=%.4e den=%.4e\n",
-                Ar, Ai, Br, Bi, den);
-    std::printf("               |S|=%.5f SJR=%.5f SJI=%.5f\n",
-                std::sqrt(SJR * SJR + SJI * SJI), SJR, SJI);
-    std::printf("               R_match=%.3f k=%.4f eta=%.4f\n",
-                R_match, ch.k, ch.eta);
-  }
 
   // --- Normalization (Ptolemy source.mor lines 30913–30916) ---
   // A1n = 0.5*(F*(1+SJR) + SJI*G)

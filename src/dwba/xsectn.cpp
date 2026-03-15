@@ -76,9 +76,6 @@ void DWBA::XSectn() {
   const int JT  = (int)std::round(2.0 * SpinTarget);        // 2*J_target_nucleus
   (void)JT;
 
-  std::printf("[XSectn] Generic QNs: JA=%d JB=%d JBT=%d JBP=%d JT=%d\n",
-              JA, JB, JBT, JBP, JT);
-
   // JP_conserved (2*J_total) runs from |JA-JB| to JA+JB (Ptolemy ANGSET line ~28894)
   // JPBASE = |JA - JB| = |2 - 1| = 1
   // JPMX   = JA + JB   = 2 + 1   = 3
@@ -100,7 +97,6 @@ void DWBA::XSectn() {
 
   if (!SOSWT) {
     // Simple case: no spin-orbit; S stored directly without 9-J coupling
-    std::cout << "\n[SFROMI] No-SO path: using S directly (JP_cons=" << JBP << "/2, Lx2=" << LxMax_bs << ")\n";
     for (const auto &elem : TransferSMatrix) {
       int Lx = elem.Lx;
       int Li = elem.Li;
@@ -109,25 +105,7 @@ void DWBA::XSectn() {
       if (Lx != LxMax_bs) continue;
       S_koffs[{JBP, LxMax_bs, Lo, Li}] += elem.S;
     }
-    std::cout << "  KOFFS entries: " << S_koffs.size() << "\n";
   } else {
-    std::cout << "\n[SFROMI] Applying double 9-J (SOSWT=TRUE) coupling...\n";
-    int n9j_nonzero = 0;
-
-    // Debug: print first few TSM entries
-    {
-      int cnt = 0;
-      for (const auto &elem : TransferSMatrix) {
-        if ((elem.Li + elem.Lo + elem.Lx) % 2 != 0) continue;
-        std::cout << "TSM: Li=" << elem.Li << " Lo=" << elem.Lo
-                  << " Lx=" << elem.Lx
-                  << " JPI=" << elem.JPI << " (J=" << elem.JPI/2.0 << ")"
-                  << " JPO=" << elem.JPO << " (J=" << elem.JPO/2.0 << ")"
-                  << " |S|=" << std::abs(elem.S) << std::endl;
-        if (++cnt >= 20) { std::cout << "  ...(showing first 20 TSM)\n"; break; }
-      }
-    }
-
     for (const auto &elem : TransferSMatrix) {
       int Lx  = elem.Lx;
       int Li  = elem.Li;
@@ -143,19 +121,11 @@ void DWBA::XSectn() {
                           JPI/2.0, (double)Li,   JA/2.0,
                           JPO/2.0, (double)Lo,   JB/2.0);
 
-      // Debug print for representative entries
-      if (Li==2 && Lo==2 && Lx==2 && std::abs(elem.S) > 1e-10) {
-        std::cout << "NineJ args: " << JBT/2.0 << " " << Lx << " " << JBP/2.0
-                  << " " << JPI/2.0 << " " << Li << " " << JA/2.0
-                  << " " << JPO/2.0 << " " << Lo << " " << JB/2.0
-                  << " = " << w9j1 << std::endl;
-      }
       if (std::abs(w9j1) < 1e-14) continue;
 
       double stat1 = std::sqrt(double((JPI+1)*(JPO+1)*(2*Lx+1)*(JBP+1)));
       double SAV9J = stat1 * w9j1;
       if (std::abs(SAV9J) < 1e-14) continue;
-      n9j_nonzero++;
 
       // Second 9-J loop: over conserved total J (JP_cons) and transfer multipolarity (Lx2)
       for (int JP_cons = JPBASE; JP_cons <= JPMX; JP_cons += 2) {
@@ -195,102 +165,10 @@ void DWBA::XSectn() {
           // Accumulate S_koffs
           auto contrib = SAV9J * TEMP * elem.S;
           S_koffs[{JP_cons, Lx2, Lo, Li}] += contrib;
-
-          // Debug accumulation for specific key
-          if (Li==2 && Lo==2 && Lx==2 && JP_cons==1 && Lx2==2) {
-            std::printf("  [ACCUM] Li=%d Lo=%d Lx=%d JPI=%d JPO=%d JP=%d Lx2=%d SAV9J=%.4f TEMP=%.4f |elemS|=%.4e\n",
-              Li, Lo, Lx, JPI, JPO, JP_cons, Lx2, SAV9J, TEMP, std::abs(elem.S));
-          }
         }
       }
     }
-    std::cout << "  9-J non-zero terms: " << n9j_nonzero
-              << ", KOFFS entries: " << S_koffs.size() << "\n";
-
-    // Debug: print S_koffs for key entry
-    {
-      auto key = std::make_tuple(1, 2, 2, 2); // JP=1, Lx2=2, Lo=2, Li=2
-      auto it = S_koffs.find(key);
-      if (it != S_koffs.end()) {
-        std::printf("  [DEBUG] S_koffs[JP=1,Lx2=2,Lo=2,Li=2] = %.5e + %.5e*i, |S|=%.5e, arg=%.3f\n",
-          it->second.real(), it->second.imag(), std::abs(it->second), std::arg(it->second));
-      } else {
-        std::printf("  [DEBUG] S_koffs[JP=1,Lx2=2,Lo=2,Li=2] = NOT FOUND\n");
-      }
-    }
   } // end SOSWT block
-
-  // -----------------------------------------------
-  // S_koffs vs Ptolemy comparison table
-  // -----------------------------------------------
-  static const double ptol_mag[31][3] = {
-    // LDEL:     -2          0          +2
-    /* LI=0 */  {0.0,       0.0,       0.031541},
-    /* LI=1 */  {0.0,       0.028498,  0.021680},
-    /* LI=2 */  {0.020288,  0.019032,  0.017769},
-    /* LI=3 */  {0.028015,  0.017730,  0.0062396},
-    /* LI=4 */  {0.026046,  0.017251,  0.015631},
-    /* LI=5 */  {0.027465,  0.010069,  0.011666},
-    /* LI=6 */  {0.030268,  0.025254,  0.0071561},
-    /* LI=7 */  {0.027662,  0.021121,  0.0052177},
-    /* LI=8 */  {0.047739,  0.015263,  0.0034708},
-    /* LI=9 */  {0.029899,  0.0090015, 0.0021234},
-    /* LI=10 */ {0.016492,  0.0048676, 0.0011820},
-    /* LI=11 */ {0.0090187, 0.0026025, 0.00064164},
-    /* LI=12 */ {0.0049538, 0.0013955, 0.00034699},
-    /* LI=13 */ {0.0027331, 0.00075197,0.00018802},
-    /* LI=14 */ {0.0015128, 0.00040714,0.00010228},
-    /* LI=15 */ {0.00083940,0.00022140,0.000055873},
-    {0},{0},{0},{0},{0},{0},{0},{0},{0},{0},{0},{0},{0},{0},{0},
-  };
-  static const double ptol_phase[31][3] = {
-    /* LI=0 */  {0.0,    0.0,    -2.236},
-    /* LI=1 */  {0.0,    0.325,  -3.835},
-    /* LI=2 */  {3.538, -0.455,  -4.403},
-    /* LI=3 */  {2.172, -2.011,  -2.169},
-    /* LI=4 */  {1.265, -2.645,  -2.182},
-    /* LI=5 */  {-0.680,-0.754,  -2.110},
-    /* LI=6 */  {-1.574,-1.007,  -1.778},
-    /* LI=7 */  {-0.262,-1.198,  -1.544},
-    /* LI=8 */  {-0.977,-1.316,  -1.468},
-    /* LI=9 */  {-1.365,-1.463,  -1.505},
-    /* LI=10 */ {-1.499,-1.529,  -1.542},
-    /* LI=11 */ {-1.545,-1.555,  -1.559},
-    /* LI=12 */ {-1.562,-1.565,  -1.566},
-    /* LI=13 */ {-1.568,-1.568,  -1.569},
-    /* LI=14 */ {-1.570,-1.570,  -1.570},
-    /* LI=15 */ {-1.570,-1.570,  -1.570},
-    {0},{0},{0},{0},{0},{0},{0},{0},{0},{0},{0},{0},{0},{0},{0},
-  };
-  std::printf("\n=== S_koffs vs Ptolemy (JP=1/2, Lx2=2) comparison ===\n");
-  std::printf("  LI  LDEL  |S|_cpp    |S|_ptol   ratio   arg_cpp  arg_ptol  darg\n");
-  for (auto &[k, v] : S_koffs) {
-    auto [jp, lx2, lo, li] = k;
-    if (jp != 1 || lx2 != 2) continue;
-    int LDEL = lo - li;
-    if (LDEL < -2 || LDEL > 2 || (LDEL % 2 != 0)) continue;
-    int ldel_idx = (LDEL + 2) / 2; // 0,1,2 for LDEL=-2,0,+2
-    if (li < 0 || li > 15) continue;
-    double mag_ptol  = ptol_mag[li][ldel_idx];
-    double phase_ptol= ptol_phase[li][ldel_idx];
-    double mag_cpp   = std::abs(v);
-    double arg_cpp   = std::arg(v);
-    double ratio     = (mag_ptol > 1e-10) ? mag_cpp/mag_ptol : 0.0;
-    double darg      = (mag_ptol > 1e-10) ? arg_cpp - phase_ptol : 0.0;
-    if (mag_ptol > 1e-10) {
-      std::printf("  Li=%2d LDEL=%+d |S|_cpp=%.5e |S|_ptol=%.5e ratio=%.3f arg_cpp=%+.3f arg_ptol=%+.3f darg=%+.3f\n",
-                  li, LDEL, mag_cpp, mag_ptol, ratio, arg_cpp, phase_ptol, darg);
-    }
-  }
-  {
-    int cnt_diag = 0, cnt_offdiag = 0;
-    for (auto &[k, v] : S_koffs) {
-      auto [jp, lx2, lo, li] = k;
-      if (li == lo) cnt_diag++; else cnt_offdiag++;
-    }
-    std::printf("  Total S_koffs=%zu (%d diag, %d offdiag)\n",
-                S_koffs.size(), cnt_diag, cnt_offdiag);
-  }
 
   // -----------------------------------------------
   // Coulomb phases sigma_L  (cumulative Coulomb phase shifts)
@@ -321,28 +199,11 @@ void DWBA::XSectn() {
   // FACTOR_BET = 0.5/ka  (positive, since LDELMN=-2 → IODD=0 for 33Si case)
   // -----------------------------------------------
 
-  // Determine IODD from primary (full) LDELMN
-  //   LBP_bf = lP (actual orbital L of projectile constituent)
-  //   LBT_bf = lT (actual orbital L of target constituent)
-  {
-    int LBP_bf = lP;
-    int LBT_bf = lT;
-    int NDEL_bf = LxMax_bs + 1 - ((LxMax_bs + LBP_bf + LBT_bf) % 2);
-    int LDELMN_bf = 1 - NDEL_bf;
-    std::printf("  [BETCAL] LBP=%d LBT=%d NDEL_primary=%d LDELMN_primary=%d\n",
-                LBP_bf, LBT_bf, NDEL_bf, LDELMN_bf);
-    [[maybe_unused]] int IODD_check = std::abs(LDELMN_bf) % 2;
-  }
-
   // Compute LDELMN_primary dynamically from quantum numbers
   int NDEL_primary = LxMax_bs + 1 - ((LxMax_bs + lP + lT) % 2);
   int LDELMN_primary = 1 - NDEL_primary;
   int IODD_global = std::abs(LDELMN_primary) % 2;
-  std::printf("  [BETCAL] NDEL_primary=%d LDELMN_primary=%d IODD=%d\n",
-              NDEL_primary, LDELMN_primary, IODD_global);
   double FACTOR_BET = (IODD_global != 0) ? (-0.5 / ka) : (0.5 / ka);  // = +0.5/ka
-  std::printf("  [BETCAL] FACTOR_BET=%.4e (IODD=%d, ka=%.4f)\n",
-              FACTOR_BET, IODD_global, ka);
 
   using BETA_key = std::tuple<int,int,int,int>; // (JP_cons, Lx2, official_Mx, Lo)
   std::map<BETA_key, std::complex<double>> BETAS;
@@ -361,24 +222,9 @@ void DWBA::XSectn() {
 
     if (NDEL_lx <= 0) continue;
 
-    // Debug print for off-diagonal Lx2=2 entries
-    if (Lx2 == 2 && Lo != Li) {
-      std::printf("  [BETCAL DBG] JP=%d/2 Lx2=%d Lo=%d Li=%d LDEL=%d NDEL=%d LDELMN=%d range=[%d,%d]\n",
-                  JP_cons, Lx2, Lo, Li, LDEL, NDEL_lx, LDELMN_lx,
-                  LDELMN_lx, LDELMN_lx + 2*(NDEL_lx-1));
-    }
-
     // Range check
-    if (LDEL < LDELMN_lx || LDEL > LDELMN_lx + 2*(NDEL_lx-1)) {
-      if (Lx2 == 2 && Lo != Li)
-        std::printf("    -> FILTERED OUT by LDEL range\n");
-      continue;
-    }
-    if ((LDEL - LDELMN_lx) % 2 != 0) {
-      if (Lx2 == 2 && Lo != Li)
-        std::printf("    -> FILTERED OUT by step parity\n");
-      continue;
-    }
+    if (LDEL < LDELMN_lx || LDEL > LDELMN_lx + 2*(NDEL_lx-1)) continue;
+    if ((LDEL - LDELMN_lx) % 2 != 0) continue;
 
     // Coulomb phase factor: e^i(sigma_Li + sigma_Lo)
     double phase_angle = get_sig_a(Li) + get_sig_b(Lo);
@@ -404,53 +250,6 @@ void DWBA::XSectn() {
 
       double TEMPS = FACTOR_BET * (2.0*Li + 1.0) * cg;
       BETAS[{JP_cons, Lx2, official_Mx, Lo}] += TEMPS * S_phased;
-
-      if (Lx2 == 2) {
-        std::printf("    BETAS[JP=%d/2,Lx2=%d,Mx=%d,Lo=%d] += TEMPS=%.4e * |S|=%.4e CG=%.4e"
-                    "  (Li=%d,LDEL=%d,Mx_loop=%d)\n",
-                    JP_cons, Lx2, official_Mx, Lo, TEMPS,
-                    std::abs(S_phased), cg, Li, LDEL, Mx_loop);
-      }
-    }
-  }
-
-  std::cout << "\nBETAS entries: " << BETAS.size() << "\n";
-  {
-    int cnt = 0;
-    for (auto &[k, b] : BETAS) {
-      auto [jp, lx2, mx, lo] = k;
-      std::printf("  BETAS(JP=%d/2,Lx2=%d,Mx=%d,Lo=%d)=(%.4e,%.4e) |b|=%.4e\n",
-                  jp, lx2, mx, lo, b.real(), b.imag(), std::abs(b));
-      if (++cnt >= 12) { std::printf("  ... (%zu total)\n", BETAS.size()); break; }
-    }
-  }
-
-  // -----------------------------------------------
-  // BETCAL (JP,Lx2,Mx) breakdown and spot-check dumps
-  // -----------------------------------------------
-  {
-    std::map<std::tuple<int,int,int>, int> mx_count;
-    for (auto &[k, b] : BETAS) {
-      auto [jp, lx2, mx, lo] = k;
-      mx_count[{jp, lx2, mx}]++;
-    }
-    std::printf("\nBETAS (JP,Lx2,Mx) breakdown:\n");
-    for (auto &[k, n] : mx_count) {
-      auto [jp, lx2, mx] = k;
-      std::printf("  JP=%d/2 Lx2=%d Mx=%d : %d entries\n", jp, lx2, mx, n);
-    }
-
-    std::printf("\nBETAS JP=1/2 Lx2=2 Mx=0 (for comparison with Ptolemy):\n");
-    for (auto &[k, b] : BETAS) {
-      auto [jp, lx2, mx, lo] = k;
-      if (jp==1 && lx2==2 && mx==0)
-        std::printf("  Lo=%-2d : %+.5e %+.5ei\n", lo, b.real(), b.imag());
-    }
-    std::printf("\nBETAS JP=1/2 Lx2=2 Mx=1:\n");
-    for (auto &[k, b] : BETAS) {
-      auto [jp, lx2, mx, lo] = k;
-      if (jp==1 && lx2==2 && mx==1)
-        std::printf("  Lo=%-2d : %+.5e %+.5ei\n", lo, b.real(), b.imag());
     }
   }
 
@@ -471,7 +270,7 @@ void DWBA::XSectn() {
   //   Factor 10 converts fm^2 -> mb (1 fm^2 = 10 mb).
   //   FMNEG = 1 for Mx=0; FMNEG = 2 for Mx>0 (time-reversal degeneracy).
   // -----------------------------------------------
-  std::cout << "\nAngle (deg)    dSigma/dOmega (mb/sr)   [DWBA C++ 9J]\n";
+  std::cout << "\nAngle (deg)    dSigma/dOmega (mb/sr)\n";
 
   for (double theta_deg = AngleMin; theta_deg <= AngleMax + 1e-9; theta_deg += AngleStep) {
     double theta_rad  = theta_deg * M_PI / 180.0;
@@ -526,17 +325,6 @@ void DWBA::XSectn() {
       // FMNEG * |F|^2 contribution; factor 10 applied outside inner loop
       dSigma += 10.0 * FMNEG * std::norm(F_amp);
     }
-
-    // Debug spot-checks vs Ptolemy reference values
-    if (theta_deg == 0.0) {
-      std::cout << "[DEBUG 0deg] dSigma_9J=" << dSigma << " mb/sr\n";
-      std::cout << "[DEBUG 0deg] Ptolemy ref = 1.863 mb/sr\n";
-      std::cout << "[DEBUG 0deg] Ratio C++/Ptol = " << dSigma/1.863 << "\n";
-    }
-    if (theta_deg == 15.0)
-      std::cout << "[DEBUG 15deg] dSigma_9J=" << dSigma << " mb/sr  (Ptol: 2.535)\n";
-    if (theta_deg == 30.0)
-      std::cout << "[DEBUG 30deg] dSigma_9J=" << dSigma << " mb/sr  (Ptol: 0.905)\n";
 
     std::cout << std::fixed << std::setprecision(1) << theta_deg
               << "           " << std::scientific << std::setprecision(4)

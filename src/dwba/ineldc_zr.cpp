@@ -65,14 +65,6 @@ void DWBA::InelDcZR() {
   // Jacobian from GRDSET
   double JACOB_grdset = S1_c * S1_c * S1_c;
 
-  // Verify rx/ra = 1 at ZR geometry (sanity check)
-  double rx_check = S1_c + T1_c * zr_scale;  // should be 1.0
-
-  std::printf("\n[ZR] BRATMS1=%.5f BRATMS2=%.5f S1=%.5f S2=%.5f T1=%.5f\n",
-              BRATMS1, BRATMS2, S1_c, S2_c, T1_c);
-  std::printf("[ZR] zr_scale=%.6f  rx_check=%.10f (should be 1.0)\n",
-              zr_scale, rx_check);
-
   // ---- ZR normalization constant ----
   const double D0_ZR = -120.1;  // MeV·fm^(3/2)
 
@@ -102,13 +94,6 @@ void DWBA::InelDcZR() {
 
   // Projectile Bound State: NOT NEEDED for ZR (replaced by D0*delta)
   // But we still need ProjectileBS parameters for ATERM computation.
-  // The projectile WF is replaced by D0.
-
-  // Print bound state info
-  double maxT = 0;
-  for (int i = 1; i < TgtBS_ch.NSteps; ++i)
-    maxT = std::max(maxT, std::abs(TgtBS_ch.WaveFunction[i].real()));
-  std::printf("[ZR] Target BS peak amplitude: %.5f\n", maxT);
 
   // ---- Determine allowed Lx ----
   int lT = TargetBS.l;
@@ -131,11 +116,6 @@ void DWBA::InelDcZR() {
   double Ea_sf = Incoming.Ecm;
   double Eb_sf = Outgoing.Ecm;
   double FACTOR_sfromi = 2.0 * std::sqrt(ka_sf * kb_sf / (Ea_sf * Eb_sf));
-
-  std::printf("[ZR] Lmax=%d  lT=%d lP=%d LxMin=%d LxMax=%d\n",
-              Lmax, lT, lP, LxMin, LxMax_bs);
-  std::printf("[ZR] ka=%.5f kb=%.5f Ea=%.3f Eb=%.3f FACTOR_sfromi=%.5e\n",
-              ka_sf, kb_sf, Ea_sf, Eb_sf, FACTOR_sfromi);
 
   double h_zr = Incoming.StepSize;
   int N_zr = TgtBS_ch.NSteps;
@@ -228,31 +208,6 @@ void DWBA::InelDcZR() {
             //     = integral u_a * phi_T * (u_b*/rb) * ra * dra
             //     = integral u_a * phi_T * u_b* * (ra/rb) * dra
             //     = integral u_a * phi_T * u_b* * (1/zr_scale) * dra
-            //
-            // Wait — let me reconsider. The Jacobian from the delta function collapse
-            // involves going from (ra, rb, phi_ab) to (ra, rp, ...).
-            // In the ZR limit (rp→0), the angular phi_ab integration gives a factor
-            // 1/(S1_c * S2_c * ra * rb) per the existing code comment.
-            //
-            // Following the existing USE_ZR block: the integral used is simply:
-            //   I_1D = integral chi_a(ra) * phi_T(ra) * chi_b*(zr_scale*ra) * dra
-            // which in terms of stored functions is:
-            //   I_1D = sum_i (u_a[i]/ra) * phi_T[i] * conj(u_b(zr_scale*ra) / (zr_scale*ra)) * h
-            //
-            // But the existing code doesn't divide by r at all! It uses:
-            //   I_1D += ca_r * phi_T_r * cb_r * h_zr
-            // where ca_r = chi_a[i] = u_a(r_i), phi_T_r = phi_T(r_i), cb_r = conj(interp(rb))
-            //
-            // This mixes u (not divided by r) for distorted waves with phi (divided by r)
-            // for bound state. The correct ZR integral in Ptolemy terms involves
-            // chi*phi*chi which is (u/r)*phi*(u/r) = u*phi*u/r^2.
-            //
-            // Let me use the physically correct formula:
-            //   I_1D = sum_i [u_a(ri) * phi_T(ri) * conj(u_b(zr_scale*ri))]
-            //          / (ri * zr_scale * ri) * h
-            //
-            // where the ri^2 in the denominator comes from the 1/r factors of chi_a and chi_b,
-            // and the zr_scale*ri = rb in the denominator from chi_b = u_b/rb.
 
             std::complex<double> I_1D(0.0, 0.0);
 
@@ -277,40 +232,6 @@ void DWBA::InelDcZR() {
               I_1D += u_a_r * phi_T_r * u_b_conj / zr_scale * h_zr;
             }
 
-            // The complete ZR radial integral includes:
-            // D0 * A12_at_zero * J_zr * I_1D
-            //
-            // The Jacobian factor J_zr for the ZR collapse:
-            // From the 3D (ra, rb, phi_ab) integral with delta(rp):
-            //   J_zr = 1 / (S1_c * S2_c) from delta function Jacobian
-            // (The existing code uses J_zr embedded in the geometric factor)
-            //
-            // Actually, in Ptolemy's formulation, the GRDSET integral has:
-            //   JACOB = S1^3 (the volume element Jacobian for the (ra,rb,phi) coords)
-            //   RIROWTS = JACOB * ra * rb * weight
-            //
-            // For ZR, the delta function delta^3(rp) in the (ra,rb,phi) coordinates gives:
-            //   delta^3(rp) → 1/(S1*S2*ra*rb*sin(phi)) * delta(phi-0) * delta(...)
-            // After integrating out phi and the angular delta:
-            //   J_ZR = JACOB / (S1_c * S2_c * ra_ZR * rb_ZR) * (1 phi factor)
-            //        = S1^3 / (S1 * S2) = S1^2 / S2 ??? 
-            //
-            // Let me use the simpler physics approach:
-            // The ZR T-matrix element is (Satchler, eq 5.28):
-            //   T_ZR = D0 * sqrt(4pi)/(ka*kb) * integral chi_b*(kb*rb) phi_T(rx) chi_a(ka*ra) drx
-            //        with rb = (B/A)*rx for ZR geometry
-            //
-            // But in our formulation with A12 angular coupling already factored out,
-            // and the SFROMI normalization factor FACTOR = 2*sqrt(ki*kf/(Ei*Ef)):
-            //   The integral I is the radial overlap
-            //   S_transfer = FACTOR * ATERM / sqrt(2*Li+1) * phase * I
-            //
-            // The integral I for ZR should produce the same S-matrix elements
-            // as the FR integral but with the ZR approximation.
-            //
-            // From the existing USE_ZR block: Integral = D0_ZR * A12_at_zero * I_1D
-            // This is what gets multiplied by the SFROMI normalization.
-            
             std::complex<double> Integral = D0_ZR * A12_at_zero * I_1D;
 
             // Phase factor (same as InelDc): i^(Li+Lo+2*Lx+1)
@@ -354,9 +275,6 @@ void DWBA::InelDcZR() {
                 double sign_val = ((twoj_sum / 2) % 2 == 0) ? 1.0 : -1.0;
                 double RACAH_val = sign_val * sj;
 
-                std::printf("[ZR-ATERM] SixJ{%d, %.1f, 0.5; %.1f, %d, %d} = %.6f, sign=%.0f, RACAH=%.6f\n",
-                            TargetBS.l, jT_bs, jP_bs, ProjectileBS.l, Lx, sj, sign_val, RACAH_val);
-
                 // JBIGA/JBIGB: nuclear spins from DWBA object (generic)
                 int JBIGA = (int)std::round(2.0 * SpinTarget);    // 2*J(target)
                 int JBIGB = (int)std::round(2.0 * SpinResidual);  // 2*J(residual)
@@ -375,9 +293,6 @@ void DWBA::InelDcZR() {
                 int JBP_doubled = (int)(2 * ProjectileBS.j);
                 int ITEST_aterm = JX_doubled - JBP_doubled + 2*(ProjectileBS.l + TargetBS.l);
                 if ((ITEST_aterm / 2 + 1) % 2 != 0) ATERM_val = -ATERM_val;
-
-                std::printf("[ZR-ATERM] JBIGA=%d JBIGB=%d TEMP=%.5f SPAMP=%.5f Lx=%d ATERM=%.6f\n",
-                            JBIGA, JBIGB, TEMP_aterm, SPAMP, Lx, ATERM_val);
               }
             }
 
@@ -393,12 +308,6 @@ void DWBA::InelDcZR() {
             if (std::abs(S_elem) > 1e-15) {
               TransferSMatrix.push_back({Lx, Li, Lo, JPI, JPO, S_elem});
               total_entries++;
-
-              // Debug output for key partial waves
-              if ((Li <= 3 && Lo <= 3) || std::abs(S_elem) > 1e-4) {
-                std::printf("[ZR] Li=%d Lo=%d Lx=%d JPI=%d JPO=%d |S|=%.5e A12_0=%.5f\n",
-                            Li, Lo, Lx, JPI, JPO, std::abs(S_elem), A12_at_zero);
-              }
             }
 
           } // end JPO loop

@@ -191,26 +191,12 @@ void DWBA::InelDc() {
                         PrjBS_ch.V_coulomb[i], PrjBS_ch.Projectile.Z,
                         PrjBS_ch.Target.Z, PrjBS_ch.Target.A, PrjBS_ch.Projectile.A);
     }
-    std::cout << "  PrjBS V_real rebuilt: V_sol=" << PrjBS_ch.Pot.V << " MeV"
-              << "  R_np=" << PrjBS_ch.Pot.R0 * std::pow(PrjBS_ch.Target.A, 1.0/3.0)
-              << " fm  Target.A=" << PrjBS_ch.Target.A << std::endl;
-    // Diagnostic: print V_np at a few r values
-    for (double rcheck : {0.5, 1.0, 1.5, 2.0, 3.0}) {
-      int idx = static_cast<int>(rcheck / PrjBS_ch.StepSize);
-      if (idx < PrjBS_ch.NSteps) {
-        std::printf("    V_np(r=%.1f)=%.3f MeV  phi_P(r=%.1f)=%.4e\n",
-                    rcheck, PrjBS_ch.V_real[idx], rcheck, 
-                    PrjBS_ch.WaveFunction[idx].real());
-      }
-    }
   }
 
   // Override projectile WF with tabulated values (e.g. AV18) if loaded
   if (ProjectileWFLoaded) {
     double h_prj = PrjBS_ch.StepSize;
     double h_tab = ProjectileWFGridH;
-    std::cout << "  Overriding projectile WF with tabulated AV18 (SPAM="
-              << ProjectileWFSpam << ")\n";
     for (int I = 0; I < PrjBS_ch.NSteps; I++) {
       double r = I * h_prj;
       // Interpolate tabulated WF onto the calculation grid
@@ -245,9 +231,6 @@ void DWBA::InelDc() {
   }
   cutT = std::min(cutT, TgtBS_ch.NSteps - 1);
   cutP = std::min(cutP, PrjBS_ch.NSteps - 1);
-  std::cout << "Bound State MaxAmp: Target=" << maxT << " Projectile=" << maxP << std::endl;
-  std::cout << "Bound State cutoff: Target=" << cutT * TgtBS_ch.StepSize
-            << " fm, Projectile=" << cutP * PrjBS_ch.StepSize << " fm" << std::endl;
 
   // -------------------------------------------------------
   // Determine allowed Lx (angular momentum transfer)
@@ -265,8 +248,7 @@ void DWBA::InelDc() {
 
   TransferSMatrix.clear();
 
-  std::cout << "Computing distorted waves and transfer integrals (Li=0.."
-            << Lmax << ")..." << std::endl;
+
 
   // Precompute the bound state potential on the grid.
   // Vertex potential grid. Currently uses target BS potential V_nA at rx.
@@ -324,8 +306,6 @@ void DWBA::InelDc() {
     if (r_core < 1e-6) return VOPT_post;
     return VOPT_post / (1.0 + std::exp((r_core - RNCORE_post) / AOPT_post));
   };
-  std::printf("  USECORE POST: RNSCAT=%.3f RNCORE=%.3f VOPT=%.2f AOPT=%.3f CORE_SCALE=%.4f\n",
-              RNSCAT_post, RNCORE_post, VOPT_post, AOPT_post, CORE_SCALE);
 
   std::vector<double> IVPHI_T(NSteps_common, 0.0);  // phi_T * V_nA (PRIOR vertex)
   std::vector<double> IVPHI_P(NSteps_common, 0.0);  // phi_P * V_np (POST vertex, NUCONLY)
@@ -354,11 +334,6 @@ void DWBA::InelDc() {
   auto [phi_P_max, idx_P_peak] = findWFPeak(PrjBS_ch.WaveFunction, NSteps_common);
   double r_T_peak = idx_T_peak * h_common;
   double r_P_peak = idx_P_peak * h_common;
-
-  std::printf("  WF peaks: phi_T_max=%.4f at r=%.2f fm; phi_P_max=%.4f at r=%.2f fm\n",
-              phi_T_max, r_T_peak, phi_P_max, r_P_peak);
-  std::printf("  IVPHI vertex peaks: IVPHI_T_max=%.4f at r=%.2f fm; IVPHI_P_max=%.4f at r=%.2f fm\n",
-              IVPHI_T_max, r_T_vert_peak, IVPHI_P_max, r_P_vert_peak);
 
   // Interpolation helper (linear, returns real WF value)
   auto Interpolate = [&](const std::vector<std::complex<double>> &wf,
@@ -415,39 +390,6 @@ void DWBA::InelDc() {
     return v[ii] * (1.0 - frac) + v[ii + 1] * frac;
   };
 
-  // Diagnostic: check chi magnitude for L=0
-  {
-    // For deuteron (JSPS=2), L=0: JP_min = |2*0-2| = 2, so JP=2 is minimum valid
-    int diag_JP = 2*Incoming.JSPS;  // = 2*1=2 for proton, 2*2=4 for deuteron... 
-    // Actually for L=0: JPI = |0*2 - JSPS| = JSPS
-    diag_JP = std::abs(0 * 2 - Incoming.JSPS) + ((Incoming.JSPS % 2 == 0) ? 0 : 0);
-    // Simple: use JP = 2*L + JSPS for L=0 → JP=JSPS=2 for deuteron
-    diag_JP = Incoming.JSPS;  // For L=0: only valid JP is JSPS
-    WavElj(Incoming, 0, diag_JP);
-    double maxChi = 0;
-    for (int i = 1; i < Incoming.NSteps; ++i)
-      maxChi = std::max(maxChi, std::abs(Incoming.WaveFunction[i]));
-    double S0 = (Incoming.SMatrix.size() > 0) ? std::abs(Incoming.SMatrix[0]) : 0.0;
-    std::cout << "Chi_a(L=0,JP=" << diag_JP << ") MaxAmp=" << maxChi
-              << "  |S_0|=" << S0 << std::endl;
-  // Print full SMatrix for incoming and outgoing
-  std::printf("INCOMING SMatrix (d+33Si):\n");
-  int smat_out[] = {0,1,2,3,5,7,10,12,15};
-  for (int il : smat_out) {
-    if (il < (int)Incoming.SMatrix.size()) {
-      auto& S = Incoming.SMatrix[il];
-      std::printf("  L=%2d: |S|=%.6f phase=%.3f rad\n", il, std::abs(S), std::atan2(S.imag(), S.real()));
-    }
-  }
-  std::printf("OUTGOING SMatrix (p+34Si):\n");
-  for (int il : smat_out) {
-    if (il < (int)Outgoing.SMatrix.size()) {
-      auto& S = Outgoing.SMatrix[il];
-      std::printf("  L=%2d: |S|=%.6f phase=%.3f rad\n", il, std::abs(S), std::atan2(S.imag(), S.real()));
-    }
-  }
-  }
-
   // Determine effective grid cutoff for distorted waves contribution.
   // The integrand is negligible where BOTH bound states are ~0.
   // The max extent is driven by the larger of the two bound state cutoffs.
@@ -471,15 +413,6 @@ void DWBA::InelDc() {
     for (int JPI = JPI_min; JPI <= JPI_max; JPI += 2) {
       WavElj(Incoming, Li, JPI);
       chi_a_byJPI[JPI] = Incoming.WaveFunction;
-      // Print S-matrix for key L values
-      int smat_L[] = {0,1,2,3,5,7,10,12};
-      for (int sl : smat_L) {
-        if (Li == sl && Li < (int)Incoming.SMatrix.size()) {
-          auto& S = Incoming.SMatrix[Li];
-          std::printf("[SMAT_INC] L=%2d JP=%2d |S|=%.6f phase=%.3f rad\n",
-                      Li, JPI, std::abs(S), std::atan2(S.imag(), S.real()));
-        }
-      }
     }
 
     // For each outgoing partial wave Lo, compute ALL J-split JPO values and integrals.
@@ -581,33 +514,7 @@ void DWBA::InelDc() {
           // ZR scale: at phi=0, rp=0 → rb = (S2_c/S1_c)*ra
           double zr_scale = S2_c / S1_c;  // ≈ A/(A+1) ≈ 0.970
 
-          // At phi_ab=0, rb=zr_scale*ra, rx=ra:
-          //   cos_phiT = (T1_c*rb + S1_c*ra*1)/rx = (T1_c*zr_scale + S1_c) = 1.0 (exact)
-          //   phi_T_angle = 0
-          // => A12_val = sum_k coeff_k * cos(MT_k*0 - MU_k*0) = sum_k coeff_k
           double A12_at_zero = EvalA12(A12_terms, 0.0, 0.0);
-          // Sanity: verify rx/ra = 1 numerically
-          double rx_check = S1_c + T1_c * zr_scale;  // should be 1.0
-
-          // 1D radial integral over ra using uniform grid:
-          //   I_1D = ∫ chi_a(ra) * phi_T(ra) * chi_b*(rb=zr_scale*ra) * dra
-          // The measure dra is absorbed; the Jacobian from the delta function in 3D:
-          //   delta^3(rp) = delta(rp) / (4pi*rp^2) but the 3D angular integral over
-          //   phi_ab when rp→0 collapses via the sin(phi_ab)*dphi_ab factor.
-          //   In the PRIOR form: the 3D integral ∫dra dra dphi_ab sin(phi_ab) ... delta(rp) 
-          //   For the phi_ab integral with rp^2 = S2^2*ra^2 + S1^2*rb^2 - 2*S1*S2*ra*rb*cos(phi_ab)
-          //   drp/dphi_ab = (S1*S2*ra*rb*sin(phi_ab)) / rp → at phi=0: ∞ (limiting as rp→0)
-          //   The integral gives a factor of 1/(S1_c*S2_c*ra*rb) per the Jacobian.
-          //   Combined with the sin(phi_ab)*dphi_ab weight, the net ZR measure is:
-          //   ∫ dphi_ab sin(phi_ab) * delta(rp) = 1 / (S1_c * S2_c * ra * rb_at_ZR)
-          //                                      = 1 / (S1_c^2 * zr_scale * ra^2)
-          // Full integral measure per dra:  ra^2 * rb^2 * (1/(S1_c^2*zr_scale*ra^2))
-          //   = rb^2 / S1_c^2 = (zr_scale*ra)^2 / S1_c^2
-          // Simplification: just integrate chi_a(ra)*phi_T(ra)*chi_b*(zr_scale*ra)*dra
-          // and multiply by (zr_scale^2/S1_c^2) as the geometric factor.
-          // But for a SHAPE CHECK we only need relative values — skip the overall constant.
-          // For correct relative shape, we need all (Li,Lo) on the same footing.
-          // The A12_at_zero factor handles the angular coupling differences between (Li,Lo).
 
           double h_zr    = Incoming.StepSize;
           int    N_zr    = TgtBS_ch.NSteps;
@@ -617,26 +524,14 @@ void DWBA::InelDc() {
             double ra = i * h_zr;
             double rb = zr_scale * ra;
 
-            // chi_a(ra) — incoming partial-wave WF at ra
             std::complex<double> ca_r = chi_a[i];
-
-            // phi_T(rx=ra) — bound state at rx=ra (exact ZR condition)
             double phi_T_r = TgtBS_ch.WaveFunction[i].real();
-
-            // chi_b*(rb) — outgoing partial-wave WF at rb=zr_scale*ra (interpolated)
             std::complex<double> cb_r = std::conj(interp_chi_b(rb));
 
-            // Accumulate with measure dra (shape-preserving)
             I_1D += ca_r * phi_T_r * cb_r * h_zr;
           }
 
-          // Full ZR integral: D0 * A12(phi=0) * geometric_factor * I_1D
-          // geometric_factor = zr_scale^2 / S1_c^2 (from delta function Jacobian)
-          // Omitted here for shape check — overall scale doesn't affect angular distribution.
           Integral = D0_ZR * A12_at_zero * I_1D;
-
-          std::printf("[ZR] Li=%d Lo=%d Lx=%d A12_zero=%.5f rx_check=%.6f |I_1D|=%.5e |I_ZR|=%.5e\n",
-                      Li, Lo, Lx, A12_at_zero, rx_check, std::abs(I_1D), std::abs(Integral));
         }
 
 #else
@@ -682,10 +577,6 @@ void DWBA::InelDc() {
           return chi_a[ii] * (1.0 - frac) + chi_a[ii+1] * frac;
         };
         // Note: interp_chi_b already defined above (before #ifdef USE_ZR) — reuse it here.
-
-        // Debug tracker for integrand peak (per-integral)
-        double max_integrand_dbg = 0;
-        double max_ra_p = 0, max_rb_p = 0, max_rx_p = 0, max_rp_p = 0;
 
         // Helper: evaluate BSPROD-like integrand at (ra, rb, x=cos_phi)
         // Returns PRIOR: |IVPHI_T(rx)| * |phi_P(rp)|  (same as used in AngKernel)
@@ -880,15 +771,6 @@ void DWBA::InelDc() {
                 double DELVNU = VOPT_post * (fcore - fscat);
                 double FACTOR = 1.0 + DELVNU / VEFF;
                 ivphi_P = FACTOR * ivphi_P_nuconly;
-                // Debug: print USECORE values for first few points
-                if (Li == 0 && Lo == 2 && Lx == 2 && JPI == 2 && JPO == 3 && ra > 2.5 && ra < 3.5 && rb > 2.5 && rb < 3.5) {
-                  static int uc_dbg = 0;
-                  if (uc_dbg < 5) {
-                    std::printf("[USECORE_DBG] ra=%.2f rb=%.2f rp=%.3f rc=%.3f rs=%.2f VEFF=%.1f DELVNU=%.2f FACTOR=%.4f ivphi_nc=%.4f ivphi=%.4f\n",
-                      ra, rb, rp, r_core, r_scat, VEFF, DELVNU, FACTOR, ivphi_P_nuconly, ivphi_P);
-                    uc_dbg++;
-                  }
-                }
               } else {
                 ivphi_P = ivphi_P_nuconly;
               }
@@ -909,12 +791,6 @@ void DWBA::InelDc() {
                                                  PrjBS_ch.NSteps, PrjBS_ch.StepSize,
                                                  PrjBS_ch.MaxR, rp, phi_P_max, r_P_peak);
 #endif
-              // Track peak integrand (debug)
-              double this_integrand = std::abs(phi_T * Vbx * phi_P);
-              if (this_integrand > max_integrand_dbg) {
-                max_integrand_dbg = this_integrand;
-                max_ra_p = ra; max_rb_p = rb; max_rx_p = rx; max_rp_p = rp;
-              }
 
               // Angle of rx in the integration coordinate frame
               // Ptolemy line 16670: TEMP = (T1*RO + S1*RI*X)/RT
@@ -937,16 +813,6 @@ void DWBA::InelDc() {
         }
 
 #endif  // USE_ZR
-
-        // Debug: print integrand peak info for dominant term (Li=0,Lo=2,Lx=2)
-#ifndef USE_ZR
-        if (Li == 0 && Lo == 2 && Lx == 2) {
-          std::printf("[INTEGRAND_PEAK] Li=%d Lo=%d Lx=%d JPI=%d JPO=%d: max|kernel|=%.4e"
-                      " at ra=%.2f rb=%.2f rx=%.2f rp=%.2f |Integral|=%.4e\n",
-                      Li, Lo, Lx, JPI, JPO, max_integrand_dbg, max_ra_p, max_rb_p, max_rx_p, max_rp_p,
-                      std::abs(Integral));
-        }
-#endif
 
         // Phase factor from Ptolemy SFROMI (source.mor ~line 29130):
         //   ITEST = LASI + LASO + 2*LXP + 1
@@ -1017,6 +883,7 @@ void DWBA::InelDc() {
             // JBIGA = 2*J(target nucleus A = 33Si) = 2*1.5 = 3  → (JBIGA+1) = 4
             // TEMP = sqrt(1/4) = 0.5
             // (NUCLEAR spins of target and residual, NOT the neutron quantum numbers)
+
             // Nuclear spins from DWBA object (generic for any reaction)
             const int JBIGA = (int)std::round(2.0 * SpinTarget);    // 2*J(target)
             const int JBIGB = (int)std::round(2.0 * SpinResidual);  // 2*J(residual)
@@ -1039,11 +906,6 @@ void DWBA::InelDc() {
         }
 
         // Store: (Lx, Li, Lo, JPI, JPO) — SFROMI will apply 9-J coupling
-        {
-          auto S_elem = Integral * sfromi_norm;
-          std::printf("INELDC Li=%d Lo=%d Lx=%d JPI=%d JPO=%d S=(%+.5e,%+.5e) |S|=%.5e sfromi=%.5e\n",
-            Li, Lo, Lx, JPI, JPO, S_elem.real(), S_elem.imag(), std::abs(S_elem), sfromi_norm);
-        }
         TransferSMatrix.push_back({Lx, Li, Lo, JPI, JPO, Integral * sfromi_norm});
 
         } // end JPO loop
@@ -1052,7 +914,5 @@ void DWBA::InelDc() {
     } // end Lo loop
   } // end Li loop
 
-  std::cout << "Transfer integrals computed: " << TransferSMatrix.size()
-            << " entries." << std::endl;
-}
 
+}

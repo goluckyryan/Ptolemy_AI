@@ -306,12 +306,4 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
   for (int I = 0; I < NSTEPS; I++)
     maxAmp = std::max(maxAmp, std::abs(ch.WaveFunction[I].real()));
   std::cout << "  BS: maxAmp=" << maxAmp << "  kappa=" << kappa << " fm^-1" << std::endl;
-  // Print phi(r) at r=1..10 fm for comparison
-  std::cout << "  BS phi(r)=u(r)/r at r=1..10 fm:" << std::endl;
-  for (int rr = 1; rr <= 10; rr++) {
-    int idx = static_cast<int>(std::round(rr / h));
-    if (idx < NSTEPS && idx < (int)phi_vec.size()) {
-      std::printf("    r=%2d   phi=%.10e\n", rr, phi_vec[idx]);
-    }
-  }
 }
