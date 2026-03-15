@@ -202,63 +202,76 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     }
   }
 
-  // --- S-matrix extraction via Wronskian matching ---
-  // Numerov loop sets u[2..N].  Match at:
-  //   u[N-1] at r = (N-1)*h = MaxR - h
-  //   u[N-1-NBAKCM] at r = (N-1-NBAKCM)*h   (NBAKCM=4, like Ptolemy)
-  // Matches Ptolemy source.mor lines 30882–30916.
-  int NBAKCM = 4;
-  double R_last = (N - 1) * h;
-  double R_prev = (N - 1 - NBAKCM) * h;
+  // --- S-matrix extraction: handbook single-point method ---
+  // Match at index n_match = N-3 so 5-point stencil fits within [0..N]
+  int n_match = N - 3;
+  double R_match = n_match * h;
+  double rho_match = ch.k * R_match;
 
-  std::vector<double> FC(L + 2),  FCP(L + 2),  GC(L + 2),  GCP(L + 2);
-  std::vector<double> FC1(L + 2), FCP1(L + 2), GC1(L + 2), GCP1(L + 2);
-  Rcwfn(ch.k * R_last, ch.eta, L, L, FC,  FCP,  GC,  GCP);
-  Rcwfn(ch.k * R_prev, ch.eta, L, L, FC1, FCP1, GC1, GCP1);
+  // Get Coulomb functions and derivatives at R_match
+  std::vector<double> FC(L + 2), FCP(L + 2), GC(L + 2), GCP(L + 2);
+  Rcwfn(rho_match, ch.eta, L, L, FC, FCP, GC, GCP);
+  double FL  = FC[L];
+  double GL  = GC[L];
+  double FLP = FCP[L] * ch.k;   // dF/dr = (dF/drho)*(drho/dr) = FP * k
+  double GLP = GCP[L] * ch.k;   // same for G
 
-  double F  = FC[L],  G  = GC[L];
-  double F1 = FC1[L], G1 = GC1[L];
-  double wr  = u[N - 1].real(),          wi  = u[N - 1].imag();
-  double wr1 = u[N - 1 - NBAKCM].real(), wi1 = u[N - 1 - NBAKCM].imag();
+  // 5-point stencil for u'(R_match)
+  std::complex<double> u_nm2 = u[n_match - 2];
+  std::complex<double> u_nm1 = u[n_match - 1];
+  std::complex<double> u_np1 = u[n_match + 1];
+  std::complex<double> u_np2 = u[n_match + 2];
+  std::complex<double> u_prime = (u_nm2 - 8.0*u_nm1 + 8.0*u_np1 - u_np2) / (12.0 * h);
 
-  double A1  =  wr * F1 + wi * G1 - wr1 * F  - wi1 * G;
-  double A2  = -wr * G1 + wi * F1 + wr1 * G  - wi1 * F;
-  double CR  = -wr * F1 + wi * G1 + wr1 * F  - wi1 * G;
-  double CI  = -wr * G1 - wi * F1 + wr1 * G  + wi1 * F;
-  double den = A1 * A1 + A2 * A2;
+  std::complex<double> u_m = u[n_match];
+  double ur = u_m.real(), ui = u_m.imag();
+  double upr = u_prime.real(), upi = u_prime.imag();
 
-  double SJR = (den > 1e-30) ? (CR * A1 + CI * A2) / den : 0.0;
-  double SJI = (den > 1e-30) ? (CI * A1 - CR * A2) / den : 0.0;
+  // Wronskians: A = W(F,u), B = W(u,G)
+  double Ar = FLP * ur - upr * FL;
+  double Ai = FLP * ui - upi * FL;
+  double Br = upr * GL - GLP * ur;
+  double Bi = upi * GL - GLP * ui;
+
+  // S = (B + iA) / (B - iA)
+  double num_r = Br - Ai;
+  double num_i = Bi + Ar;
+  double den_r = Br + Ai;
+  double den_i = Bi - Ar;
+  double den   = den_r*den_r + den_i*den_i;
+
+  double SJR = (den > 1e-60) ? (num_r*den_r + num_i*den_i) / den : 0.0;
+  double SJI = (den > 1e-60) ? (num_i*den_r - num_r*den_i) / den : 0.0;
 
   if (ch.SMatrix.size() <= (size_t)L) ch.SMatrix.resize(L + 1);
   ch.SMatrix[L] = std::complex<double>(SJR, SJI);
 
   // Debug output for selected partial waves
   if (L == 12 || L == 7 || L == 5 || L == 2 || L == 0) {
-    std::printf("  [WavElj L=%2d JP=%d] F=%.5f G=%.5f F1=%.5f G1=%.5f\n",
-                L, Jp, F, G, F1, G1);
-    std::printf("               wr=%.4e wi=%.4e wr1=%.4e wi1=%.4e\n",
-                wr, wi, wr1, wi1);
-    std::printf("               A1=%.4e A2=%.4e CR=%.4e CI=%.4e den=%.4e\n",
-                A1, A2, CR, CI, den);
+    std::printf("  [WavElj L=%2d JP=%d] FL=%.5f GL=%.5f FLP=%.5f GLP=%.5f\n",
+                L, Jp, FL, GL, FLP, GLP);
+    std::printf("               ur=%.4e ui=%.4e upr=%.4e upi=%.4e\n",
+                ur, ui, upr, upi);
+    std::printf("               Ar=%.4e Ai=%.4e Br=%.4e Bi=%.4e den=%.4e\n",
+                Ar, Ai, Br, Bi, den);
     std::printf("               |S|=%.5f SJR=%.5f SJI=%.5f\n",
                 std::sqrt(SJR * SJR + SJI * SJI), SJR, SJI);
-    std::printf("               R_last=%.3f R_prev=%.3f k=%.4f eta=%.4f\n",
-                R_last, R_prev, ch.k, ch.eta);
+    std::printf("               R_match=%.3f k=%.4f eta=%.4f\n",
+                R_match, ch.k, ch.eta);
   }
 
   // --- Normalization (Ptolemy source.mor lines 30913–30916) ---
   // A1n = 0.5*(F*(1+SJR) + SJI*G)
   // A2n = 0.5*(G*(1-SJR) + SJI*F)
-  // alpha = (u[N-1] · A1n + conj-part A2n) / |u[N-1]|²
-  // Applies to all stored points; inner zeroed region is already 0.
-  double A1n  = 0.5 * (F * (1.0 + SJR) + SJI * G);
-  double A2n  = 0.5 * (G * (1.0 - SJR) + SJI * F);
-  double den2 = wr * wr + wi * wi;  // |u[N-1]|²
+  // alpha = (u[n_match] · A1n + conj-part A2n) / |u[n_match]|²
+  // Uses Coulomb functions at matching radius and u at matching point.
+  double A1n  = 0.5 * (FL * (1.0 + SJR) + SJI * GL);
+  double A2n  = 0.5 * (GL * (1.0 - SJR) + SJI * FL);
+  double den2 = ur * ur + ui * ui;  // |u[n_match]|²
 
   if (den2 > 1e-60) {
-    double alpha_r = (wr * A1n + wi * A2n) / den2;
-    double alpha_i = (wr * A2n - wi * A1n) / den2;
+    double alpha_r = (ur * A1n + ui * A2n) / den2;
+    double alpha_i = (ur * A2n - ui * A1n) / den2;
     std::complex<double> alpha(alpha_r, alpha_i);
 
     for (int i = 0; i <= N; ++i)
