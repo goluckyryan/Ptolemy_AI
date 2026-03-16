@@ -170,12 +170,36 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
     double ex_c = (r > 1e-15) ? std::exp((r - R_nuc) / ch.Pot.A) : 1e100;
     V2[I] = 1.0 / (1.0 + ex_c);
 
-    // SO: WOODSX type=2, V=-1 → f_SO = (2/(ASO·r))·exp/(1+exp)²
+    // SO: WOODSX type=2, V=-1 → LWF1 = 2*exp/((1+exp)²·ASO·r)  (positive)
+    // Ptolemy BOUND: V1 += ALS * LWF1 (ALS = VSO*ALS_raw, LWF1 > 0)
+    // In Ptolemy NF: X = V*LV2 + V1, LV2 < 0 (WOODSX type1 V=-1)
+    //   → effective V_SO in SE = -(-AFAC*V1) = AFAC*V1 = AFAC*ALS*LWF1
+    // In C++ NF: X = V0*V2 + V1, V2 > 0 (opposite sign to Ptolemy LV2)
+    //   → effective V_SO in SE = -(-AFAC*V1) = AFAC*V1   (same sign as Ptolemy)
+    //   BUT V2 > 0 while LV2 < 0: C++ WS is attractive via -AFAC*(+V0*V2) < 0
+    //   while Ptolemy WS is attractive via -AFAC*(V*LV2 < 0) = -AFAC*(negative) > 0 -- WAIT
+    //
+    // KEY: In C++ NF, -AFAC*X appears with a MINUS sign:
+    //   NF = 2 + h²*(κ²  -AFAC*X + DL²/r²)
+    // For bound-state oscillation inside well we need NF < 2:
+    //   → -AFAC*X < 0  → X > 0
+    // C++ V0*V2 > 0 ✓; V1 sign must NOT make X < 0 (can reduce X, but not flip it).
+    //
+    // Effective physical potential: V_eff = -X / AFAC
+    //   V_WS_eff  = -V0*V2/AFAC  < 0  (attractive, correct)
+    //   V_SO_eff  = -V1/AFAC = -ALS*f_so/AFAC
+    //
+    // For 0d5/2 (j=l+½): SO should be attractive (lowers energy).
+    //   ALS = VSO*ALS_raw = (-6)*(+2) = -12; f_so > 0
+    //   V_SO_eff = -(-12)*f_so/AFAC = +12*f_so/AFAC > 0  (REPULSIVE — WRONG)
+    //
+    // Fix: negate V1 SO term so V_SO_eff = -(-ALS*f_so) = ALS*f_so/AFAC < 0 (attractive ✓)
+    //   i.e., V1[I] -= ALS * f_so
     if (ch.Pot.VSO != 0.0 && r > 1e-15) {
       double ex_s = std::exp((r - R_SO) / ch.Pot.ASO);
       double den  = 1.0 + ex_s;
       double f_so = (2.0 / (ch.Pot.ASO * r)) * ex_s / (den * den);
-      V1[I] += ALS * f_so;   // Ptolemy: V1 += ALS * LWF1
+      V1[I] -= ALS * f_so;   // minus sign: corrects SO sign convention in C++ Numerov
     }
   }
 
