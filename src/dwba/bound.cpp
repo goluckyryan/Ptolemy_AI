@@ -187,9 +187,15 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
 
   // ---- V search via bisection (Ptolemy BOUND searches V to match derivatives) ----
   // We find V such that PHI = DROUT - DRIN = 0
+  //
+  // CRITICAL: must match the requested node count n.
+  // As V increases the potential gets deeper and picks up more bound states.
+  // Each PHI sign change corresponds to one additional node in the inner WF.
+  // We count sign changes and only latch the bracket whose node count == n.
 
-  // Lambda: run one evaluation, return PHI and optionally build phi=u/r
-  auto eval_bound = [&](double V0, bool build_phi, std::vector<double>* phi_out) -> double {
+  // Lambda: run one evaluation, return {PHI, nodes} and optionally build phi=u/r
+  auto eval_bound = [&](double V0, bool build_phi, std::vector<double>* phi_out,
+                        int* nodes_out) -> double {
 
     // --- Outer (inward) integration ---
     std::vector<double> wf(NSTEPS+5, 0.0);
@@ -234,6 +240,7 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
       SUMIN += wf[II]*wf[II];
       if (wf[II]*wf[II-1] < 0.0) nodes++;
     }
+    if (nodes_out) *nodes_out = nodes;
 
     if (std::abs(VALOUT) < 1e-30) return 1e30;
     double XX2    = wf[NMATCH] / VALOUT;
@@ -263,25 +270,37 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
     return PHI;
   };
 
-  // Scan for sign change then bisect
-  double V_lo = -1.0, V_hi = -1.0, phi_lo = 0.0, phi_hi = 0.0, prev_phi = 1e30;
-  for (double Vt = 10.0; Vt <= 200.0; Vt += 2.0) {
-    double phi = eval_bound(Vt, false, nullptr);
-    if (prev_phi != 1e30 && phi*prev_phi < 0.0 && V_lo < 0.0) {
-      V_lo = Vt - 2.0; phi_lo = prev_phi;
-      V_hi = Vt;       phi_hi = phi;
+  // Scan for sign change with matching node count, then bisect.
+  // Each PHI zero crossing with node count == n gives one bound state.
+  // node count increases by 1 each time we cross a new PHI zero.
+  double V_lo = -1.0, V_hi = -1.0, phi_lo = 0.0, phi_hi = 0.0;
+  double prev_phi = 1e30;
+  int    found_n  = -1;
+  for (double Vt = 10.0; Vt <= 300.0; Vt += 2.0) {
+    int cur_nodes = 0;
+    double phi = eval_bound(Vt, false, nullptr, &cur_nodes);
+    if (prev_phi != 1e30 && phi*prev_phi < 0.0) {
+      // This bracket has node count == cur_nodes (the higher-V side)
+      // Use cur_nodes as the node count for the bracket
+      if (cur_nodes == n && V_lo < 0.0) {
+        V_lo = Vt - 2.0; phi_lo = prev_phi;
+        V_hi = Vt;       phi_hi = phi;
+        found_n = cur_nodes;
+      }
     }
     prev_phi = phi;
   }
   if (V_lo < 0.0) {
-    std::cerr << "  ERROR: CalculateBoundState: no V solution found in [10,200] MeV\n";
+    std::cerr << "  ERROR: CalculateBoundState: no V solution found for n=" << n
+              << " in [10,300] MeV\n";
     return;
   }
+  std::cout << "  Bracket V=[" << V_lo << "," << V_hi << "] for n=" << found_n << std::endl;
 
   // Bisect to convergence
   for (int it = 0; it < 100; it++) {
     double Vm = 0.5*(V_lo + V_hi);
-    double pm = eval_bound(Vm, false, nullptr);
+    double pm = eval_bound(Vm, false, nullptr, nullptr);
     if (phi_lo * pm < 0.0) { V_hi = Vm; phi_hi = pm; }
     else                   { V_lo = Vm; phi_lo = pm; }
     if (std::abs(pm) < 1e-10) break;
@@ -294,7 +313,7 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
 
   // Build the normalized wavefunction phi = u/r
   std::vector<double> phi_vec;
-  eval_bound(V_sol, true, &phi_vec);
+  eval_bound(V_sol, true, &phi_vec, nullptr);
 
   // Store in ch.WaveFunction (real part = phi = u/r)
   // ch.WaveFunction is indexed 0..NSTEPS-1; phi_vec is 0-indexed (I→r=I*h)

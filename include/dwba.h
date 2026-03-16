@@ -139,6 +139,12 @@ private:
   void CalculateKinematics();
   void CalculateBoundState(Channel &ch, int n, int l, double j,
                            double bindingEnergy);
+
+public:
+  // Public wrapper for standalone bound state tests
+  void CalcBoundState(Channel &ch, int n, int l, double j, double bindingEnergy) {
+    CalculateBoundState(ch, n, l, j, bindingEnergy);
+  }
   void Integrate(const Channel &ch, int L,
                  std::vector<std::complex<double>> &wf);
 };
