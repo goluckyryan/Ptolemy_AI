@@ -341,7 +341,12 @@ void ElasticSolver::CalcScatteringMatrix() {
                 // For L<S: J=L-S+0..2S, but only J≥|L-S|=S-L are valid
                 double Jmin = std::abs(L - S_);
                 if (J < Jmin || J < 0) { Smat_[L][idx] = {0,0}; continue; }
-                double LS_val = (J*(J+1) - L*(L+1) - S_*(S_+1)) / 2.0;
+                // LS eigenvalue: (J(J+1)-L(L+1)-S(S+1))/2
+                // SO scale (Raphael + Ptolemy convention): divide by 2S
+                // For S=1/2: scale=1 (no change); for S=1: scale=0.5
+                double LS_raw = (J*(J+1) - L*(L+1) - S_*(S_+1)) / 2.0;
+                double so_scale = (S_ > 0) ? 1.0 / (2.0 * S_) : 1.0;
+                double LS_val = LS_raw * so_scale;
                 Smat_[L][idx] = RunNumerov(L, LS_val, Vr, Wi, Vc, VsoRe, VsoIm,
                                             FC1, GC1, FC2, GC2);
             }
