@@ -48,11 +48,12 @@ int main() {
     {
         ElasticSolver s;
         s.SetSystem(2, 1, 60, 28, 60.0);
-        s.AddVolumeWS ({-81.919, -4.836}, 1.15, 0.768);
-        s.AddSurfaceWS({    0.0, -8.994}, 1.33, 0.464);
-        s.AddSpinOrbit({ -3.557,  0.0  }, 0.972, 1.011);
+        s.AddVolumeWS ({-81.919,  0.000}, 1.150, 0.768);  // V real WS
+        s.AddVolumeWS ({  0.000, -4.836}, 1.330, 0.464);  // VI imag WS (different R0/a!)
+        s.AddSurfaceWS({  0.000, -8.994}, 1.373, 0.774);  // VSI surface WS deriv
+        s.AddSpinOrbit({ -3.557,  0.000}, 0.972, 1.011);  // VSO real only
         s.AddCoulomb(1.303);
-        s.SetLmax(40);
+        s.SetLmax(50);
         s.CalcKinematics();
         s.PrintKinematics();
         s.CalcScatteringMatrix();
