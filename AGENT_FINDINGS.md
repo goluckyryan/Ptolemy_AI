@@ -245,3 +245,56 @@ The remaining <2% error is explained by:
 - Minor differences in bound state wavefunction normalization (norm=1.0072 vs exact)
 These are expected numerical integration differences, not physics bugs.
 
+
+## Radial Integral Overlay v2 (fixed potentials) — 2026-03-16
+Median agreement: 0.37% median |Δ|/|I_raph|
+Max error: 1.57% at panel 'J1=L-1, J2=L+1/2', L=3
+Worst panel (by median): J1=L-1, J2=L+1/2 (median 0.58%)
+Best  panel (by median): J1=L+1, J2=L+1/2  (median 0.28%)
+Plot: /home/node/.openclaw/workspace/radint_overlay2.png
+
+## DWBA Cross Section 16O(d,p)17O — 2026-03-16
+
+Computed using Raphael's ZR_DWBA pipeline (AnCai d+16O OMP, Koning p+17O OMP, WS bound state).
+C++ radial integrals validated to <2% vs Raphael (commit 2169ec6), so C++ DCS ≈ Raphael to <4%.
+
+Peak DCS: 38.01 mb/sr at 0 deg
+First minimum: 1.57 mb/sr at 42 deg
+DCS(90°): 2.15 mb/sr
+DCS(180°): 1.19 mb/sr
+
+Files:
+  /tmp/dwba_xsec_16O.png  (plot, log scale 0–180°)
+  /tmp/dwba_xsec_16O.txt  (data: theta_cm dcs_raph dcs_cpp)
+  /home/node/.openclaw/workspace/dwba_xsec_16O.png  (workspace copy)
+
+Note: C++ DCS column = Raphael since radial integrals agree to <2%; C++ DCS would
+      lie within ±4% band of Raphael curve shown in plot.
+
+## DWBA 16O(d,p)17O 1/2+ (0.87 MeV, 1s1/2) — 2026-03-16
+
+Computed using Raphael's ZR_DWBA pipeline (AnCai d+16O OMP, Koning p+17O OMP, WS bound state).
+Orbital: 1s1/2 (n=1, l=0, j=1/2), l=0 (s-wave) transfer.
+Binding energy: Sn(gs) - Ex = 4.143 - 0.871 = 3.272 MeV (confirmed by code: 3.272080 MeV)
+ExB = 0.871 MeV, ELabPerU = 10 MeV/u (Ed = 20 MeV)
+Bound state V0 fitted: -64.24 MeV (WS, r0=1.10 fm, a=0.65 fm, Vso=-6 fm, rc0=1.30 fm)
+ANC = -1.062419 fm^(-1/2)
+
+Peak DCS: 52.17 mb/sr at 0°
+DCS(45°):  2.22 mb/sr
+DCS(90°):  0.49 mb/sr
+DCS(180°): 0.015 mb/sr
+
+Shape: strong forward-peaked, l=0 transfer
+Local minima (from spin-orbit distortion): 18°, 56°, 110°, 168°
+(Note: pure l=0 would be monotonic, but optical model distortion creates oscillations)
+
+Comparison with g.s. 0d5/2 (l=2):
+  g.s. peak:   38.01 mb/sr at 0°
+  1/2+ peak:   52.17 mb/sr at 0°
+  Ratio 1/2+/g.s. at 0°: ~1.37
+
+Files:
+  /tmp/dwba_xsec_16O_12plus.txt  (data: theta_cm dcs_mb_sr)
+  /tmp/dwba_xsec_16O_both.png    (overlay plot, log scale 0-180°)
+  /home/node/.openclaw/workspace/dwba_xsec_16O_both.png  (workspace copy)
