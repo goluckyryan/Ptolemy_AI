@@ -137,8 +137,10 @@ double ElasticSolver::CoulombPhase(int L) const {
     double sum_atan = 0;
     for (int n = 1; n <= N0; ++n) sum_atan += std::atan(eta_ / n);
     double x = N0 + 1, y = eta_;
-    double theta_N0 = (x-0.5)*std::atan2(y, x) - y/2*std::log(x*x + y*y)
-                    + y*(1.0 - std::log(2*PI)/2);
+    // Stirling approximation for Im[ln Gamma(x + iy)]:
+    // Im[(z-0.5)*ln(z) - z + 0.5*ln(2π)] = (x-0.5)*atan2(y,x) + y/2*ln(x²+y²) - y
+    // (the 0.5*ln(2π) is real, contributes 0 to imaginary part)
+    double theta_N0 = (x-0.5)*std::atan2(y, x) + y/2.0*std::log(x*x + y*y) - y;
     double sig = theta_N0 - sum_atan;
     for (int n = 1; n <= L; ++n) sig += std::atan(eta_ / n);
     return sig;
@@ -256,7 +258,8 @@ std::complex<double> ElasticSolver::RunNumerov(
     const std::vector<double>& Vc,
     const std::vector<double>& VsoRe, const std::vector<double>& VsoIm,
     const std::vector<double>& FC1, const std::vector<double>& GC1,
-    const std::vector<double>& FC2, const std::vector<double>& GC2) const
+    const std::vector<double>& FC2, const std::vector<double>& GC2,
+    std::vector<std::complex<double>>* wf_out) const
 {
     double k2 = k_*k_, h2_12 = h_*h_/12.0;
     double LL1 = (double)L*(L+1);
@@ -301,7 +304,14 @@ std::complex<double> ElasticSolver::RunNumerov(
     std::complex<double> A = (f2*u1 - u2*f1) / det;
     std::complex<double> B = (u2*g1 - g2*u1) / det;
     using namespace std::complex_literals;
-    return (B + 1i*A) / (B - 1i*A);
+    std::complex<double> norm = B - 1i*A;  // outgoing Coulomb coefficient (same as Raphael)
+    if (wf_out) {
+        // Normalize u so asymptotic form is F_L + S*H^+_L (unit incoming flux)
+        *wf_out = u;
+        if (std::abs(norm) > 1e-30)
+            for (auto& v : *wf_out) v /= norm;
+    }
+    return (B + 1i*A) / norm;
 }
 
 // ============================================================
@@ -328,9 +338,10 @@ void ElasticSolver::CalcScatteringMatrix() {
     for (int L = 0; L <= Lmax_; ++L)
         CoulPhase_[L] = CoulombPhase(L);
 
-    // Allocate S-matrix: Smat_[L] has (2S+1) entries for J = L-S..L+S
+    // Allocate S-matrix and wavefunctions: [L][idx]
     int nJ = (int)(2*S_) + 1;  // number of J channels per L
     Smat_.assign(Lmax_ + 1, std::vector<std::complex<double>>(nJ, {1,0}));
+    wfunc_.assign(Lmax_ + 1, std::vector<std::vector<std::complex<double>>>(nJ));
 
     bool hasSO = false;
     for (const auto& p : pots_) if (p.type == kSpinOrbit) { hasSO = true; break; }
@@ -339,26 +350,20 @@ void ElasticSolver::CalcScatteringMatrix() {
         if (S_ == 0.0) {
             // Spin-0: single channel, no SO splitting
             Smat_[L][0] = RunNumerov(L, 0.0, Vr, Wi, Vc, VsoRe, VsoIm,
-                                     FC1, GC1, FC2, GC2);
+                                     FC1, GC1, FC2, GC2, &wfunc_[L][0]);
         } else {
             // Spin-S (S>0): compute all J channels even if no SO potential
-            // (without SO all J give identical S, but all must be filled)
-            // Spin-S: loop over J = L-S, ..., L+S (step 1)
-            // idx 0 = J=L-S, idx 1 = J=L-S+1, ..., idx 2S = J=L+S
             for (int idx = 0; idx < nJ; ++idx) {
                 double J = L - S_ + idx;
-                // J must satisfy |L-S| ≤ J ≤ L+S and J ≥ 0
-                // Minimum valid J = |L-S|; idx=0 corresponds to J=L-S
-                // For L<S: J=L-S+0..2S, but only J≥|L-S|=S-L are valid
                 double Jmin = std::abs(L - S_);
-                if (J < Jmin || J < 0) { Smat_[L][idx] = {0,0}; continue; }
-                // LS eigenvalue: (J(J+1)-L(L+1)-S(S+1))/2
-                // Raphael convention: no extra 1/(2S) scale factor.
-                // Ptolemy divides by 2S internally (SO bug for S=1 deuteron) —
-                // we follow Raphael (physically correct) so so_scale = 1.
+                if (J < Jmin || J < 0) {
+                    Smat_[L][idx] = {0,0};
+                    wfunc_[L][idx].assign(N_+2, {0,0});
+                    continue;
+                }
                 double LS_val = (J*(J+1) - L*(L+1) - S_*(S_+1)) / 2.0;
                 Smat_[L][idx] = RunNumerov(L, LS_val, Vr, Wi, Vc, VsoRe, VsoIm,
-                                            FC1, GC1, FC2, GC2);
+                                            FC1, GC1, FC2, GC2, &wfunc_[L][idx]);
             }
         }
     }

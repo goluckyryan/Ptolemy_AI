@@ -70,6 +70,25 @@ public:
     // SetGrid overload: (h, rmax) -> N = rmax/h
     void SetGrid(double h, double rmax) { h_ = h; N_ = (int)(rmax/h + 0.5); }
 
+    // Wavefunction accessor: returns normalized u(r) array for (L, twoJ=2J).
+    // Grid: r[i] = i * h, i = 0..N. Call after Solve().
+    const std::vector<std::complex<double>>& GetWavefunction(int L, int twoJ) const {
+        static const std::vector<std::complex<double>> empty;
+        if (L < 0 || L >= (int)wfunc_.size()) return empty;
+        int twoS = (int)std::round(2*S_);
+        int idx = (twoJ - (2*L - twoS)) / 2;
+        if (idx < 0 || idx >= (int)wfunc_[L].size()) return empty;
+        return wfunc_[L][idx];
+    }
+    double GetH()   const { return h_; }
+    int    GetN()   const { return N_; }
+    double GetK()   const { return k_; }
+    double GetEta() const { return eta_; }
+    double GetCoulombPhase(int L) const {
+        if (L < 0 || L >= (int)CoulPhase_.size()) return 0.0;
+        return CoulPhase_[L];
+    }
+
     // SetKinematics: bypass SetSystem/CalcKinematics (for external k/eta/mu)
     void SetProjectile(int Ap, int Zp) { Ap_ = Ap; Zp_ = Zp;
         S_ = (Ap==1)?0.5:(Ap==2)?1.0:0.0; }
@@ -107,6 +126,10 @@ private:
     std::vector<std::vector<std::complex<double>>> Smat_;
     std::vector<double> CoulPhase_;
 
+    // Wavefunctions: wfunc_[L][idx] = normalized u(r) on the Numerov grid
+    // Same indexing as Smat_. Stored after CalcScatteringMatrix().
+    std::vector<std::vector<std::vector<std::complex<double>>>> wfunc_;
+
     // Internal helpers
     double NuclearMass(int A, int Z) const;
     double CoulombPhase(int L) const;
@@ -115,7 +138,8 @@ private:
         const std::vector<double>& Vc,
         const std::vector<double>& VsoRe, const std::vector<double>& VsoIm,
         const std::vector<double>& FC1, const std::vector<double>& GC1,
-        const std::vector<double>& FC2, const std::vector<double>& GC2) const;
+        const std::vector<double>& FC2, const std::vector<double>& GC2,
+        std::vector<std::complex<double>>* wf_out = nullptr) const;
 
     static double LegendreP(int L, double x);
     static double LegendrePprime(int L, double x);
