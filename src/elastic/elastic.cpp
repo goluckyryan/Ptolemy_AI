@@ -171,7 +171,7 @@ double ElasticSolver::LegendrePprime(int L, double x) {
 // ============================================================
 static void BuildPotentialArrays(
     const std::vector<PotEntry>& pots, bool hasCoulomb, double rc0,
-    int Zp, int Zt, int At,
+    int Ap, int Zp, int Zt, int At,
     double h, int N,
     std::vector<double>& Vr, std::vector<double>& Wi,
     std::vector<double>& Vc,
@@ -180,8 +180,17 @@ static void BuildPotentialArrays(
     Vr.assign(N, 0); Wi.assign(N, 0); Vc.assign(N, 0);
     VsoRe.assign(N, 0); VsoIm.assign(N, 0);
 
+    // R0MASS convention — from Ptolemy source.mor lines 28572-28581 (R0DEFAULT):
+    //   AMMORE = heavier mass, AMLESS = lighter mass
+    //   R0MASS = AMMORE^(1/3)
+    //   IF AMLESS > 2.5: R0MASS += AMLESS^(1/3)   (add projectile only if A > 2.5)
+    // This means:
+    //   p, n, d (Ap <= 2): R0MASS = At^(1/3)  only
+    //   t, He3, alpha, heavier (Ap > 2.5, i.e. Ap >= 3): R0MASS = At^(1/3) + Ap^(1/3)
     double At13 = std::cbrt((double)At);
-    double Rc   = hasCoulomb ? rc0 * At13 : 0.0;
+    double Ap13 = (Ap > 2.5) ? std::cbrt((double)Ap) : 0.0;
+    double R0MASS = At13 + Ap13;
+    double Rc   = hasCoulomb ? rc0 * R0MASS : 0.0;  // Coulomb follows same R0MASS convention
 
     for (int i = 0; i < N; ++i) {
         double r = (i == 0) ? 1e-10 : i * h;
@@ -195,7 +204,7 @@ static void BuildPotentialArrays(
 
         // Nuclear potentials
         for (const auto& p : pots) {
-            double R0 = p.r0 * At13;
+            double R0 = p.r0 * R0MASS;
             double ex = std::exp((r - R0) / p.a0);
 
             switch (p.type) {
@@ -303,7 +312,7 @@ void ElasticSolver::CalcScatteringMatrix() {
 
     // Build potential arrays
     std::vector<double> Vr, Wi, Vc, VsoRe, VsoIm;
-    BuildPotentialArrays(pots_, hasCoulomb_, rc0_, Zp_, Zt_, At_,
+    BuildPotentialArrays(pots_, hasCoulomb_, rc0_, Ap_, Zp_, Zt_, At_,
                          h_, N_, Vr, Wi, Vc, VsoRe, VsoIm);
 
     // Precompute Coulomb functions at both matching points (MINL=0 critical!)
