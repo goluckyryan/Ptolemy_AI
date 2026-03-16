@@ -53,6 +53,34 @@ public:
     double k()   const { return k_;   }
     double eta() const { return eta_; }
     double mu()  const { return mu_;  } // MeV/c^2
+    double Ecm() const { return Ecm_; }
+    double S()   const { return S_;   }
+
+    // S-matrix accessor: twoJ = 2*J (integer)
+    // idx = J - (L - S) = (twoJ - (2L - 2S)) / 2 = (twoJ - 2L + 2S) / 2... 
+    // Smat_[L] index: J=L-S -> idx=0, J=L+S -> idx=2S
+    std::complex<double> GetSMatrix(int L, int twoJ) const {
+        if (L < 0 || L >= (int)Smat_.size()) return {0,0};
+        int twoS = (int)std::round(2*S_);
+        int idx = (twoJ - (2*L - twoS)) / 2;
+        if (idx < 0 || idx >= (int)Smat_[L].size()) return {0,0};
+        return Smat_[L][idx];
+    }
+
+    // SetGrid overload: (h, rmax) -> N = rmax/h
+    void SetGrid(double h, double rmax) { h_ = h; N_ = (int)(rmax/h + 0.5); }
+
+    // SetKinematics: bypass SetSystem/CalcKinematics (for external k/eta/mu)
+    void SetProjectile(int Ap, int Zp) { Ap_ = Ap; Zp_ = Zp;
+        S_ = (Ap==1)?0.5:(Ap==2)?1.0:0.0; }
+    void SetTarget(int At, int Zt) { At_ = At; Zt_ = Zt; }
+    void SetKinematics(double k, double eta, double mu_amu) {
+        k_ = k; eta_ = eta;
+        mu_ = mu_amu * 931.494061;  // store in MeV/c^2
+        Ecm_ = k_ * k_ * 197.32697 * 197.32697 / (2.0 * mu_);
+        f_conv_ = 2.0 * mu_ / (197.32697 * 197.32697);  // AFAC = 2mu/hbar^2
+    }
+    void Solve() { CalcScatteringMatrix(); }
 
 private:
     // System

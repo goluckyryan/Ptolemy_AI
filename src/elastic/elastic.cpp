@@ -336,11 +336,13 @@ void ElasticSolver::CalcScatteringMatrix() {
     for (const auto& p : pots_) if (p.type == kSpinOrbit) { hasSO = true; break; }
 
     for (int L = 0; L <= Lmax_; ++L) {
-        if (S_ == 0.0 || !hasSO) {
-            // Spin-0 or no SO: single channel
+        if (S_ == 0.0) {
+            // Spin-0: single channel, no SO splitting
             Smat_[L][0] = RunNumerov(L, 0.0, Vr, Wi, Vc, VsoRe, VsoIm,
                                      FC1, GC1, FC2, GC2);
         } else {
+            // Spin-S (S>0): compute all J channels even if no SO potential
+            // (without SO all J give identical S, but all must be filled)
             // Spin-S: loop over J = L-S, ..., L+S (step 1)
             // idx 0 = J=L-S, idx 1 = J=L-S+1, ..., idx 2S = J=L+S
             for (int idx = 0; idx < nJ; ++idx) {
@@ -351,11 +353,10 @@ void ElasticSolver::CalcScatteringMatrix() {
                 double Jmin = std::abs(L - S_);
                 if (J < Jmin || J < 0) { Smat_[L][idx] = {0,0}; continue; }
                 // LS eigenvalue: (J(J+1)-L(L+1)-S(S+1))/2
-                // SO scale (Raphael + Ptolemy convention): divide by 2S
-                // For S=1/2: scale=1 (no change); for S=1: scale=0.5
-                double LS_raw = (J*(J+1) - L*(L+1) - S_*(S_+1)) / 2.0;
-                double so_scale = (S_ > 0) ? 1.0 / (2.0 * S_) : 1.0;
-                double LS_val = LS_raw * so_scale;
+                // Raphael convention: no extra 1/(2S) scale factor.
+                // Ptolemy divides by 2S internally (SO bug for S=1 deuteron) —
+                // we follow Raphael (physically correct) so so_scale = 1.
+                double LS_val = (J*(J+1) - L*(L+1) - S_*(S_+1)) / 2.0;
                 Smat_[L][idx] = RunNumerov(L, LS_val, Vr, Wi, Vc, VsoRe, VsoIm,
                                             FC1, GC1, FC2, GC2);
             }
