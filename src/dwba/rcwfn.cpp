@@ -418,29 +418,22 @@ int Rcwfn(double RHO, double ETA, int MINL, int MAXL, std::vector<double> &FC,
   FCP[LMIN] = R * F;
 
   if (LMAX != LMIN) {
-    for (int L = LMIN + 1; L <= LMAX; ++L) {
-      double T = GC[L];
-      // GC[L] was computed in downward recursion? No, GC was used as temp
-      // storage. Wait, downward recursion loop: GC[L] = ETA/PL + PL*AR This
-      // stored the 'p' value for recursion. But now we need to compute G
-      // upward. Original code: 800 GC(LMIN1) = G; ... DO 829 L=LMIN1, LMAX T =
-      // GC(L+1)  <-- This is the stored 'p' value? GC(L+1) = (GC(L)*GC(L+1) -
-      // GCP(L))/GCP(L+1) Wait, GC(L+1) was stored as ETA/PL + PL/RHO. GCP(L+1)
-      // was stored as SQRT((ETA/PL)^2 + 1). So yes, we use the stored values.
+    // Fortran: DO 829 L = LMIN1, LMAX
+    //            T        = GC(L+1)          <- reads NEXT slot (1-indexed L+1)
+    //            GC (L+1) = (GC(L)*GC(L+1) - GCP(L))/GCP(L+1)
+    //            GCP(L+1) =  GC(L)*GCP(L+1) - GC(L+1)*T
+    // In 0-indexed C++ with LMIN=0: Fortran L maps to C++ L (same),
+    // Fortran GC(L+1) = C++ GC[L+1].  The loop writes INTO GC[L+1] using
+    // the STORED value GC[L+1] before overwriting it.
+    // Previous C++ code wrongly used GC[L] (current slot) instead of GC[L+1].
+    for (int L = LMIN; L < LMAX; ++L) {
+      double T         = GC[L + 1];           // stored 'p' value at next slot
+      double stored_GCP = GCP[L + 1];
+      GC [L + 1] = (GC[L] * T           - GCP[L]) / stored_GCP;
+      GCP[L + 1] =  GC[L] * stored_GCP  - GC[L+1] * T;
 
-      // C++ indices:
-      // L goes from LMIN+1 to LMAX.
-      // Previous values are at L-1.
-      // Stored values are at L.
-
-      double stored_GC = GC[L];
-      double stored_GCP = GCP[L];
-
-      GC[L] = (GC[L - 1] * stored_GC - GCP[L - 1]) / stored_GCP;
-      GCP[L] = GC[L - 1] * stored_GCP - GC[L] * stored_GC;
-
-      FC[L] *= W;
-      FCP[L] *= W;
+      FC [L + 1] *= W;
+      FCP[L + 1] *= W;
     }
   }
 

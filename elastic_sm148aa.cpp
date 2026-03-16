@@ -271,6 +271,23 @@ int main() {
     const double BIGNUM = 1e30;
     const double STEPI  = 1e-10;
 
+    // Pre-compute Coulomb functions F_L, G_L at both matching points for all L.
+    // CRITICAL: call Rcwfn with MINL=0 so it uses the correct downward F recursion
+    // and upward G recursion across all L values. Calling with MINL=MAXL=L gives
+    // wrong G values because Steed's CF2 at a single L computes Q incorrectly for
+    // large L (the normalization W is computed only once for LMIN and applied
+    // uniformly to all L, but Q = -1/(F^2+G^2) varies with L).
+    int n_match_pt = N - 3;
+    int n1_pt = n_match_pt - 1;
+    int n2_pt = n_match_pt;
+    double rho1_pt = k * (n1_pt * h);
+    double rho2_pt = k * (n2_pt * h);
+
+    std::vector<double> FC1_all(Lmax + 2), FCP1_all(Lmax + 2), GC1_all(Lmax + 2), GCP1_all(Lmax + 2);
+    std::vector<double> FC2_all(Lmax + 2), FCP2_all(Lmax + 2), GC2_all(Lmax + 2), GCP2_all(Lmax + 2);
+    Rcwfn(rho1_pt, eta, 0, Lmax, FC1_all, FCP1_all, GC1_all, GCP1_all);
+    Rcwfn(rho2_pt, eta, 0, Lmax, FC2_all, FCP2_all, GC2_all, GCP2_all);
+
     for (int L = 0; L <= Lmax; ++L) {
         // Build f(r) array
         double LL1_d = (double)L * (L + 1);
@@ -319,43 +336,29 @@ int main() {
             }
         }
 
-        // S-matrix extraction: 5-point stencil Wronskian
-        int n_match = N - 3;
-        double R_match = n_match * h;
-        double rho_match = k * R_match;
+        // S-matrix extraction: two-point matching using pre-computed Coulomb functions.
+        // F,G from Rcwfn called with MINL=0,MAXL=Lmax (correct upward G recursion).
+        // u(r) = A*G_L(r) + B*F_L(r)  =>  S = (B + iA)/(B - iA)
+        int n1 = n1_pt, n2 = n2_pt;
 
-        std::vector<double> FC(L + 2), FCP(L + 2), GC(L + 2), GCP(L + 2);
-        Rcwfn(rho_match, eta, L, L, FC, FCP, GC, GCP);
-        double FL  = FC[L];
-        double GL  = GC[L];
-        double FLP = FCP[L] * k;
-        double GLP = GCP[L] * k;
+        double f1 = FC1_all[L], g1 = GC1_all[L];
+        double f2 = FC2_all[L], g2 = GC2_all[L];
 
-        auto u_nm2 = u[n_match - 2];
-        auto u_nm1 = u[n_match - 1];
-        auto u_np1 = u[n_match + 1];
-        auto u_np2 = u[n_match + 2];
-        auto u_prime = (u_nm2 - 8.0*u_nm1 + 8.0*u_np1 - u_np2) / (12.0 * h);
+        std::complex<double> u1 = u[n1];
+        std::complex<double> u2 = u[n2];
 
-        auto u_m = u[n_match];
-        double ur = u_m.real(), ui = u_m.imag();
-        double upr = u_prime.real(), upi = u_prime.imag();
+        // det = f2*g1 - f1*g2
+        double det = f2 * g1 - f1 * g2;
 
-        double Ar = FLP * ur - upr * FL;
-        double Ai = FLP * ui - upi * FL;
-        double Br = upr * GL - GLP * ur;
-        double Bi = upi * GL - GLP * ui;
+        // A = G-coefficient, B = F-coefficient
+        std::complex<double> A = (f2 * u1 - u2 * f1) / det;
+        std::complex<double> B = (u2 * g1 - g2 * u1) / det;
 
-        double num_r = Br - Ai;
-        double num_i = Bi + Ar;
-        double den_r = Br + Ai;
-        double den_i = Bi - Ar;
-        double den   = den_r*den_r + den_i*den_i;
-
-        double SJR = (den > 1e-60) ? (num_r*den_r + num_i*den_i) / den : 0.0;
-        double SJI = (den > 1e-60) ? (num_i*den_r - num_r*den_i) / den : 0.0;
-
-        SMatrix[L] = std::complex<double>(SJR, SJI);
+        // S = (B + iA) / (B - iA)
+        using namespace std::complex_literals;
+        std::complex<double> Snum = B + 1i * A;
+        std::complex<double> Sden = B - 1i * A;
+        SMatrix[L] = Snum / Sden;
     }
 
     std::cout << "S-matrix computed.\n\n";
