@@ -27,6 +27,9 @@
 static const double HBARC = 197.32697, AMU = 931.494061;
 
 // ── Build incoming d+16O solver ──────────────────────────────
+// Potentials: AnCai OMP for d+16O at ELab=20 MeV (10 MeV/u)
+// Parameters computed from Raphael's AnCai formula (opticalPotentials.py)
+// A=16, Z=8, E=20.0 MeV
 static ElasticSolver BuildIncoming(int Lmax) {
     double m_d=2.01410, m_A=15.99491;
     double mu_amu = m_d*m_A/(m_d+m_A), Ecm=20.0*m_A/(m_d+m_A);
@@ -34,15 +37,24 @@ static ElasticSolver BuildIncoming(int Lmax) {
     double eta=1.0*8.0/137.035999*mu_MeV/(HBARC*k);
     ElasticSolver s; s.SetTarget(16,8); s.SetProjectile(2,1);
     s.SetKinematics(k,eta,mu_amu); s.SetLmax(Lmax); s.SetGrid(0.1,30.0);
-    s.AddVolumeWS({-88.955, 0.0},   1.149, 0.751);
-    s.AddVolumeWS({ 0.0,   -2.348}, 1.345, 0.603);
-    s.AddSurfaceWS({0.0,  -10.218}, 1.397, 0.687);
-    s.AddSpinOrbit({-3.557, 0.0},   0.972, 1.011);
-    s.AddCoulomb(1.303);
+    // AnCai: v=88.9546, r0=1.14892, a=0.75075
+    //        vi=2.348,  ri0=1.34457, ai=0.60302
+    //        vsi=10.218, rsi0=1.39432, asi=0.68723
+    //        vso=3.557, rso0=0.972, aso=1.011, rc0=1.303
+    s.AddVolumeWS({-88.954623, 0.0},   1.148920, 0.750750);
+    s.AddVolumeWS({ 0.0,      -2.348000}, 1.344566, 0.603016);
+    s.AddSurfaceWS({0.0,     -10.218000}, 1.394321, 0.687230);
+    s.AddSpinOrbit({-3.557000, 0.0},    0.972000, 1.011000);
+    s.AddCoulomb(1.303000);
     return s;
 }
 
 // ── Build outgoing p+17O solver ──────────────────────────────
+// Potentials: Koning OMP for p+17O at Eout=20.850542 MeV
+// Parameters computed from Raphael's Koning formula (opticalPotentials.py)
+// A=17, Z=8, Zproj=1, E=20.850542 MeV
+// Note: Koning returns rc0=0 → point Coulomb (no uniform-sphere correction)
+// Note: Koning also has imaginary spin-orbit vsoi=-0.0988 MeV
 static ElasticSolver BuildOutgoing(int Lmax) {
     double m_p=1.00728, m_B=16.99913;
     double mu_amu=m_p*m_B/(m_p+m_B), Elab=20.85054, Ecm=Elab*m_B/(m_p+m_B);
@@ -50,11 +62,18 @@ static ElasticSolver BuildOutgoing(int Lmax) {
     double eta=1.0*8.0/137.035999*mu_MeV/(HBARC*k);
     ElasticSolver s; s.SetTarget(17,8); s.SetProjectile(1,1);
     s.SetKinematics(k,eta,mu_amu); s.SetLmax(Lmax); s.SetGrid(0.1,30.0);
-    s.AddVolumeWS({-49.544, 0.0},   1.250, 0.650);
-    s.AddVolumeWS({ 0.0,   -2.061}, 1.250, 0.650);
-    s.AddSurfaceWS({0.0,   -7.670}, 1.250, 0.650);
-    s.AddSpinOrbit({-5.296, 0.0},   1.250, 0.650);
-    s.AddCoulomb(1.419);
+    // Koning: v=49.9450, r0=1.14624, a=0.67528
+    //         vi=1.9361, ri0=1.14624, ai=0.67528
+    //         vsi=7.7768, rsi0=1.30165, asi=0.52755
+    //         vso=5.3183, rso0=0.93378, aso=0.59
+    //         vsoi=-0.09876, rsoi0=0.93378, asoi=0.59
+    //         rc0=0 (point Coulomb in Raphael's Koning)
+    s.AddVolumeWS({-49.944991, 0.0},    1.146235, 0.675284);
+    s.AddVolumeWS({ 0.0,      -1.936127}, 1.146235, 0.675284);
+    s.AddSurfaceWS({0.0,      -7.776792}, 1.301645, 0.527549);
+    s.AddSpinOrbit({-5.318303, 0.0},    0.933775, 0.590000);
+    s.AddSpinOrbit({ 0.0,      0.098757}, 0.933775, 0.590000);  // vsoi<0 → +0.0988 stored
+    s.AddCoulomb(0.0);  // rc0=0: point Coulomb, matches Raphael Koning convention
     return s;
 }
 

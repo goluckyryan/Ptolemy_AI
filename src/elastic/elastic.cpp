@@ -198,10 +198,13 @@ static void BuildPotentialArrays(
         double r = (i == 0) ? 1e-10 : i * h;
 
         // Coulomb
-        if (hasCoulomb && Rc > 0) {
-            Vc[i] = (r < Rc)
-                ? Zp * Zt * E2 * (3.0 - r*r/(Rc*Rc)) / (2.0*Rc)
-                : Zp * Zt * E2 / r;
+        // If hasCoulomb: use uniform-sphere for r<Rc, point for r>=Rc.
+        // If Rc==0 (rc0=0, e.g. Koning convention): pure point Coulomb (Raphael-compatible).
+        if (hasCoulomb) {
+            if (Rc > 0.0 && r < Rc)
+                Vc[i] = Zp * Zt * E2 * (3.0 - r*r/(Rc*Rc)) / (2.0*Rc);
+            else
+                Vc[i] = Zp * Zt * E2 / r;
         }
 
         // Nuclear potentials

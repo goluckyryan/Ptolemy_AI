@@ -115,3 +115,25 @@ All errors vs magnitude |I| ≤ 5%. Residual discrepancy is ODE solver differenc
 - C++ Numerov grid: `r[i] = i·h` for i=0..N+1 (N+2 entries), same alignment
 - The wfO evaluation at `r/mF = r·(16/17)` corresponds to the ZR DWBA coordinate change from the d-16O relative coordinate to the p-17O relative coordinate
 - Residual ~1-3% error: Numerov (C++) vs RK4 (Raphael) → normal numerical difference
+
+## Radial Integral Plot — 2026-03-16
+
+Plot saved to `/tmp/radint_plot.png`
+Data table saved to `/tmp/radint_table.txt`
+
+**Data summary:** Six diagonal blocks (L_β = L_α) covering L_α = 0..18. All integrals show a characteristic peak at low partial waves (L_α = 1–3) then decay toward zero for large L_α, as expected from the nuclear overlap region. Key ranges:
+
+- Re(I): −0.033 to +0.041 (peak magnitudes at L_α ≈ 1–4 depending on block)
+- Im(I): −0.034 to +0.022 (peak magnitudes at L_α ≈ 2–4 depending on block)
+- Peak |Re| block: J1=L+1, J2=L+1/2 at L_α=0, Re = 4.08×10⁻²
+- Peak |Im| block: J1=L-1, J2=L+1/2 at L_α=2 (L2=2 diagonal), Im = −3.36×10⁻²
+- For L_α ≥ 10, all integrals |I| < 2×10⁻³ (sub-Coulomb barrier suppression)
+- The plot matches the qualitative shape of Figure 5.3: oscillatory behavior at low L damping to ~zero by L_α ≈ 12–14, Im dominates Re at intermediate L (4–8)
+
+## Radial Integral Overlay — 2026-03-16
+Overall agreement: 0.83% median |Δ|/|I_raph|
+Max deviation: 194.53%
+Worst panel: J1=L+1, J2=L+1/2 (median 0.89%)
+Best panel:  J1=L+1, J2=L-1/2 (median 0.82%)
+Note: C++ uses custom OMP params; Raphael uses AnCai/Koning global OMP — some differences expected from potential mismatch.
+Plot: /home/node/.openclaw/workspace/radint_overlay.png
