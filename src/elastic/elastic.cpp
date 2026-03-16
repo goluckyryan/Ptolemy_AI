@@ -1,8 +1,10 @@
 // elastic.cpp — Unified elastic scattering solver implementation
 // Sign conventions verified against Raphael (Python) for:
-//   148Sm(α,α) 50 MeV  and  60Ni(p,p) 30 MeV
+//   148Sm(α,α) 50 MeV,  60Ni(p,p) 30 MeV,  60Ni(d,d) 60 MeV
 #include "elastic.h"
 #include "rcwfn.h"
+// Forward-declare only — do NOT include math_utils.h here (JSymbols.h ODR issue)
+double ClebschGordan(double J1, double m1, double J2, double m2, double J, double m);
 #include <cmath>
 #include <iostream>
 #include <fstream>
@@ -317,9 +319,9 @@ void ElasticSolver::CalcScatteringMatrix() {
     for (int L = 0; L <= Lmax_; ++L)
         CoulPhase_[L] = CoulombPhase(L);
 
-    // Allocate S-matrix
-    Smat_.resize(Lmax_ + 1);
-    for (auto& s : Smat_) s = {std::complex<double>(1,0), std::complex<double>(1,0)};
+    // Allocate S-matrix: Smat_[L] has (2S+1) entries for J = L-S..L+S
+    int nJ = (int)(2*S_) + 1;  // number of J channels per L
+    Smat_.assign(Lmax_ + 1, std::vector<std::complex<double>>(nJ, {1,0}));
 
     bool hasSO = false;
     for (const auto& p : pots_) if (p.type == kSpinOrbit) { hasSO = true; break; }
@@ -329,14 +331,18 @@ void ElasticSolver::CalcScatteringMatrix() {
             // Spin-0 or no SO: single channel
             Smat_[L][0] = RunNumerov(L, 0.0, Vr, Wi, Vc, VsoRe, VsoIm,
                                      FC1, GC1, FC2, GC2);
-            Smat_[L][1] = Smat_[L][0];
         } else {
-            // Spin-1/2: two J channels per L
-            for (int spin = 0; spin <= 1; ++spin) {
-                if (L == 0 && spin == 1) { Smat_[0][1] = {1,0}; continue; }
-                double J = (spin == 0) ? L + S_ : L - S_;
+            // Spin-S: loop over J = L-S, ..., L+S (step 1)
+            // idx 0 = J=L-S, idx 1 = J=L-S+1, ..., idx 2S = J=L+S
+            for (int idx = 0; idx < nJ; ++idx) {
+                double J = L - S_ + idx;
+                // J must satisfy |L-S| ≤ J ≤ L+S and J ≥ 0
+                // Minimum valid J = |L-S|; idx=0 corresponds to J=L-S
+                // For L<S: J=L-S+0..2S, but only J≥|L-S|=S-L are valid
+                double Jmin = std::abs(L - S_);
+                if (J < Jmin || J < 0) { Smat_[L][idx] = {0,0}; continue; }
                 double LS_val = (J*(J+1) - L*(L+1) - S_*(S_+1)) / 2.0;
-                Smat_[L][spin] = RunNumerov(L, LS_val, Vr, Wi, Vc, VsoRe, VsoIm,
+                Smat_[L][idx] = RunNumerov(L, LS_val, Vr, Wi, Vc, VsoRe, VsoIm,
                                             FC1, GC1, FC2, GC2);
             }
         }
@@ -344,7 +350,7 @@ void ElasticSolver::CalcScatteringMatrix() {
 }
 
 // ============================================================
-// DCS computation
+// DCS computation — general spin formula (matches Raphael exactly)
 // ============================================================
 std::complex<double> ElasticSolver::CoulombAmp(double theta_deg) const {
     double theta = theta_deg * PI / 180.0;
@@ -354,92 +360,148 @@ std::complex<double> ElasticSolver::CoulombAmp(double theta_deg) const {
     return std::complex<double>(-fmod*std::cos(phi_C), -fmod*std::sin(phi_C));
 }
 
-double ElasticSolver::DCSUnpolarized(double theta_deg) const {
-    if (theta_deg < 0.01) return std::numeric_limits<double>::quiet_NaN();
+// Associated Legendre P_l^m(x), m >= 0, Condon-Shortley convention
+// P_l^m = (-1)^m * (1-x^2)^(m/2) * d^m/dx^m P_l(x)
+// Using standard recurrence.
+double ElasticSolver::AssocLegendreP(int l, int m, double x) {
+    if (m < 0 || m > l) return 0.0;
+    // Start from P_m^m = (-1)^m * (2m-1)!! * (1-x^2)^(m/2)
+    double pmm = 1.0;
+    double sfact = 1.0;
+    double omx2 = (1.0 - x)*(1.0 + x);  // 1-x^2
+    for (int i = 1; i <= m; ++i) {
+        pmm  *= -sfact * std::sqrt(omx2);
+        sfact += 2.0;
+    }
+    if (l == m) return pmm;
+    double pmmp1 = x * (2*m + 1) * pmm;
+    if (l == m+1) return pmmp1;
+    double pll = 0;
+    for (int ll = m+2; ll <= l; ++ll) {
+        pll = ((2*ll - 1)*x*pmmp1 - (ll + m - 1)*pmm) / (ll - m);
+        pmm = pmmp1; pmmp1 = pll;
+    }
+    return pll;
+}
+
+// Thin CG wrapper (math_utils.h → JSymbols.h)
+double ElasticSolver::CG(double j1, double m1, double j2, double m2, double J, double M) {
+    return ClebschGordan(j1, m1, j2, m2, J, M);
+}
+
+// GMatrix element G(v, v0, L) = Σ_J CG(L,v0-v; S,v | J,v0) * CG(L,0; S,v0 | J,v0) * S_J(L)
+// Then nuclear amp f_N(v,v0,θ) = (1/2ik) Σ_L (2L+1) * (-1)^(v0-v)
+//   * sqrt(fact(L-|v0-v|)/fact(L+|v0-v|)) * P_L^|v0-v|(cosθ) * e^{2iσ_L} * G(v,v0,L)
+// (Raphael NuclearScatteringAmp)
+std::complex<double> ElasticSolver::NuclearAmp(double v, double v0, double theta_deg) const {
     double theta  = theta_deg * PI / 180.0;
     double cos_th = std::cos(theta);
-    double sin_th = std::sin(theta);
+    int    m      = (int)std::abs(v0 - v);  // |Δm|
 
-    std::complex<double> fC = CoulombAmp(theta_deg);
-
-    // Nuclear amplitudes
-    std::complex<double> A(0,0), B(0,0);
-    std::complex<double> two_ik(0, 2.0*k_);
-
+    std::complex<double> sum(0,0);
     for (int L = 0; L <= Lmax_; ++L) {
+        if (m > L) continue;  // P_L^m = 0 for m > L
+
+        // Compute GMatrix element
+        std::complex<double> Gmat(0,0);
+        if (S_ == 0.0) {
+            Gmat = Smat_[L][0] - (v == v0 ? 1.0 : 0.0);
+        } else {
+            int nJ = (int)(2*S_) + 1;
+            for (int idx = 0; idx < nJ; ++idx) {
+                double J = L - S_ + idx;
+                if (J < 0) continue;
+                double cg1 = CG(L, v0 - v, S_, v,  J, v0);
+                double cg2 = CG(L, 0.0,    S_, v0,  J, v0);
+                // Guard against NaN from CG (e.g. when M doesn't match J)
+                if (std::isnan(cg1) || std::isnan(cg2)) continue;
+                Gmat += cg1 * cg2 * Smat_[L][idx];
+            }
+            if (v == v0) Gmat -= 1.0;  // subtract δ(v,v0) for T-matrix
+        }
+
         double sL = CoulPhase_[L];
         std::complex<double> e2s(std::cos(2*sL), std::sin(2*sL));
-        double PL  = LegendreP(L, cos_th);
 
-        if (S_ == 0.0) {
-            // Spin-0: single S-matrix
-            A += (double)(2*L+1) * e2s * (Smat_[L][0] - 1.0) * PL;
-        } else {
-            // Spin-1/2: spin-averaged (McIntyre formula)
-            // S_[L][0] = J=L+1/2, S_[L][1] = J=L-1/2 (for L>0)
-            std::complex<double> sp = Smat_[L][0];
-            std::complex<double> sm = (L == 0) ? std::complex<double>(1,0) : Smat_[L][1];
-            double dPL = -sin_th * LegendrePprime(L, cos_th);
-            A += e2s * ((double)(L+1)*(sp-1.0) + (double)L*(sm-1.0)) * PL;
-            B += e2s * (sm - sp) * dPL;
+        // Normalization factor: (-1)^(v0-v) * sqrt((L-m)!/(L+m)!)
+        int dv_int = (int)std::round(v0 - v);  // integer Δm, possibly negative
+        double sign = (std::abs(dv_int) % 2 == 0) ? 1.0 : -1.0;
+        double fact_ratio = 1.0;
+        for (int k = L - m + 1; k <= L + m; ++k) fact_ratio *= k;  // (L+m)!/(L-m)!
+        double norm = sign / std::sqrt(fact_ratio);
+
+        double PLm = AssocLegendreP(L, m, cos_th);
+        sum += (double)(2*L + 1) * norm * PLm * e2s * Gmat;
+    }
+    return sum / std::complex<double>(0, 2.0 * k_);
+}
+
+double ElasticSolver::DCSUnpolarized(double theta_deg) const {
+    if (theta_deg < 0.01) return std::numeric_limits<double>::quiet_NaN();
+    std::complex<double> fC = CoulombAmp(theta_deg);
+
+    // Sum |f_C*δ(v,v0) + f_N(v,v0)|² over all (v0,v), divide by (2S+1)
+    double total = 0.0;
+    int nSpin = (int)(2*S_) + 1;
+    for (int iv = 0; iv < nSpin; ++iv) {
+        double v = -S_ + iv;
+        for (int iv0 = 0; iv0 < nSpin; ++iv0) {
+            double v0 = -S_ + iv0;
+            std::complex<double> fN = NuclearAmp(v, v0, theta_deg);
+            std::complex<double> amp = fN + (v == v0 ? fC : std::complex<double>(0,0));
+            total += std::norm(amp);
         }
     }
-    A /= two_ik;
-    B /= two_ik;
-
-    // dσ/dΩ = |f_C + A|² + |B|²  (fm²)
-    double dcs_fm2 = std::norm(fC + A) + std::norm(B);
-    return dcs_fm2 * 10.0;  // mb/sr
+    total /= (2*S_ + 1);   // average over initial spin projections
+    return total * 10.0;   // fm² → mb/sr
 }
+
 
 // ============================================================
 // Output
 // ============================================================
 void ElasticSolver::PrintSMatrix(int Lmax_print) const {
     if (Lmax_print < 0) Lmax_print = Lmax_;
-    if (S_ == 0.0) {
-        std::cout << std::setw(4) << "L"
-                  << std::setw(14) << "Re(S)" << std::setw(14) << "Im(S)"
-                  << std::setw(12) << "|S|" << "\n";
-        std::cout << std::string(44, '-') << "\n";
-        for (int L = 0; L <= Lmax_print; ++L) {
-            auto& s = Smat_[L][0];
-            std::cout << std::setw(4) << L
-                      << std::scientific << std::setprecision(5)
-                      << std::setw(14) << s.real() << std::setw(14) << s.imag()
-                      << std::fixed << std::setprecision(6)
-                      << std::setw(12) << std::abs(s) << "\n";
+    int nJ = (int)(2*S_) + 1;
+    std::cout << std::setw(4) << "L";
+    for (int idx = 0; idx < nJ; ++idx) {
+        double Jrel = -S_ + idx;  // J - L
+        std::string lbl = (Jrel >= 0 ? "J=L+" : "J=L") + std::to_string((int)std::abs(Jrel));
+        std::cout << std::setw(13) << ("Re("+lbl+")") << std::setw(13) << ("Im("+lbl+")");
+    }
+    std::cout << "\n" << std::string(4 + 26*nJ, '-') << "\n";
+    for (int L = 0; L <= Lmax_print; ++L) {
+        std::cout << std::setw(4) << L << std::scientific << std::setprecision(4);
+        for (int idx = 0; idx < nJ; ++idx) {
+            double J = L - S_ + idx;
+            if (J < 0) { std::cout << std::setw(13) << "---" << std::setw(13) << "---"; continue; }
+            std::cout << std::setw(13) << Smat_[L][idx].real()
+                      << std::setw(13) << Smat_[L][idx].imag();
         }
-    } else {
-        std::cout << std::setw(4) << "L"
-                  << std::setw(13) << "Re(S+)" << std::setw(13) << "Im(S+)"
-                  << std::setw(13) << "Re(S-)" << std::setw(13) << "Im(S-)" << "\n";
-        std::cout << std::string(56, '-') << "\n";
-        for (int L = 0; L <= Lmax_print; ++L) {
-            std::cout << std::setw(4) << L
-                      << std::scientific << std::setprecision(4)
-                      << std::setw(13) << Smat_[L][0].real()
-                      << std::setw(13) << Smat_[L][0].imag()
-                      << std::setw(13) << Smat_[L][1].real()
-                      << std::setw(13) << Smat_[L][1].imag() << "\n";
-        }
+        std::cout << "\n";
     }
 }
 
 void ElasticSolver::SaveSMatrix(const std::string& fname) const {
     std::ofstream f(fname);
-    f << "# Elastic S-matrix\n";
-    if (S_ == 0.0) {
-        f << "# L  Re(S)  Im(S)\n";
-        for (int L = 0; L <= Lmax_; ++L)
-            f << L << " " << std::scientific << std::setprecision(8)
-              << Smat_[L][0].real() << " " << Smat_[L][0].imag() << "\n";
-    } else {
-        f << "# L  Re(S+)  Im(S+)  Re(S-)  Im(S-)\n";
-        for (int L = 0; L <= Lmax_; ++L)
-            f << L << " " << std::scientific << std::setprecision(8)
-              << Smat_[L][0].real() << " " << Smat_[L][0].imag() << " "
-              << Smat_[L][1].real() << " " << Smat_[L][1].imag() << "\n";
+    int nJ = (int)(2*S_) + 1;
+    f << "# Elastic S-matrix  (S=" << S_ << ", " << nJ << " J-channels per L)\n";
+    f << "# L";
+    for (int idx = 0; idx < nJ; ++idx) {
+        double Jrel = -S_ + idx;
+        std::string lbl = (Jrel >= 0 ? "J=L+" : "J=L") + std::to_string((int)std::abs(Jrel));
+        f << "  Re(" << lbl << ")  Im(" << lbl << ")";
+    }
+    f << "\n";
+    for (int L = 0; L <= Lmax_; ++L) {
+        f << L;
+        for (int idx = 0; idx < nJ; ++idx) {
+            double J = L - S_ + idx;
+            if (J < 0) { f << "  0.0  0.0"; continue; }
+            f << " " << std::scientific << std::setprecision(8)
+              << Smat_[L][idx].real() << " " << Smat_[L][idx].imag();
+        }
+        f << "\n";
     }
 }
 

@@ -43,5 +43,27 @@ int main() {
             std::cout << "  theta=" << th << ": " << s.DCSUnpolarized(th) << " mb/sr\n";
     }
 
+    // ===== Test 3: 60Ni(d,d) at 60 MeV (spin-1 deuteron) =====
+    std::cout << "\n===== 60Ni(d,d) at 60 MeV =====\n";
+    {
+        ElasticSolver s;
+        s.SetSystem(2, 1, 60, 28, 60.0);
+        s.AddVolumeWS ({-81.919, -4.836}, 1.15, 0.768);
+        s.AddSurfaceWS({    0.0, -8.994}, 1.33, 0.464);
+        s.AddSpinOrbit({ -3.557,  0.0  }, 0.972, 1.011);
+        s.AddCoulomb(1.303);
+        s.SetLmax(40);
+        s.CalcKinematics();
+        s.PrintKinematics();
+        s.CalcScatteringMatrix();
+        s.PrintSMatrix(8);
+        s.SaveSMatrix("ni60dd_smat_cpp.txt");
+        s.SaveDCS("ni60dd_xsec_cpp.txt");
+        std::cout << "\nDCS at key angles:\n";
+        for (double th : {10.0, 20.0, 30.0, 40.0, 60.0, 90.0, 120.0})
+            std::cout << "  theta=" << th << ": " << s.DCSUnpolarized(th) << " mb/sr\n";
+    }
+
     return 0;
 }
+// appended below — but let me edit the file properly instead

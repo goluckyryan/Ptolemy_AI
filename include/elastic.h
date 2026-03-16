@@ -6,6 +6,7 @@
 #include <vector>
 #include <complex>
 #include <string>
+#include <cmath>
 
 // Potential type IDs (matching Raphael's pot.id)
 enum PotType { kVolumeWS = 0, kSurfaceWS = 1, kSpinOrbit = 2, kCoulomb = 3 };
@@ -72,9 +73,10 @@ private:
     double rc0_;           // Coulomb radius parameter
     bool   hasCoulomb_;
 
-    // S-matrix: Smat_[L][0] = S_{J=L+1/2}, Smat_[L][1] = S_{J=L-1/2}
-    // For spin-0: only Smat_[L][0] used
-    std::vector<std::array<std::complex<double>, 2>> Smat_;
+    // S-matrix: Smat_[L] is a vector of 2S+1 entries for J = L-S, ..., L+S
+    // For spin-0: 1 entry.  spin-1/2: 2 entries (J=L+1/2, J=L-1/2).  spin-1: 3 entries.
+    // Index: idx = J - (L - S)  i.e. J=L-S → idx=0, J=L → idx=S, J=L+S → idx=2S
+    std::vector<std::vector<std::complex<double>>> Smat_;
     std::vector<double> CoulPhase_;
 
     // Internal helpers
@@ -90,8 +92,12 @@ private:
     static double LegendreP(int L, double x);
     static double LegendrePprime(int L, double x);
 
-    // DCS helpers
+    // DCS helpers — general spin formula (GMatrix / Clebsch-Gordan)
     std::complex<double> CoulombAmp(double theta_deg) const;
-    std::complex<double> NuclearAmpNonFlip(double theta_deg) const;
-    std::complex<double> NuclearAmpFlip(double theta_deg) const;
+    // Returns associated Legendre P_l^m(cos θ)  (unnormalized, Condon-Shortley)
+    static double AssocLegendreP(int l, int m, double x);
+    // Nuclear scattering amplitude f_N(v, v0, θ) for spin projection v0→v
+    std::complex<double> NuclearAmp(double v, double v0, double theta_deg) const;
+    // Clebsch-Gordan coefficient (thin wrapper around math_utils)
+    static double CG(double j1, double m1, double j2, double m2, double J, double M);
 };
