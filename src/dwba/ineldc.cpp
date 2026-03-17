@@ -601,9 +601,9 @@ void DWBA::InelDc() {
         //   Dif (V): Large GL grid (symmetric)
         //   Phi:     CUBMAP adaptive PHI0 per-(ra,rb) (Ptolemy MAPPHI)
         // ---------------------------------------------------------------
-        const int NPSUM = 150;   // GL points for U
-        const int NPDIF = 75;    // GL points for V
-        const int NPPHI = 10;    // Ptolemy default phi points (NPPHI=10)
+        const int NPSUM = 40;    // GL points for U  (dpsb: NPSUM=40)
+        const int NPDIF = 40;    // GL points for V  (dpsb: NPDIF=40)
+        const int NPPHI = 20;    // GL points for phi (dpsb: NPPHI=20)
         const double SUMMAX = 30.0;
         const double GAMPHI = 1.0e-6;  // → linear phi map
         const double PHIMID = 0.5;    // midpoint in [0,1]
@@ -895,7 +895,24 @@ void DWBA::InelDc() {
             // Accumulate: RIROWTS = JACOB * ri * ro * WOW * DIFWT
             // Jacobian d(ri)d(ro)/d(U)d(V) = 1 (exact, verified analytically)
             // WOW = wi_s[is] (CUBMAP sum weight), DIFWT = wi_d[id] (CUBMAP dif weight)
-            Integral += ca * cb_conj * AngKernel * JACOB_grdset * ra * rb * WOW * DIFWT;
+            auto contrib = ca * cb_conj * AngKernel * JACOB_grdset * ra * rb * WOW * DIFWT;
+            Integral += contrib;
+
+            // DEBUG: print integrand at diagonal (V=0, ra=rb=U) for Li=0,Lo=2,Lx=2
+#ifdef DEBUG_INELDC
+            if (Li == 0 && Lo == 2 && Lx == 2 && JPO == 3) {
+              double V = ra - rb;  // = U + V/2 - (U - V/2) = V
+              if (std::abs(V) < 0.5 * ra * 0.1) {  // near-diagonal (V < 5% of 2U)
+                fprintf(stderr, "DBG_HKernel Li=%d Lo=%d Lx=%d JPO=%d: "
+                        "ra=%.4f rb=%.4f AngKernel=%.6e "
+                        "ca=(%.4e,%.4e) cb=(%.4e,%.4e) "
+                        "contrib=(%.4e,%.4e)\n",
+                        Li, Lo, Lx, JPO, ra, rb, AngKernel,
+                        ca.real(), ca.imag(), cb_conj.real(), cb_conj.imag(),
+                        contrib.real(), contrib.imag());
+              }
+            }
+#endif
           }
         }
 
