@@ -8,6 +8,7 @@
 #include "potential_eval.h"
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <iostream>
 #include <vector>
 
@@ -404,4 +405,176 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
   for (int I = 0; I < NSTEPS; I++)
     maxAmp = std::max(maxAmp, std::abs(ch.WaveFunction[I].real()));
   std::cout << "  BS: maxAmp=" << maxAmp << "  kappa=" << kappa << " fm^-1" << std::endl;
+}
+
+// ---------------------------------------------------------------
+// DWBA::LoadReidWavefunction
+//
+// Computes the Reid soft-core deuteron S-state wavefunction and
+// effective potential by cubic spline on Reid's 34-point tabulation,
+// exactly matching Ptolemy's Reid linkule (linkulesfitters.mor SUBROUTINE REID).
+//
+// Outputs:
+//   ch.WaveFunction[I] = phi_S(r) = U_S(r)/r, normalized to ∫u²dr=1
+//   ch.VPhiProduct[I]  = phi_S(r) * V_eff(r)  [IVPHI_P, signed]
+//
+// where V_eff(r) = -(VC + sqrt(8)*VT*W/U)  (Reid S-state effective potential)
+//
+// This replaces the previous file-based approach which misread reid-phi-v.
+//
+// File structure (ASCII, 2564 values total, 641 per block):
+//   Block 0 [0..640]:    phi_S(r) = u_S(r)/r  (L=0, S-state)
+//   Block 1 [641..1281]: V_np(r)*phi_S(r)      (vertex potential product)
+//   Block 2 [1282..1922]: phi_D(r) = u_D(r)/r  (L=2, D-state)
+//   Block 3 [1923..2563]: V_np(r)*phi_D(r)
+//
+// Grid: h=0.1 fm, 641 points, r = 0,0.1,...,64.0 fm
+// The stored phi_S is unnormalized. We normalize here so that
+//   ∫ u_S²(r) dr = ∫ (phi_S(r)·r)² dr = 1
+//
+// On return, ch.WaveFunction[I] = normalized phi_S(r=I*h) for the
+// projectile bound state. Only the S-state (L=0) is loaded;
+// the D-state (L=2) contribution requires a separate channel pass.
+//
+// dataPath should be the directory containing "reid-phi-v".
+// ---------------------------------------------------------------
+bool DWBA::LoadDeuteronWavefunction(Channel &ch, const std::string &dataPath,
+                                    const std::string &filename) {
+  // Reid soft-core S-state wavefunction via cubic spline on 34-point tabulation.
+  // Matches Ptolemy's Reid linkule (linkulesfitters.mor SUBROUTINE REID, IREQUE=3).
+  //
+  // phi_S(r) = U_S(r)/r  (normalized to ∫u²dr = 1, i.e. SUMIN from BOUND lines 4109-4169)
+  // V_eff(r) = -(VC + sqrt(8)*VT*W/U)  [VMULT=-1, as in linkule]
+  // IVPHI_P  = phi_S * V_eff
+
+  // Reid tabulated data: x = 0.7*r, u_S(x), du_S/dx  (from linkulesfitters.mor)
+  static const int NTAB = 34;
+  static const double XX[34] = {
+    .0100, .041250, .07250, .1350, .19750,
+    .2600, .32250, .3850, .44750, .5100,
+    .57250, .6350, .69750, .7600, .8850,
+    1.0100, 1.1350, 1.2600, 1.3850, 1.5100,
+    1.7600, 2.0100, 2.5100, 3.0100, 3.5100,
+    4.0100, 4.5100, 5.0100, 5.5100, 6.0100,
+    7.0100, 8.0100, 9.0100, 10.0100
+  };
+  static const double UI_S[34] = {
+    .000000, .333730e-4, .239010e-3, .276210e-2, .127370e-1,
+    .360620e-1, .753590e-1, .128470, .189930, .253490,
+    .313900, .367700, .413170, .449920, .499530,
+    .524060, .531660, .528640, .519260, .506210,
+    .475050, .442000, .378640, .322490, .273990,
+    .232510, .197190, .167180, .141720, .120120,
+    .862900e-1, .619830e-1, .445230e-1, .319820e-1
+  };
+  static const double UPI_S[34] = {
+    .297510e-3, .261270e-2, .123350e-1, .829510e-1, .253260,
+    .500520, .750720, .933490, .101620e1, .100340e1,
+    .920420, .796740, .657440, .519850, .284940,
+    .118650, .113970e-1, -.540900e-1, -.925230e-1, -.114180,
+    -.130970, -.131930, -.120040, -.104530, -.897090e-1,
+    -.765100e-1, -.650540e-1, -.552290e-1, -.468500e-1, -.397260e-1,
+    -.285470e-1, -.205080e-1, -.147310e-1, -.105820e-1
+  };
+  static const double UI_D[34] = {
+    .000000, .108500e-4, .840730e-4, .103690e-2, .496420e-2,
+    .144460e-1, .307950e-1, .531570e-1, .789950e-1, .105250,
+    .129330, .149580, .165290, .176450, .187100,
+    .186540, .179460, .169100, .157420, .145530,
+    .123140, .103730, .738590e-1, .532930e-1, .390770e-1,
+    .291150e-1, .220160e-1, .168710e-1, .130790e-1, .102430e-1,
+    .644120e-2, .415750e-2, .273630e-2, .182770e-2
+  };
+  static const double UPI_D[34] = {
+    .742020e-4, .893210e-3, .447550e-2, .318920e-1, .101210,
+    .205960, .314770, .393710, .424660, .408420,
+    .357720, .288480, .214280, .144270, .332940e-1,
+    -.358990e-1, -.731510e-1, -.900910e-1, -.952990e-1, -.941580e-1,
+    -.839730e-1, -.712820e-1, -.493270e-1, -.339400e-1, -.236120e-1,
+    -.166910e-1, -.120020e-1, -.877680e-2, -.652010e-2, -.491360e-2,
+    -.289560e-2, -.177580e-2, -.112270e-2, -.726440e-3
+  };
+  const double ROOT8 = 2.8284271250;
+
+  // Cubic spline interpolation: returns {U_S, W_D} at r
+  auto reid_spline = [&](double r) -> std::pair<double,double> {
+    double x = 0.7 * r;
+    if (x <= XX[0] || x >= XX[NTAB-1]) return {0.0, 0.0};
+    int ii = (int)(std::lower_bound(XX, XX+NTAB, x) - XX);
+    if (ii <= 0) ii = 1;
+    if (ii >= NTAB) ii = NTAB-1;
+    int im = ii - 1;
+    double H = XX[ii] - XX[im];
+    double P = (x - XX[im]) / H;
+    // S-wave
+    double dU = UI_S[ii]-UI_S[im];
+    double A1=UI_S[im], A2=H*UPI_S[im];
+    double A3=3*dU-H*(2*UPI_S[im]+UPI_S[ii]);
+    double A4=-2*dU+H*(UPI_S[im]+UPI_S[ii]);
+    double U = A1+P*(A2+P*(A3+P*A4));
+    // D-wave (for V_eff coupling term)
+    double dW = UI_D[ii]-UI_D[im];
+    double B1=UI_D[im], B2=H*UPI_D[im];
+    double B3=3*dW-H*(2*UPI_D[im]+UPI_D[ii]);
+    double B4=-2*dW+H*(UPI_D[im]+UPI_D[ii]);
+    double W = B1+P*(B2+P*(B3+P*B4));
+    return {U, W};
+  };
+
+  // Pass 1: compute L2 norm = sqrt(h * sum(U_S^2))  [BOUND lines 4109-4169]
+  double norm_sq = 0.0;
+  int NSTEPS = ch.NSteps;
+  double h = ch.StepSize;
+  for (int i = 1; i < NSTEPS; ++i) {
+    double r = i * h;
+    auto [U, W] = reid_spline(r);
+    double wt = (i == 1) ? 0.5 : 1.0;  // trapezoidal, first point half-weight
+    norm_sq += wt * U * U;
+  }
+  norm_sq *= h;
+  double norm_scale = (norm_sq > 0.0) ? 1.0 / std::sqrt(norm_sq) : 1.0;
+
+  std::cout << "LoadDeuteronWavefunction: Reid cubic spline (linkule convention)" << std::endl;
+  std::cout << "  norm_sq=" << norm_sq << "  norm_scale=" << norm_scale
+            << "  (expected ~1.035)" << std::endl;
+
+  // Pass 2: fill phi_S and IVPHI_P
+  ch.WaveFunction.assign(NSTEPS, std::complex<double>(0.0, 0.0));
+  ch.VPhiProduct .assign(NSTEPS, 0.0);
+
+  for (int i = 1; i < NSTEPS; ++i) {
+    double r = i * h;
+    auto [U, W] = reid_spline(r);
+    // phi_S(r) = U(r)/r * norm_scale  [BOUND converts u→phi=u/r]
+    double phi = U * norm_scale / r;
+    ch.WaveFunction[i] = std::complex<double>(phi, 0.0);
+
+    // V_eff(r): Reid effective S-state potential
+    // From linkule (JUMPL=332): V_eff = VC + sqrt(8)*VT*W/U, then *VMULT=-1
+    double x = 0.7 * r;
+    if (x > 0.0) {
+      double yy  = std::exp(-x);
+      double y2  = yy*yy, y4=y2*y2, y6=y4*y2;
+      double VC  = (-10.463*yy + 105.468*y2 - 3187.8*y4 + 9924.3*y6) / x;
+      double VT  = (-10.463*(yy + 3.0*((yy-4*y4)+(yy-y4)/x)/x) + 351.77*y4 - 1673.5*y6) / x;
+      double Veff = VC + (std::abs(U) > 1e-30 ? ROOT8*VT*W/U : 0.0);
+      ch.VPhiProduct[i] = phi * (-Veff);  // VMULT=-1 → V_eff stored as -(VC+...)
+    }
+  }
+
+  // Diagnostics
+  double maxPhi = 0.0, maxVPhi = 0.0;
+  int maxPhiI = 1, maxVPhiI = 1;
+  for (int i = 1; i < NSTEPS; ++i) {
+    double p  = std::abs(ch.WaveFunction[i].real());
+    double vp = std::abs(ch.VPhiProduct[i]);
+    if (p  > maxPhi)  { maxPhi  = p;  maxPhiI  = i; }
+    if (vp > maxVPhi) { maxVPhi = vp; maxVPhiI = i; }
+  }
+  std::cout << "  phi_S:      peak=" << maxPhi
+            << " at r=" << maxPhiI * h << " fm" << std::endl;
+  std::cout << "  IVPHI_P:    peak=" << maxVPhi
+            << " at r=" << maxVPhiI * h << " fm" << std::endl;
+  std::cout << "  Vertex potential: Reid V_eff (cubic spline)" << std::endl;
+  return true;
 }

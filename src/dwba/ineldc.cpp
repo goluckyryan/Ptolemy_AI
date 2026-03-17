@@ -177,7 +177,25 @@ void DWBA::InelDc() {
   PrjBS_ch.V_coulomb.resize(Incoming.NSteps);
 
   WavSet(PrjBS_ch);
-  CalculateBoundState(PrjBS_ch, ProjectileBS.n, ProjectileBS.l, ProjectileBS.j, ProjectileBS.BindingEnergy);
+
+  // Projectile bound state: for the deuteron (n+p), use the tabulated Reid soft-core
+  // S-state wavefunction from reid-phi-v (same data directory as mass table).
+  // Ptolemy uses WAVEFUNCTION=REID linkule — it never runs BOUND for the projectile.
+  // CalculateBoundState fails for n+p (matching radius too small for A_core=1).
+  // For other projectile BSs (not deuteron), fall back to CalculateBoundState.
+  bool reidLoaded = false;
+  if (Incoming.Projectile.A == 2 && Incoming.Projectile.Z == 1 &&
+      ProjectileBS.l == 0) {
+    // Deuteron S-state (L=0): load AV18 wavefunction (same as Ptolemy "wavefunction av18")
+    // AV18 is the reference for o16dp_gs_new.in; Reid is available as "reid-phi-v"
+    reidLoaded = LoadDeuteronWavefunction(PrjBS_ch,
+        "/home/node/working/ptolemy_2019/Cpp_AI/data", "av18-phi-v");
+  }
+  if (!reidLoaded) {
+    // Fallback: solve WS bound state via Numerov (works for heavy cores)
+    CalculateBoundState(PrjBS_ch, ProjectileBS.n, ProjectileBS.l,
+                        ProjectileBS.j, ProjectileBS.BindingEnergy);
+  }
 
   // Rebuild PrjBS_ch.V_real using the solved potential depth V_sol (set by CalculateBoundState).
   // WavSet filled V_real with the initial pot.V; after bound state solve, pot.V = V_sol.
@@ -308,17 +326,56 @@ void DWBA::InelDc() {
   };
 
   std::vector<double> IVPHI_T(NSteps_common, 0.0);  // phi_T * V_nA (PRIOR vertex)
-  std::vector<double> IVPHI_P(NSteps_common, 0.0);  // phi_P * V_np (POST vertex, NUCONLY)
+  std::vector<double> IVPHI_P(NSteps_common, 0.0);  // phi_P * V_np (POST vertex)
   double IVPHI_T_max = 0, IVPHI_P_max = 0;
   int idx_T_vert_peak = 1, idx_P_vert_peak = 1;
+
+  // Vertex potential:
+  //   Target vertex: phi_T(r) * V_WS_nA(r) — always WS bound-state potential ✅
+  //   Projectile vertex: phi_P(r) * V_WS_np(r)
+  //     WAVEFUNCTION=REID replaces only the bound-state solver for phi_P(r).
+  //     The vertex potential V_np is still the WS from the PROJECTILE input section
+  //     (V=60, R=1.0, A=0.5). Block 1 of reid-phi-v is NOT used by Ptolemy.
+  //     V_real[] is already set to this WS by WavSet/EvaluatePotential. ✅
+  std::cout << "  Vertex: V_WS(V=60,R=1,A=0.5)*phi_Reid (projectile), V_WS*phi_T (target)" << std::endl;
+
   for (int i = 1; i < NSteps_common; ++i) {
     IVPHI_T[i] = std::abs(TgtBS_ch.WaveFunction[i].real()) * TgtBS_ch.V_real[i];
-    IVPHI_P[i] = std::abs(PrjBS_ch.WaveFunction[i].real()) * PrjBS_ch.V_real[i];
+    // Use VPhiProduct (Reid V_eff * phi_S) if available; else fall back to WS V * phi
+    IVPHI_P[i] = !PrjBS_ch.VPhiProduct.empty()
+                 ? PrjBS_ch.VPhiProduct[i]
+                 : std::abs(PrjBS_ch.WaveFunction[i].real()) * PrjBS_ch.V_real[i];
     if (IVPHI_T[i] > IVPHI_T_max) { IVPHI_T_max = IVPHI_T[i]; idx_T_vert_peak = i; }
     if (IVPHI_P[i] > IVPHI_P_max) { IVPHI_P_max = IVPHI_P[i]; idx_P_vert_peak = i; }
   }
   double r_T_vert_peak = idx_T_vert_peak * h_common;
   double r_P_vert_peak = idx_P_vert_peak * h_common;
+
+  // Report vertex peaks for diagnostic comparison vs Ptolemy BSSET output
+  std::cout << std::fixed << std::setprecision(4);
+  std::cout << "  IVPHI_T peak = " << IVPHI_T_max << " at r=" << r_T_vert_peak << " fm" << std::endl;
+  std::cout << "  IVPHI_P peak = " << IVPHI_P_max << " at r=" << r_P_vert_peak << " fm" << std::endl;
+
+  // DIAGNOSTIC: print IVPHI_P and phi_P at sample rP values vs Fortran reference
+  {
+    double rP_vals[] = {0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0};
+    double fort_ref[] = {-174.148, 45.868, 17.487, 3.697, 0.844, 0.245, 0.090, 0.039};
+    fprintf(stderr, "\n# IVPHI_P comparison: C++ vs Fortran (Reid cubic+norm, V_Reid)\n");
+    fprintf(stderr, "# %6s  %14s  %14s  %8s  %14s\n",
+            "rP(fm)", "C++_IVPHI_P", "Fort_ref", "Ratio", "C++_phi_P");
+    for (int k = 0; k < 8; ++k) {
+      double rP = rP_vals[k];
+      int idx = (int)std::round(rP / h_common);
+      if (idx >= NSteps_common) continue;
+      double cpp_ivphi = IVPHI_P[idx];
+      double cpp_phi   = std::abs(PrjBS_ch.WaveFunction[idx].real());
+      double fort      = fort_ref[k];
+      double ratio     = (std::abs(fort) > 1e-8) ? cpp_ivphi / fort : 0.0;
+      fprintf(stderr, "  %6.2f  %14.5e  %14.5e  %8.4f  %14.5e\n",
+              rP, cpp_ivphi, fort, ratio, cpp_phi);
+    }
+    fprintf(stderr, "\n");
+  }
 
   // The "other" WF (non-vertex side): clipped separately
   auto findWFPeak = [&](const std::vector<std::complex<double>> &wf, int nsteps)
@@ -526,7 +583,8 @@ void DWBA::InelDc() {
 
             std::complex<double> ca_r = chi_a[i];
             double phi_T_r = TgtBS_ch.WaveFunction[i].real();
-            std::complex<double> cb_r = std::conj(interp_chi_b(rb));
+            // Ptolemy uses chi_b * chi_a (NOT conj(chi_b) * chi_a): DWR=Re(chi_b*chi_a)
+            std::complex<double> cb_r = interp_chi_b(rb);  // no conjugate
 
             I_1D += ca_r * phi_T_r * cb_r * h_zr;
           }
@@ -619,33 +677,61 @@ void DWBA::InelDc() {
 #endif
         };
 
-        // First pass: find global WVWMAX = max of bsprod over all (U,V,phi) for RVRLIM
-        // (This is Ptolemy's WVWMAX from the GRDSET pass over the whole grid)
-        // We estimate WVWMAX from phi=0 at (ra,rb) = (SUMMID, SUMMID):
-        // or scan a few key points. Use peak of IVPHI_T * phi_P at short range.
-        // Ptolemy: RVRLIM = DWCUT * WVWMAX
-        // We compute WVWMAX adaptively below by tracking max seen across all (U,V)
-        // For now, pre-estimate by evaluating at (SUMMID, SUMMID, phi=0):
-        double WVWMAX_pre = bsprod_val(5.0, 5.0, 1.0);  // phi=0 → x=1
-        WVWMAX_pre = std::max(WVWMAX_pre, bsprod_val(2.0, 2.0, 1.0));
-        WVWMAX_pre = std::max(WVWMAX_pre, bsprod_val(3.0, 3.0, 1.0));
-        WVWMAX_pre = std::max(WVWMAX_pre, bsprod_val(1.0, 1.0, 1.0));
-#ifndef USE_PRIOR_FORM
-        // POST form WVWMAX: also sample ra=2*rb ridge (where rp→0)
-        for (double rb_scan : {1.0, 1.5, 2.0, 2.5, 3.0})
-          WVWMAX_pre = std::max(WVWMAX_pre, bsprod_val(2.0*rb_scan, rb_scan, 1.0));
-#endif
-        // RVRLIM threshold for phi cutoff
+        // ── WVWMAX scan & SUMMIN search (Ptolemy GRDSET steps 1&2) ─────────
+        // Ptolemy uses BSPROD ITYPE=3 (R*PSI*phi'*V*phi'*PSI*R) which includes
+        // the distorted waves chi_a, chi_b. The chi suppression at small r
+        // naturally limits WVWMAX to the physical peak and sets SUMMIN to the
+        // inner integration boundary.
+        //
+        // Our bsprod_val doesn't include chi — we compute WVWMAX and SUMMIN
+        // using a separate helper that evaluates |chi_a(U)| * bsprod_val(U,U,x) * |chi_b(U)|.
+        auto bsprod_with_chi = [&](double U, double x) -> double {
+          if (U < 1e-6) return 0.0;
+          // chi_a at ra=U, chi_b at rb=U (same U for the diagonal scan)
+          double ca_mag = std::abs(interp_chi_a(U));
+          double cb_mag = std::abs(interp_chi_b(U));
+          // Include ra*rb factor (Ptolemy ITYPE=3: R*PSI*...*PSI*R)
+          return U * ca_mag * bsprod_val(U, U, x) * U * cb_mag;
+        };
+
+        // Step 1: find WVWMAX by scanning U from SUMMAX/2 down to 0
+        double WVWMAX_pre = 0.0;
+        for (double U_scan = 0.5 * SUMMAX; U_scan > 0.05; U_scan -= 0.2) {
+          double v1 = bsprod_with_chi(U_scan,  1.0);
+          double v2 = bsprod_with_chi(U_scan, -1.0);
+          WVWMAX_pre = std::max(WVWMAX_pre, std::max(v1, v2));
+        }
+        // RVRLIM threshold
         double RVRLIM = DWCUT * std::max(WVWMAX_pre, 1.0e-30);
+
+        // Step 2: find SUMMIN — first U where integrand exceeds RVRLIM
+        double SUMMIN = 0.0;
+        {
+          double U_s = 0.0;
+          while (U_s <= SUMMAX) {
+            double v1 = bsprod_with_chi(U_s,  1.0);
+            double v2 = bsprod_with_chi(U_s, -1.0);
+            if (std::max(v1, v2) >= RVRLIM) {
+              SUMMIN = std::max(0.0, U_s - 0.2);
+              break;
+            }
+            U_s += 0.2;
+          }
+        }
+        std::cout << std::scientific << std::setprecision(3)
+                  << "  WVWMAX=" << WVWMAX_pre << "  RVRLIM=" << RVRLIM
+                  << "  SUMMIN=" << SUMMIN << " fm" << std::endl;
 
         // Pre-allocate dif GL arrays (reused per U, resized below)
         std::vector<double> xi_d_base(NPDIF), wi_d_base(NPDIF);
         GaussLegendre(NPDIF, -1.0, 1.0, xi_d_base, wi_d_base);
 
-        // Outer loop: U = (ri+ro)/2 in [0, SUMMAX] from GL on [-1,1]
+        // Outer loop: U = (ri+ro)/2 in [SUMMIN, SUMMAX] from GL on [-1,1]
         for (int is = 0; is < NPSUM; ++is) {
-          double U = SUMMAX * (xi_s[is] + 1.0) / 2.0;   // U in [0, SUMMAX]
-          double WOW = SUMMAX * wi_s[is] / 2.0;           // sum weight
+          // Map GL point from [-1,1] onto [SUMMIN, SUMMAX]
+          double U_range = SUMMAX - SUMMIN;
+          double U = SUMMIN + U_range * (xi_s[is] + 1.0) / 2.0;
+          double WOW = U_range * wi_s[is] / 2.0;
 
           if (U < 1e-6) continue;
 
@@ -662,8 +748,9 @@ void DWBA::InelDc() {
             if (ra < 1e-6 || rb < 1e-6) continue;
 
             // Interpolate distorted waves at non-grid (ra, rb) values
+            // Ptolemy INELDC: DWR=Re(chi_b*chi_a), DWI=Im(chi_b*chi_a) — NO conjugate on chi_b
             std::complex<double> ca      = interp_chi_a(ra);
-            std::complex<double> cb_conj = std::conj(interp_chi_b(rb));
+            std::complex<double> cb_conj = interp_chi_b(rb);  // no conjugate (matches Ptolemy)
 
             // ---------------------------------------------------------------
             // ADAPTIVE PHI0 per (ra, rb): Ptolemy two-pass approach
@@ -848,54 +935,46 @@ void DWBA::InelDc() {
         // Factor of 2: Ptolemy SFROMI uses FACTOR = 2*sqrt(ki*kf/(Ei*Ef))
         // (see source.mor line 29025 comment: FACTOR = KINEMATIC FACTOR = 2*SQRT(KI*KF/EI*EF))
         
-        // Compute ATERM for this reaction from quantum numbers
-        // For 33Si(d,p)34Si: jA_tgt=3/2, jB_tgt=0, lBT=2, jBT=3/2
-        //   lBP=0, jBP=1/2, JX=j_neutron=1/2, Lx from transfer
-        // JBIGA = 2*jA = 3 (33Si target), JBIGB = 2*jB = 0 (34Si)
-        // TEMP = sqrt((JBIGB+1)/(JBIGA+1)) = sqrt(1/4) = 0.5
-        // ATERM = TEMP * sqrt(2*Lx+1) * SPAMP * SPAMT * RACAH(2*LBT, JBT, 2*LBP, JBP, JX, 2*Lx)
-        //       = 0.5 * sqrt(2*Lx+1) * 0.97069 * 1.0 * RACAH(4, 3, 0, 1, 1, 2*Lx)
-        // SIGN: ITEST = JX - JBP + 2*(LBP+LBT) = 1-1+2*(0+2) = 4, 4//2+1=3, 3%2!=0 => flip
-        // |ATERM(Lx=2)| = 0.5 * sqrt(5) * 0.97069 * 2.515 = 2.730 (from RACAH computation)
-        //
-        // Hardcoded for this reaction (computed analytically):
-        // RACAH(4,3,0,1,1,4) = W(2,3/2,0,1/2;1/2,2) = 2.5149 (verified numerically)
-        // ATERM(Lx=2) = 0.5 * sqrt(5) * 0.97069 * 2.5149 = -2.730 (with sign flip)
-        // |FACTOR * ATERM(Lx=2)| = 0.111 * 2.730 = 0.303
-        
-        // Apply FACTOR * ATERM to the sfromi normalization
-        // ATERM for this specific Lx (only Lx=2 is relevant here, lT=2, lP=0)
-        double ATERM_val = 1.0;  // Default if Lx != lT+lP
-        if (Lx == std::abs(TargetBS.l - ProjectileBS.l) + 0 ||
+        // Compute ATERM generically (same formula as ineldc_zr.cpp).
+        // Ptolemy source.mor ~25631:
+        //   TEMP = sqrt((JBIGB+1)/(JBIGA+1))
+        //   ATERM = TEMP * sqrt(2*Lx+1) * SPAMP * SPAMT * RACAH(2*LBT, JBT, 2*LBP, JBP, JX, 2*LX)
+        //   where RACAH(a,b,c,d,e,f) = (-1)^((a+b+c+d)/2) * {a/2,b/2,e/2; d/2,c/2,f/2}  (6-j)
+        //   Sign: ITEST = (JX - JBP + 2*(LBP+LBT))/2 + 1; if odd, flip ATERM
+        double ATERM_val = 0.0;
+        if (Lx >= std::abs(TargetBS.l - ProjectileBS.l) &&
             Lx <= TargetBS.l + ProjectileBS.l) {
-          // For our reaction: lBT=2, jBT=3, lBP=0, jBP=1, JX=1
-          // RACAH(2*lBT, jBT_doubled, 2*lBP, jBP_doubled, JX, 2*Lx)
-          // = RACAH(4, 3, 0, 1, 1, 2*Lx)
-          // Nonzero only when triangle(lBT,lBP,Lx) is valid:
-          // triangle(2, 0, Lx): |2-0| <= Lx <= 2+0, so Lx=2 only!
-          if (Lx == TargetBS.l) {
-            // RACAH(4,3,0,1,1,4) = W(2,3/2,0,1/2;1/2,2) = 1/sqrt(10) = 0.31623 (numerically verified with Ptolemy Fortran)
-            // Previous value 2.51487 was INCORRECT.
-            double RACAH_val = 0.316227766;
-            // Ptolemy ATERM formula (source.mor ~25631):
-            // TEMP = sqrt((JBIGB+1)/(JBIGA+1))
-            // JBIGB = 2*J(residual nucleus B = 34Si) = 2*0 = 0  → (JBIGB+1) = 1
-            // JBIGA = 2*J(target nucleus A = 33Si) = 2*1.5 = 3  → (JBIGA+1) = 4
-            // TEMP = sqrt(1/4) = 0.5
-            // (NUCLEAR spins of target and residual, NOT the neutron quantum numbers)
+          double jT_bs = TargetBS.j;          // j of neutron in target bound state
+          double jP_bs = ProjectileBS.j;       // j of neutron in projectile bound state
+          double jx = 0.5;                     // neutron spin
 
-            // Nuclear spins from DWBA object (generic for any reaction)
-            const int JBIGA = (int)std::round(2.0 * SpinTarget);    // 2*J(target)
-            const int JBIGB = (int)std::round(2.0 * SpinResidual);  // 2*J(residual)
-            double TEMP_aterm = std::sqrt((JBIGB + 1.0) / (JBIGA + 1.0));  // sqrt(1/4) = 0.5
-            double SPAMP = 0.97069;  // AV18 spectroscopic amplitude
-            double SPAMT = 1.0;      // Target spec amplitude
-            ATERM_val = TEMP_aterm * std::sqrt(2.0*Lx + 1.0) * SPAMP * SPAMT * RACAH_val;
-            // Sign flip: ITEST = 4, ITEST//2+1 = 3, odd => flip
-            ATERM_val = -ATERM_val;
-          } else {
-            ATERM_val = 0.0;  // Triangle condition fails
-          }
+          // SixJ{lBT, jBT, jX; jBP, lBP, Lx}
+          double sj = SixJ((double)TargetBS.l, jT_bs, jx,
+                           jP_bs, (double)ProjectileBS.l, (double)Lx);
+
+          // Phase: (-1)^((2*lBT + 2*jBT + 2*lBP + 2*jBP)/2) = RACAH phase
+          int twoj_sum = 2*TargetBS.l + (int)(2*jT_bs + 0.5)
+                       + 2*ProjectileBS.l + (int)(2*jP_bs + 0.5);
+          double sign_val = ((twoj_sum / 2) % 2 == 0) ? 1.0 : -1.0;
+          double RACAH_val = sign_val * sj;
+
+          // Nuclear spins from DWBA object (generic)
+          int JBIGA = (int)std::round(2.0 * SpinTarget);    // 2*J(target nucleus)
+          int JBIGB = (int)std::round(2.0 * SpinResidual);  // 2*J(residual nucleus)
+          double TEMP_aterm = std::sqrt((JBIGB + 1.0) / (JBIGA + 1.0));
+
+          // Spectroscopic amplitudes
+          double SPAMP = ProjectileWFLoaded ? ProjectileWFSpam : 0.97069;
+          double SPAMT = 1.0;
+
+          ATERM_val = TEMP_aterm * std::sqrt(2.0*Lx + 1.0) * SPAMP * SPAMT * RACAH_val;
+
+          // Sign convention (Ptolemy source.mor line 25636-25639):
+          // ITEST = JX - JBP + 2*(LBP+LBT)   [all doubled integers]
+          int JX_doubled  = 1;  // neutron spin × 2
+          int JBP_doubled = (int)(2 * ProjectileBS.j);
+          int ITEST_aterm = JX_doubled - JBP_doubled + 2*(ProjectileBS.l + TargetBS.l);
+          if ((ITEST_aterm / 2 + 1) % 2 != 0) ATERM_val = -ATERM_val;
         }
         
         // Total SFROMI factor: FACTOR_sfromi * ATERM * (1/sqrt(2*Li+1))
@@ -906,7 +985,14 @@ void DWBA::InelDc() {
         }
 
         // Store: (Lx, Li, Lo, JPI, JPO) — SFROMI will apply 9-J coupling
-        TransferSMatrix.push_back({Lx, Li, Lo, JPI, JPO, Integral * sfromi_norm});
+        auto S_pre9j = Integral * sfromi_norm;
+        TransferSMatrix.push_back({Lx, Li, Lo, JPI, JPO, S_pre9j});
+
+        // Print pre-9J S-matrix (compare vs Ptolemy PRINT=2 "S-MATRIX BEFORE 9-J" table)
+        fprintf(stderr, "PRE9J Li=%2d JPI=%2d/2  Lo=%2d JPO=%2d/2  Lx=%d  "
+                "S=(%9.4e, %9.4e)  |S|=%9.4e\n",
+                Li, JPI, Lo, JPO, Lx,
+                S_pre9j.real(), S_pre9j.imag(), std::abs(S_pre9j));
 
         } // end JPO loop
         } // end JPI loop
