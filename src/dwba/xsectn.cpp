@@ -226,10 +226,17 @@ void DWBA::XSectn() {
     if (LDEL < LDELMN_lx || LDEL > LDELMN_lx + 2*(NDEL_lx-1)) continue;
     if ((LDEL - LDELMN_lx) % 2 != 0) continue;
 
-    // Coulomb phase factor: e^i(sigma_Li + sigma_Lo)
+    // Coulomb phase factor: e^i(sigma_Li + sigma_Lo), then divide by i
+    // Ptolemy BETCAL source.mor ~3527: "DIVIDE BY I"
+    //   PHASE = SPHASE + SIGIN(Li) + SIGOT(Lo)
+    //   SMATR = AMAG * sin(PHASE) = Im(S * e^iφ)
+    //   SMATI = -AMAG * cos(PHASE) = -Re(S * e^iφ)
+    // => stores (S * e^iφ) / i   [since 1/i = -i, and (a+ib)/i = b - ia]
     double phase_angle = get_sig_a(Li) + get_sig_b(Lo);
     std::complex<double> phase_fac(std::cos(phase_angle), std::sin(phase_angle));
-    std::complex<double> S_phased = phase_fac * S_val;
+    std::complex<double> S_eiph = phase_fac * S_val;
+    // divide by i: (re + i*im) / i = im - i*re
+    std::complex<double> S_phased(S_eiph.imag(), -S_eiph.real());
 
     // BETCAL Mx_loop range: [max(0, Lx2+LDEL), Lx2]
     int MXZ_loop = Lx2 + LDEL;
@@ -250,6 +257,11 @@ void DWBA::XSectn() {
 
       double TEMPS = FACTOR_BET * (2.0*Li + 1.0) * cg;
       BETAS[{JP_cons, Lx2, official_Mx, Lo}] += TEMPS * S_phased;
+      // DEBUG: print each BETA contribution
+      auto& bval = BETAS[{JP_cons, Lx2, official_Mx, Lo}];
+      fprintf(stderr, "BETA[JP=%d,Lx2=%d,Mx=%d,Lo=%d] += %.4e+%.4ei  (Li=%d,LDEL=%d,TEMPS=%.4e,|S|=%.4e)\n",
+              JP_cons, Lx2, official_Mx, Lo, TEMPS*S_phased.real(), TEMPS*S_phased.imag(),
+              Li, LDEL, TEMPS, std::abs(S_val));
     }
   }
 
@@ -323,7 +335,11 @@ void DWBA::XSectn() {
       }
 
       // FMNEG * |F|^2 contribution; factor 10 applied outside inner loop
-      dSigma += 10.0 * FMNEG * std::norm(F_amp);
+      // Ptolemy CALANG/BETCAL includes spin average 1/(2*sa+1) where sa=spin of projectile.
+      // For deuteron (JA=2 doubled → sa=1): 1/(2*1+1) = 1/3.
+      // This factor comes from the implicit average over incoming magnetic substates.
+      double spin_avg = 1.0 / (JA + 1.0);  // = 1/(2*sa+1); JA = 2*sa
+      dSigma += 10.0 * spin_avg * FMNEG * std::norm(F_amp);
     }
 
     std::cout << std::fixed << std::setprecision(1) << theta_deg

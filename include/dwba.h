@@ -30,7 +30,7 @@ struct Channel {
   int JSPS = 1;  // 2*spin of projectile (deuteron=2, proton=1)
 
   // Wave functions
-  std::vector<std::complex<double>> WaveFunction; // Radial wave function
+  std::vector<std::complex<double>> WaveFunction; // Radial wave function phi = u/r
   std::vector<double> RGrid;
 
   // Potentials on grid
@@ -39,6 +39,12 @@ struct Channel {
   std::vector<double> V_so_real;
   std::vector<double> V_so_imag;
   std::vector<double> V_coulomb;
+
+  // Precomputed vertex product V(r)*phi(r) — used in BSPROD-style integrals.
+  // For a plain WS bound state: filled by InelDc as V_real[i]*WaveFunction[i].real().
+  // For the Reid deuteron projectile: loaded from reid-phi-v Block 1 (precomputed V_Reid*phi_S).
+  // Empty means "not set" — InelDc will compute V_real*WaveFunction on the fly.
+  std::vector<double> VPhiProduct; // V(r)*phi(r) on the calculation grid
 
   // Grid parameters
   double StepSize;
@@ -91,6 +97,7 @@ public:
   void CalculateZR();  // Zero-Range DWBA
   void PrintParameters();
 
+  friend class DWBATest;  // for wftest_main.cpp validation
 private:
   // Internal state
   Channel Incoming, Outgoing;
@@ -139,12 +146,20 @@ private:
   void CalculateKinematics();
   void CalculateBoundState(Channel &ch, int n, int l, double j,
                            double bindingEnergy);
+  // Load a tabulated deuteron bound-state WF from a Ptolemy linkule file.
+  // filename = "reid-phi-v" or "av18-phi-v" (in dataPath directory).
+  // Populates ch.WaveFunction (phi_S = u/r, normalized) and
+  // ch.VPhiProduct (V_np(r)*phi_S(r), same normalization — signed, not abs).
+  bool LoadDeuteronWavefunction(Channel &ch, const std::string &dataPath,
+                                const std::string &filename = "av18-phi-v");
 
 public:
   // Public wrapper for standalone bound state tests
   void CalcBoundState(Channel &ch, int n, int l, double j, double bindingEnergy) {
     CalculateBoundState(ch, n, l, j, bindingEnergy);
   }
+  // Public accessor for transfer S-matrix (before 9-J coupling)
+  const std::vector<TransferSMatrixElement>& GetTransferSMatrix() const { return TransferSMatrix; }
   void Integrate(const Channel &ch, int L,
                  std::vector<std::complex<double>> &wf);
 };

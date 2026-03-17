@@ -1,0 +1,39 @@
+reset
+REACTION: 16O(d,p)17O(5/2+ 0.000) ELAB=20.0
+PARAMETERSET dpsb labangles r0target lstep=1 lmin=0 lmax=4 maxlextrap=0 asymptopia=30
+
+PROJECTILE
+wavefunction av18 r0=1 a=0.5 l=0
+;
+
+TARGET
+nodes=0 l=2 jp=5/2
+v=60.0 r0=1.10 a=0.65
+rc0=1.30
+;
+
+INCOMING
+writestep=0.5
+V=88.9546    R0=1.1489   A=0.7508
+VI=2.3480    RI0=1.3446  AI=0.6030
+VSI=10.2180  RSI0=1.3943 ASI=0.6872
+VSO=7.1140   RSO0=0.9720 ASO=1.0110
+VSOI=0.0000  RSOI0=0.0000 ASOI=0.0000
+RC0=1.3030
+;
+
+OUTGOING
+writestep=0.5
+V=49.5434    R0=1.1462   A=0.6753
+VI=2.0611    RI0=1.1462  AI=0.6753
+VSI=7.6703   RSI0=1.3016 ASI=0.5275
+VSO=5.2956   RSO0=0.9338 ASO=0.5900
+VSOI=-0.1059 RSOI0=0.9338 ASOI=0.5900
+RC0=1.3030
+;
+
+printwav
+anglemin=0 anglemax=5 anglestep=5
+;
+writens crosssec
+end
