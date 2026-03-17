@@ -1,3 +1,32 @@
 .cache
 build
 CMakeFiles
+
+# Compiled binaries (rebuild with g++ as needed)
+fr_o16dp
+smat_compare
+a12_validate
+aterm_test
+bs_o17gs
+chi_test
+chi_validate
+chi_validate2
+ninj_test
+radint_test
+smat_debug
+smat_debug2
+smat_o16dp
+wftest_main
+elastic_*
+dwba
+dwba_*
+boundstate_*
+distwave_*
+test_*
+
+# Fortran temp files
+fort.*
+
+# Backup files
+*.bak
+*.orig
