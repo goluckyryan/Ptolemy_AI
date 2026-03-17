@@ -165,20 +165,15 @@ void DWBA::InelDc() {
   PrjBS_ch.Projectile.A    = Incoming.Projectile.A - Outgoing.Projectile.A;
   PrjBS_ch.Projectile.Mass = mx;
   PrjBS_ch.mu   = mb * mx / (mb + mx) / AMU_MEV;   // AMU
-  // Projectile BS step: same Ptolemy formula h = min(1/kappa_P, A_P) / STEPSPER
-  // But keep on the same grid as TgtBS for shared IVPHI array indexing.
+  // Projectile BS step: Ptolemy formula h = min(1/kappa_P, A_P) / STEPSPER
   // Deuteron (AV18): kappa=0.2316 fm^-1, A_pot=0.5 → h=min(4.32,0.5)/8=0.0625 fm
-  // Use TgtBS step to keep IVPHI_T and IVPHI_P comparable (both h_common = PrjBS step).
+  // IVPHI_P lives on PrjBS grid; IVPHI_T lives on TgtBS grid — grids are independent.
   {
     const int STEPSPER = 8;
     double kappa_P = std::sqrt(2.0 * PrjBS_ch.mu * AMU_MEV * std::abs(ProjectileBS.BindingEnergy)) / HBARC;
     double A_pbs   = (ProjectileBS.Pot.A > 0) ? ProjectileBS.Pot.A : 0.5;
     PrjBS_ch.StepSize = std::min(1.0 / kappa_P, A_pbs) / STEPSPER;
-    // Clamp to TgtBS step for consistency (both IVPHI arrays share NSteps_common=PrjBS.NSteps)
-    // If PrjBS step is much finer than TgtBS, IVPHI_T would be on different size → mismatch.
-    // Safest: use same step for both BS grids.
-    PrjBS_ch.StepSize = TgtBS_ch.StepSize;
-    fprintf(stderr, "PrjBS step: kappa=%.5f fm^-1, A=%.4f → h=%.5f fm (matched to TgtBS)\n",
+    fprintf(stderr, "PrjBS step: kappa=%.5f fm^-1, A=%.4f → h=%.5f fm\n",
             kappa_P, A_pbs, PrjBS_ch.StepSize);
   }
   WavSet(PrjBS_ch);
@@ -532,10 +527,10 @@ void DWBA::InelDc() {
 
         // Chi interpolation at arbitrary r: linear interpolation on uniform grid
         // Defined here so it's accessible in both USE_ZR and normal (#else) paths.
-        double h_interp = Incoming.StepSize;
+        const double h_chi_b = Outgoing.StepSize;  // outgoing DW grid step
         auto interp_chi_b = [&](double r) -> std::complex<double> {
           if (r <= 0 || r >= Outgoing.MaxR) return {0.0, 0.0};
-          double idx_f = r / h_interp;
+          double idx_f = r / h_chi_b;
           int ii = static_cast<int>(idx_f);
           if (ii >= (int)chi_b.size() - 1) return {0.0, 0.0};
           double frac = idx_f - ii;
@@ -611,7 +606,7 @@ void DWBA::InelDc() {
         }
 
 #else
-        double h = Incoming.StepSize;  // kept for chi interpolation
+        double h    = Incoming.StepSize;   // step for chi_a (incoming distorted wave)
 
         // ---------------------------------------------------------------
         // Quadrature parameters (dpsb parameterset, Ptolemy GRDSET convention):
