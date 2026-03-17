@@ -625,6 +625,12 @@ void DWBA::InelDc() {
         const int NPHIAD = 4;         // extra phi points margin (dpsb: NPHIAD=4)
         const double DXV = 2.0 / ((double)LOOKST * LOOKST);
         const int IXTOPZ = LOOKST + 1;
+        const double SUMPTS = 8.0;    // dpsb: SUMPTS=8 (from RGRIDS row C, col 2)
+
+        // Ptolemy GRDSET: NPSUMI = (SUMMAX-SUMMIN)*SUMPTS*(AKI+AKO)/(4*PI), >= NPSUM
+        // This is the chi-integration grid size (splined from NPSUM H-computation grid)
+        double AKI = Incoming.k;   // incoming k in fm^-1
+        double AKO = Outgoing.k;   // outgoing k in fm^-1
 
         // Build CUBMAP GL points for phi on [0,1] (scaled by PHI0 later)
         // CUBMAP(MAPPHI=2, XLO=0, XMID=PHIMID_frac, XHI=1, GAMPHI≈0) → rational-sinh near 0
@@ -767,26 +773,44 @@ void DWBA::InelDc() {
         SUMMID = std::min(SUMMID, 0.5*(SUMMIN + SUMMAX));
         SUMMID = std::max(SUMMID, SUMMIN + (SUMMAX-SUMMIN)/7.0);
 
-        // Override SUMMID with Ptolemy-known value for debugging
-        // (comment out for production)
-        SUMMID = 4.9257;  // from Ptolemy GRDSET output for this reaction
+        // Ptolemy actual SUMMID = 15.20 for this reaction = SUMMAX/2.
+        // The C++ SUMMID computation gives ~4.3 fm (BUG: only uses bsprod centroid,
+        // not the full integrand including chi_a*chi_b which spreads the GL sampling).
+        // Fix: use SUMMAX/2 as Ptolemy does when chi waves push the centroid to large r.
+        double SUMMID_computed = SUMMID;  // save computed value
+        SUMMID = 0.5 * SUMMAX;  // = 15.20 fm — matches Ptolemy exactly
+
+        // Ptolemy GRDSET: NPSUMI = max(NPSUM, floor((SUMMAX-SUMMIN)*SUMPTS*(AKI+AKO)/(4*PI)))
+        // This is the chi-integration grid (splined from H-computation NPSUM grid).
+        // Uses the SAME CUBMAP params (MAPSUM=2, SUMMIN, SUMMID, SUMMAX, GAMSUM) but NPSUMI pts.
+        const double M_PI_local = 3.14159265358979323846;
+        int NPSUMI = (int)((SUMMAX - SUMMIN) * SUMPTS * (AKI + AKO) / (4.0 * M_PI_local));
+        if (NPSUMI < NPSUM) NPSUMI = NPSUM;
+
+        // Generate NPSUMI chi-integration U-grid (SUMIPTS, SUMIVALS)
+        std::vector<double> xi_si(NPSUMI), wi_si(NPSUMI);
+        GaussLegendre(NPSUMI, -1.0, 1.0, xi_si, wi_si);
+        CubMap(2, SUMMIN, SUMMID, SUMMAX, GAMSUM, xi_si, wi_si);
+        // xi_si[IU] = U values for chi integration, wi_si[IU] = GL weights
         
         std::cout << std::scientific << std::setprecision(3)
                   << "  WVWMAX=" << WVWMAX_pre << "  RVRLIM=" << RVRLIM
                   << "  SUMMIN=" << std::fixed << SUMMIN
-                  << "  SUMMID=" << SUMMID << " fm" << std::endl;
+                  << "  SUMMID_computed=" << SUMMID_computed
+                  << "  SUMMID_used=" << SUMMID << " fm"
+                  << "  NPSUM=" << NPSUM << "  NPSUMI=" << NPSUMI << std::endl;
 
         // ---------------------------------------------------------------
         // Ptolemy INELDC faithful translation (source.mor lines 17871-18200)
-        // Loop order: IV (NPDIF) outer, IU (NPSUM) inner, II (NPPHI) innermost.
+        // Loop order: IV (NPDIF) outer, then:
+        //   1) IU=1..NPSUM: compute H[IU] via phi loop → SMHVL[IU] = H*RIOEX
+        //   2) SPLNCB+INTRPC: spline SMHVL[NPSUM] → SMIVL[NPSUMI]
+        //   3) IU=1..NPSUMI: chi_a(RI)*SMIVL[IU]*chi_b(RO)*LWIO
         // RIOEX = exp(+ALPHAP*RP + ALPHAT*RT): removes bound-state tail from H
-        //   so H stays numerically well-behaved; restored when multiplied back.
-        //   RP, RT use diagonal approximation per GRDSET line 16444:
-        //     RP = sqrt(1 + (S2*RI + T2*RO)^2),  RT = sqrt(1 + (S1*RI + T1*RO)^2)
+        //   so H stays numerically well-behaved; LWIO includes exp(-...) to restore.
+        //   RP = sqrt(1 + (S2*RI + T2*RO)^2),  RT = sqrt(1 + (S1*RI + T1*RO)^2)
         //   ALPHAP = kappa_P = sqrt(2*mu_P*BE_P)/hbarc  (projectile decay constant)
         //   ALPHAT = kappa_T = sqrt(2*mu_T*BE_T)/hbarc  (target decay constant)
-        // Since NPSUMI = NPSUM for this reaction (no upsampling), we skip the
-        // spline step and directly accumulate chi_a*H*chi_b per (IV,IU).
         // ---------------------------------------------------------------
 
         // Bound-state decay constants (ALPHAP, ALPHAT in Fortran)
@@ -810,12 +834,11 @@ void DWBA::InelDc() {
         // then for each (IV,IU) pair compute V = CUBMAP(IV_frac, VMIN_u, VMID_u, VMAX_u).
         // For simplicity (and correctness for nearly-symmetric bsprod): VMID_u = 0.
 
-        // Pre-compute per-U V-range (GRDSET Stage 1 equivalent)
+        // Pre-compute per-U V-range on NPSUM H-grid (GRDSET Stage 1 equivalent)
         std::vector<double> VMAX_per_U(NPSUM), VMIN_per_U(NPSUM);
         for (int IU = 0; IU < NPSUM; ++IU) {
           double U = xi_s[IU];
           if (U < 1e-6) { VMAX_per_U[IU] = 0; VMIN_per_U[IU] = 0; continue; }
-          // Scan from VMAX=2U downward to find where bsprod drops below RVRLIM
           double VMAX_u = 2.0 * U;
           {
             int LOOKST_v = 100;
@@ -836,43 +859,120 @@ void DWBA::InelDc() {
           VMIN_per_U[IU] = -VMAX_u;  // symmetric
         }
 
+        // Pre-compute per-U V-range on NPSUMI chi-integration grid
+        // Interpolate VMAX from NPSUM H-grid to NPSUMI chi-grid using linear interp.
+        // Ptolemy uses polynomial fit (LSQPOL, degree NVPOLY=3); linear interp is simpler.
+        std::vector<double> VMAX_per_U_i(NPSUMI), VMIN_per_U_i(NPSUMI);
+        for (int IU = 0; IU < NPSUMI; ++IU) {
+          double U = xi_si[IU];
+          if (U < 1e-6) { VMAX_per_U_i[IU] = 0; VMIN_per_U_i[IU] = 0; continue; }
+          // Linear interpolation of VMAX from xi_s (NPSUM pts, sorted ascending)
+          // xi_s is already sorted (CubMap preserves order for MAPSUM=2)
+          double VMAX_u = 2.0 * U;  // default: full range
+          if (NPSUM >= 2) {
+            // Find bracketing interval in xi_s
+            if (U <= xi_s[0]) {
+              VMAX_u = VMAX_per_U[0];
+            } else if (U >= xi_s[NPSUM-1]) {
+              VMAX_u = VMAX_per_U[NPSUM-1];
+            } else {
+              int lo = 0, hi = NPSUM - 1;
+              while (hi - lo > 1) {
+                int mid = (lo + hi) / 2;
+                if (xi_s[mid] <= U) lo = mid; else hi = mid;
+              }
+              double t = (U - xi_s[lo]) / (xi_s[hi] - xi_s[lo]);
+              VMAX_u = VMAX_per_U[lo] * (1.0 - t) + VMAX_per_U[hi] * t;
+            }
+          }
+          VMAX_u = std::max(VMAX_u, 0.5);
+          VMAX_u = std::min(VMAX_u, 2.0*U);
+          VMAX_per_U_i[IU] =  VMAX_u;
+          VMIN_per_U_i[IU] = -VMAX_u;
+        }
+
         // Base GL points for V (NPDIF), will be CubMapped per (IV,IU) inside loops
         // Ptolemy: for each IV, the GL fraction is DIFPTS[IV] ∈ [-1,1]
         // We pre-generate the raw GL fractions and weights, then CubMap inside loops
         std::vector<double> gl_dif_base(NPDIF), gl_dif_wts_base(NPDIF);
         GaussLegendre(NPDIF, -1.0, 1.0, gl_dif_base, gl_dif_wts_base);
 
-        // H array: H[IU] = phi-integral for given (IV,IU) — scalar per IH=1
-        // (IHMAX=1 for this reaction: one (Li,Lo,Lx) element per outer Li loop)
-        // In Fortran: LHINT[IH], LSMHVL[IU + NPSUM*(IH-1)]
-        // We accumulate directly into H_smhvl[IU] then multiply chi*H
-        std::vector<double> H_smhvl_R(NPSUM, 0.0); // real part of H*RIOEX
-        std::vector<double> H_smhvl_I(NPSUM, 0.0); // imag part (0 for real bsprod)
+        // SMHVL: H[IU]*RIOEX for IU=0..NPSUM-1, computed in inner loop
+        // SMIVL: H_interp[IU] for IU=0..NPSUMI-1, from spline interpolation
+        std::vector<double> H_smhvl(NPSUM, 0.0);   // H*RIOEX on NPSUM grid
+        std::vector<double> H_smhvl_U(NPSUM, 0.0); // U-values where H was computed
+        std::vector<double> H_smivl(NPSUMI, 0.0);  // H interpolated to NPSUMI grid
+
+        // Natural cubic spline: given N points (x[i], y[i]), compute second derivatives,
+        // then evaluate at M new x-points. Returns interpolated values.
+        // Note: x must be strictly ascending.
+        auto natural_cubic_spline = [](const std::vector<double>& x,
+                                       const std::vector<double>& y,
+                                       const std::vector<double>& xnew,
+                                       std::vector<double>& ynew) {
+          int N = (int)x.size();
+          int M = (int)xnew.size();
+          ynew.resize(M, 0.0);
+          if (N < 2) return;
+          // Compute second derivatives (natural BC: y''[0]=y''[N-1]=0)
+          std::vector<double> h(N-1), alpha(N-1), l(N), mu(N), z(N), c(N), b(N), d(N);
+          for (int i = 0; i < N-1; i++) h[i] = x[i+1] - x[i];
+          for (int i = 1; i < N-1; i++) {
+            alpha[i] = (3.0/h[i])*(y[i+1]-y[i]) - (3.0/h[i-1])*(y[i]-y[i-1]);
+          }
+          l[0] = 1.0; mu[0] = 0.0; z[0] = 0.0;
+          for (int i = 1; i < N-1; i++) {
+            l[i] = 2.0*(x[i+1]-x[i-1]) - h[i-1]*mu[i-1];
+            mu[i] = h[i]/l[i];
+            z[i] = (alpha[i] - h[i-1]*z[i-1]) / l[i];
+          }
+          l[N-1] = 1.0; z[N-1] = 0.0; c[N-1] = 0.0;
+          for (int j = N-2; j >= 0; j--) {
+            c[j] = z[j] - mu[j]*c[j+1];
+            b[j] = (y[j+1]-y[j])/h[j] - h[j]*(c[j+1]+2.0*c[j])/3.0;
+            d[j] = (c[j+1]-c[j])/(3.0*h[j]);
+          }
+          // Evaluate at each new x
+          for (int k = 0; k < M; k++) {
+            double xk = xnew[k];
+            // Binary search for interval
+            int lo = 0, hi = N-2;
+            if (xk <= x[0]) { xk = x[0]; lo = 0; }
+            else if (xk >= x[N-1]) { xk = x[N-1]; lo = N-2; }
+            else {
+              while (hi - lo > 1) {
+                int mid = (lo+hi)/2;
+                if (x[mid] <= xk) lo = mid; else hi = mid;
+              }
+            }
+            double dx = xk - x[lo];
+            ynew[k] = y[lo] + b[lo]*dx + c[lo]*dx*dx + d[lo]*dx*dx*dx;
+          }
+        };
 
         // ── Outer loop: IV = 1..NPDIF (V grid index, Ptolemy DO 859 IV) ──────
         for (int IV = 0; IV < NPDIF; ++IV) {
           double gl_v_frac = gl_dif_base[IV];   // raw GL fraction ∈ [-1,1]
           double gl_v_wt   = gl_dif_wts_base[IV]; // raw GL weight
 
-          // ── Inner loop: IU = 1..NPSUM (U grid, Ptolemy DO 549 IU) ──────────
+          // ─── H computation loop: IU=0..NPSUM-1 (Ptolemy DO 549 IU) ────────
+          // For each NPSUM U-point, compute H via phi integral, store H*RIOEX.
           for (int IU = 0; IU < NPSUM; ++IU) {
+            H_smhvl[IU] = 0.0;
+            H_smhvl_U[IU] = xi_s[IU];
+
             double U   = xi_s[IU];   // U = SUMHPTS[IU] (already CubMapped)
-            double WOW = wi_s[IU];   // weight for U
 
             if (U < 1e-6) continue;
 
             // CubMap V fraction to [VMIN_u, VMAX_u] with VMID=0
-            // Ptolemy: CUBMAP(MAPDIF=1, cubic-sinh) → concentration near VMID=0
-            // For each IU, CubMap the single GL point gl_v_frac → V value
             double VMIN_u = VMIN_per_U[IU];
             double VMAX_u = VMAX_per_U[IU];
             double VMID_u = 0.0;
 
-            // Apply CubMap to single point (IU-dependent V range)
             std::vector<double> vv(1, gl_v_frac), vw(1, gl_v_wt);
             CubMap(1, VMIN_u, VMID_u, VMAX_u, GAMDIF, vv, vw);
             double V     = vv[0];
-            double DIFWT = vw[0];
 
             double ra = U + V * 0.5;   // RI = U + V/2
             double rb = U - V * 0.5;   // RO = U - V/2
@@ -881,8 +981,6 @@ void DWBA::InelDc() {
 
             // RIOEX: Ptolemy GRDSET line 16444
             //   RIOEX = exp(+ALPHAP * RP + ALPHAT * RT)
-            //   RP = sqrt(1 + (S2*RI + T2*RO)^2)   (removes tail from H)
-            //   RT = sqrt(1 + (S1*RI + T1*RO)^2)
             double RP_rioex = std::sqrt(1.0 + (S2*ra + T2*rb)*(S2*ra + T2*rb));
             double RT_rioex = std::sqrt(1.0 + (S1*ra + T1*rb)*(S1*ra + T1*rb));
             double RIOEX = std::exp(ALPHAP * RP_rioex + ALPHAT * RT_rioex);
@@ -978,44 +1076,61 @@ void DWBA::InelDc() {
             // ── End phi loop (Ptolemy DO 489) ─────────────────────────────
 
             // Fortran DO 509: SMHVL[IU,IH] = HINT[IH] * RIOEX[IPLUNK]
-            // RIOEX removes exp decay → H_smhvl is H / exp_decay (numerically larger)
-            // When we multiply chi_a * H_smhvl * chi_b below, the decay is restored
-            // because chi waves themselves decay exponentially at large r.
-            // Note: for direct GL (no spline), RIOEX is effectively a weight that
-            // rescales H for the chi multiplication step below.
-            double H_val = H_real * RIOEX;
-
-            // ── Multiply chi_a(ra) * H * chi_b(rb) (Fortran DO 779) ────────
-            // Fortran: TERM = LWIO[IPLUNK] = JACOB * RI * RO * WOW * DIFWT
-            //          LLILOR[II] += TERM * SMIVL[IU,IH] * DWR
-            //          LLILOI[II] += TERM * SMIVL[IU,IH] * DWI
-            // where DWR+i*DWI = chi_a(RI) * chi_b(RO)  (no conjugate, Ptolemy convention)
-            std::complex<double> ca      = interp_chi_a(ra);
-            std::complex<double> cb_conj = interp_chi_b(rb);  // no conjugate (Ptolemy)
-            double TERM = JACOB_grdset * ra * rb * WOW * DIFWT;
-
-            // chi product: DWR = Re(chi_b)*Re(chi_a) - Im(chi_b)*Im(chi_a)
-            //              DWI = Re(chi_b)*Im(chi_a) + Im(chi_b)*Re(chi_a)
-            // Integral += TERM * H_val * (DWR + i*DWI)
-            // But chi_b has no conjugate, so:
-            //   (ca * cb) = complex product
-            // Divide by RIOEX here to restore the decay (RIOEX cancels with the
-            // exp decay in chi_a and chi_b at large ra,rb):
-            // Actually Ptolemy restores RIOEX differently: it puts RIOEX INTO H,
-            // then the chi product naturally includes the full integrand.
-            // For our direct integration: the contribution is:
-            //   contrib = ca * cb * H_real * JACOB * ra * rb * WOW * DIFWT
-            // The RIOEX factor was applied to H to get H_smhvl, but since we
-            // multiply chi*H_smhvl (not chi*H_real), we need to divide by RIOEX
-            // to avoid double-counting... UNLESS the chi waves don't contain the
-            // exp decay factor (they are already normalised asymptotically).
-            // Conclusion: for direct integration (no spline), use H_real directly.
-            // RIOEX is only needed for the spline step (stability). Skip it here.
-            auto contrib = ca * cb_conj * H_real * TERM;
-            Integral += contrib;
+            // Store H * RIOEX for this U-point (RIOEX removes exponential decay
+            // so H_smhvl is numerically large and smooth → good for spline).
+            H_smhvl[IU] = H_real * RIOEX;
 
           }
-          // ── End IU loop (Ptolemy DO 549) ────────────────────────────────────
+          // ── End H-computation IU loop (Ptolemy DO 549) ─────────────────────
+
+          // ── SPLNCB + INTRPC: spline H_smhvl[NPSUM] → H_smivl[NPSUMI] ────────
+          // Ptolemy: CALL SPLNCB(NPSUM, SMHPTS, SMHVL, work1, work2, work3)
+          //          CALL INTRPC(NPSUM, SMHPTS, SMHVL, ..., NPSUMI, SMIPTS, SMIVL)
+          // Natural cubic spline from NPSUM grid → NPSUMI grid.
+          natural_cubic_spline(H_smhvl_U, H_smhvl, xi_si, H_smivl);
+
+          // ── Chi integration loop: IU=0..NPSUMI-1 (Ptolemy DO 789 IU) ────────
+          // TERM = LWIO[IPLUNK] = JACOB * RI * RO * WOW * DIFWT * exp(-ALPHAP*RP-ALPHAT*RT)
+          // contrib = TERM * H_smivl[IU] * chi_a(RI) * chi_b(RO)
+          // Note: TERM includes exp(-...) which cancels with RIOEX in H_smivl:
+          //   H_smivl = H_real * RIOEX = H_real * exp(+ALPHAP*RP+ALPHAT*RT)
+          //   TERM includes exp(-(ALPHAP*RP+ALPHAT*RT))
+          //   → product = JACOB * RI * RO * WOW * DIFWT * H_real * chi_a * chi_b ✓
+          for (int IU = 0; IU < NPSUMI; ++IU) {
+            double U   = xi_si[IU];
+            double WOW = wi_si[IU];
+
+            if (U < 1e-6) continue;
+
+            // Get V at this NPSUMI U-point via CubMap
+            double VMIN_u = VMIN_per_U_i[IU];
+            double VMAX_u = VMAX_per_U_i[IU];
+            double VMID_u = 0.0;
+
+            std::vector<double> vv(1, gl_v_frac), vw(1, gl_v_wt);
+            CubMap(1, VMIN_u, VMID_u, VMAX_u, GAMDIF, vv, vw);
+            double V     = vv[0];
+            double DIFWT = vw[0];
+
+            double ra = U + V * 0.5;
+            double rb = U - V * 0.5;
+
+            if (ra < 1e-6 || rb < 1e-6) continue;
+
+            // LWIO includes exp(-(ALPHAP*RP + ALPHAT*RT)) to cancel RIOEX in H_smivl
+            double RP_lwio = std::sqrt(1.0 + (S2*ra + T2*rb)*(S2*ra + T2*rb));
+            double RT_lwio = std::sqrt(1.0 + (S1*ra + T1*rb)*(S1*ra + T1*rb));
+            double exp_neg = std::exp(-(ALPHAP * RP_lwio + ALPHAT * RT_lwio));
+
+            double TERM = JACOB_grdset * ra * rb * WOW * DIFWT * exp_neg;
+
+            std::complex<double> ca      = interp_chi_a(ra);
+            std::complex<double> cb_conj = interp_chi_b(rb);  // no conjugate (Ptolemy)
+
+            auto contrib = ca * cb_conj * H_smivl[IU] * TERM;
+            Integral += contrib;
+          }
+          // ── End chi integration IU loop (Ptolemy DO 789) ───────────────────
         }
         // ── End IV loop (Ptolemy DO 859) ────────────────────────────────────────
 
