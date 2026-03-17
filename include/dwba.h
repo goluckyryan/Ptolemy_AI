@@ -162,6 +162,19 @@ public:
   const std::vector<TransferSMatrixElement>& GetTransferSMatrix() const { return TransferSMatrix; }
   void Integrate(const Channel &ch, int L,
                  std::vector<std::complex<double>> &wf);
+
+  // Public wrapper: run kinematics setup without full Calculate()
+  void SetupChannels() { CalculateKinematics(); WavSet(Incoming); WavSet(Outgoing); }
+
+  // Public wrapper: run WavElj for a given channel and return S-matrix element
+  // incoming=true → Incoming channel; false → Outgoing channel
+  std::complex<double> TestWavElj(bool incoming, int L, int JP2) {
+    Channel &ch = incoming ? Incoming : Outgoing;
+    WavElj(ch, L, JP2);
+    if ((int)ch.SMatrix.size() > L)
+      return ch.SMatrix[L];
+    return {0.0, 0.0};
+  }
 };
 
 #endif
