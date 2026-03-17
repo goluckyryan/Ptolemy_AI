@@ -143,10 +143,23 @@ void DWBA::InelDc() {
   TgtBS_ch.Projectile.A    = Incoming.Projectile.A - Outgoing.Projectile.A;
   TgtBS_ch.Projectile.Mass = mx;
   TgtBS_ch.mu   = mA * mx / (mA + mx) / AMU_MEV;   // AMU
-  TgtBS_ch.StepSize = Incoming.StepSize;
-  TgtBS_ch.MaxR     = Incoming.MaxR;
-  TgtBS_ch.NSteps   = Incoming.NSteps;
-  TgtBS_ch.RGrid    = Incoming.RGrid;
+  // Ptolemy BOUND step size: h = min(1/kappa, A) / STEPSPER (STEPSPER=8 from dpsb)
+  // where kappa = sqrt(2*mu*BE)/hbarc and A = diffuseness of the BS WS potential.
+  // For 17O gs: kappa=0.4337 fm^-1 → 1/kappa=2.306 fm, A=0.65 fm → h=0.65/8=0.08125 fm
+  {
+    double kappa_T = std::sqrt(2.0 * TgtBS_ch.mu * AMU_MEV * std::abs(TargetBS.BindingEnergy)) / HBARC;
+    double A_tbs   = (TargetBS.Pot.A > 0) ? TargetBS.Pot.A : Incoming.StepSize;
+    double h_tbs   = std::min(1.0 / kappa_T, A_tbs) / 8.0;
+    double maxR_tbs = Incoming.MaxR;
+    int nsteps_tbs  = static_cast<int>(maxR_tbs / h_tbs) + 2;
+    TgtBS_ch.StepSize = h_tbs;
+    TgtBS_ch.MaxR     = maxR_tbs;
+    TgtBS_ch.NSteps   = nsteps_tbs;
+    TgtBS_ch.RGrid.resize(nsteps_tbs);
+    for (int i = 0; i < nsteps_tbs; ++i) TgtBS_ch.RGrid[i] = (i + 1) * h_tbs;
+    fprintf(stderr, "TgtBS step: kappa=%.5f, A=%.4f → h=%.5f fm (%d steps)\n",
+            kappa_T, A_tbs, h_tbs, nsteps_tbs);
+  }
   TgtBS_ch.WaveFunction.resize(Incoming.NSteps);
   TgtBS_ch.V_real.resize(Incoming.NSteps);
   TgtBS_ch.V_imag.resize(Incoming.NSteps);
@@ -293,8 +306,11 @@ void DWBA::InelDc() {
   // but IS clipped separately: phi'_T or phi'_P.
   //
   // Build IVPHI arrays:
-  int NSteps_common = TgtBS_ch.NSteps;  // = PrjBS_ch.NSteps = 301
-  double h_common = TgtBS_ch.StepSize;  // = 0.1 fm
+  // IVPHI_P (projectile vertex) lives on PrjBS grid (h=0.1 fm)
+  // IVPHI_T (target vertex) lives on TgtBS grid (h_T = min(1/kappa,A)/8)
+  // Use PrjBS grid as the common reference for IVPHI_P interpolation.
+  int NSteps_common = PrjBS_ch.NSteps;  // PrjBS grid size (h=0.1 fm)
+  double h_common   = PrjBS_ch.StepSize; // = 0.1 fm
   // USECORE correction parameters for POST form (NUCONL=3, stripping, IVRTEX=1):
   // For stripping (d,p): ISC=2 (outgoing channel), IOUTSW=TRUE
   //   RNSCAT = R0_out * mB^(1/3)   [outgoing p-B scattering radius]
@@ -325,30 +341,29 @@ void DWBA::InelDc() {
     return VOPT_post / (1.0 + std::exp((r_core - RNCORE_post) / AOPT_post));
   };
 
-  std::vector<double> IVPHI_T(NSteps_common, 0.0);  // phi_T * V_nA (PRIOR vertex)
-  std::vector<double> IVPHI_P(NSteps_common, 0.0);  // phi_P * V_np (POST vertex)
-  double IVPHI_T_max = 0, IVPHI_P_max = 0;
-  int idx_T_vert_peak = 1, idx_P_vert_peak = 1;
+  // IVPHI_T on TgtBS grid (fine: h_T = 0.08125 fm)
+  int NSteps_T = TgtBS_ch.NSteps;
+  double h_T   = TgtBS_ch.StepSize;
+  std::vector<double> IVPHI_T(NSteps_T, 0.0);
+  double IVPHI_T_max = 0; int idx_T_vert_peak = 1;
 
-  // Vertex potential:
-  //   Target vertex: phi_T(r) * V_WS_nA(r) — always WS bound-state potential ✅
-  //   Projectile vertex: phi_P(r) * V_WS_np(r)
-  //     WAVEFUNCTION=REID replaces only the bound-state solver for phi_P(r).
-  //     The vertex potential V_np is still the WS from the PROJECTILE input section
-  //     (V=60, R=1.0, A=0.5). Block 1 of reid-phi-v is NOT used by Ptolemy.
-  //     V_real[] is already set to this WS by WavSet/EvaluatePotential. ✅
+  // IVPHI_P on PrjBS grid (h=0.1 fm)
+  std::vector<double> IVPHI_P(NSteps_common, 0.0);
+  double IVPHI_P_max = 0; int idx_P_vert_peak = 1;
+
   std::cout << "  Vertex: V_WS(V=60,R=1,A=0.5)*phi_Reid (projectile), V_WS*phi_T (target)" << std::endl;
 
-  for (int i = 1; i < NSteps_common; ++i) {
+  for (int i = 1; i < NSteps_T; ++i) {
     IVPHI_T[i] = std::abs(TgtBS_ch.WaveFunction[i].real()) * TgtBS_ch.V_real[i];
-    // Use VPhiProduct (Reid V_eff * phi_S) if available; else fall back to WS V * phi
+    if (IVPHI_T[i] > IVPHI_T_max) { IVPHI_T_max = IVPHI_T[i]; idx_T_vert_peak = i; }
+  }
+  for (int i = 1; i < NSteps_common; ++i) {
     IVPHI_P[i] = !PrjBS_ch.VPhiProduct.empty()
                  ? PrjBS_ch.VPhiProduct[i]
                  : std::abs(PrjBS_ch.WaveFunction[i].real()) * PrjBS_ch.V_real[i];
-    if (IVPHI_T[i] > IVPHI_T_max) { IVPHI_T_max = IVPHI_T[i]; idx_T_vert_peak = i; }
     if (IVPHI_P[i] > IVPHI_P_max) { IVPHI_P_max = IVPHI_P[i]; idx_P_vert_peak = i; }
   }
-  double r_T_vert_peak = idx_T_vert_peak * h_common;
+  double r_T_vert_peak = idx_T_vert_peak * h_T;
   double r_P_vert_peak = idx_P_vert_peak * h_common;
 
   // Report vertex peaks for diagnostic comparison vs Ptolemy BSSET output
@@ -387,9 +402,9 @@ void DWBA::InelDc() {
     }
     return {phi_max, idx_peak};
   };
-  auto [phi_T_max, idx_T_peak] = findWFPeak(TgtBS_ch.WaveFunction, NSteps_common);
+  auto [phi_T_max, idx_T_peak] = findWFPeak(TgtBS_ch.WaveFunction, NSteps_T);
   auto [phi_P_max, idx_P_peak] = findWFPeak(PrjBS_ch.WaveFunction, NSteps_common);
-  double r_T_peak = idx_T_peak * h_common;
+  double r_T_peak = idx_T_peak * h_T;
   double r_P_peak = idx_P_peak * h_common;
 
   // Interpolation helper (linear, returns real WF value)
@@ -686,8 +701,8 @@ void DWBA::InelDc() {
             return std::abs(phi_T * ivphi_P);
           }
 #else
-          double ivphi_T = InterpolateIVPHI(IVPHI_T, h_common, NSteps_common,
-                                             h_common * NSteps_common, rx,
+          double ivphi_T = InterpolateIVPHI(IVPHI_T, h_T, NSteps_T,
+                                             h_T * NSteps_T, rx,
                                              IVPHI_T_max, r_T_vert_peak);
           double phi_P  = InterpolateClipped(PrjBS_ch.WaveFunction, PrjBS_ch.RGrid,
                                              PrjBS_ch.NSteps, PrjBS_ch.StepSize,
