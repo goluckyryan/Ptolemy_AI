@@ -118,7 +118,8 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
   double h2 = h * h;
   double h2_12 = h2 / 12.0;
 
-  ch.WaveFunction.assign(N + 1, std::complex<double>(0.0, 0.0));
+  // +4 guard zeros at end for 5-point Lagrange interpolation in InelDc
+  ch.WaveFunction.assign(N + 5, std::complex<double>(0.0, 0.0));
 
   // --- Spin-orbit coupling factor ---
   int JSP_ch = (ch.JSPS > 0) ? ch.JSPS : 1;  // default to 1 if not set
@@ -129,7 +130,7 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
   int JP_max_valid = 2 * L + JSP_ch;
   if (Jp < JP_min_valid || Jp > JP_max_valid || ((Jp + JSP_ch) % 2 != 0)) {
     // Invalid JP for this channel — zero out wavefunction and return
-    ch.WaveFunction.assign(N + 1, std::complex<double>(0.0, 0.0));
+    ch.WaveFunction.assign(N + 5, std::complex<double>(0.0, 0.0));
     return;
   }
 
