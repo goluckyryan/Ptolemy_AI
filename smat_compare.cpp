@@ -110,7 +110,8 @@ int main() {
   dwba.SetTargetSpin(0.0);
   dwba.SetResidualSpin(2.5);
 
-  // Run setup (populates kinematics)
+  // Kinematics mode: false = NR (Ptolemy default), true = relativistic
+  // dwba.SetRelativisticKinematics(true);  // uncomment to use relativistic
   dwba.SetupChannels();
 
   // ── INCOMING channel ──

@@ -27,54 +27,69 @@ static const double FINE_B   = 1.0 / 137.035999;
 // non-relativistic reduced mass for the potential.
 // ---------------------------------------------------------------
 void DWBA::CalculateKinematics() {
-  // Non-relativistic kinematics matching Ptolemy convention.
-  // Ptolemy uses: Ecm = Elab * mA/(ma+mA), k = sqrt(2*mu*Ecm)/hbarc
-  // Masses from Isotope class (real atomic masses in MeV).
-
-  // Incoming Channel (a + A)
   double ma = Incoming.Projectile.Mass;  // MeV
   double mA = Incoming.Target.Mass;      // MeV
-
-  // Non-relativistic CM energy
-  Incoming.Ecm = Incoming.Elab * mA / (ma + mA);
-
-  // Reduced mass (MeV) → AMU
-  double mu_in_MeV = ma * mA / (ma + mA);
-  Incoming.mu = mu_in_MeV / AMU_B;  // AMU
-
-  // Wave number: k = sqrt(2*mu*Ecm) / hbarc
-  Incoming.k = std::sqrt(2.0 * mu_in_MeV * Incoming.Ecm) / HBARC_B;
-
-  // Sommerfeld parameter: eta = Z1*Z2*mu / (hbarc * k * 137.036)
-  double Z1 = Incoming.Projectile.Z;
-  double Z2 = Incoming.Target.Z;
-  Incoming.eta = Z1 * Z2 * mu_in_MeV / (137.036 * HBARC_B * Incoming.k);
-
-  // Outgoing Channel (b + B)
   double mb = Outgoing.Projectile.Mass;  // MeV
   double mB = Outgoing.Target.Mass;      // MeV
 
-  // Q-value from masses: Q = (ma + mA - mb - mB)
-  double Q_calc = ma + mA - mb - mB;
-
-  // Outgoing CM energy: Ecm_out = Ecm_in + Q
-  Outgoing.Ecm = Incoming.Ecm + Q_calc;
-
-  if (Outgoing.Ecm < 0) {
-    std::cerr << "Error: Channel closed (below threshold)." << std::endl;
-    Outgoing.Ecm = 0;
-  }
-
-  // Reduced mass for outgoing channel
-  double mu_out_MeV = mb * mB / (mb + mB);
-  Outgoing.mu = mu_out_MeV / AMU_B;  // AMU
-
-  // Wave number and eta for outgoing channel
-  Outgoing.k = std::sqrt(2.0 * mu_out_MeV * Outgoing.Ecm) / HBARC_B;
-
+  double Z1 = Incoming.Projectile.Z;
+  double Z2 = Incoming.Target.Z;
   double Z3 = Outgoing.Projectile.Z;
   double Z4 = Outgoing.Target.Z;
-  Outgoing.eta = Z3 * Z4 * mu_out_MeV / (137.036 * HBARC_B * Outgoing.k);
+
+  double mu_in_MeV  = ma * mA / (ma + mA);
+  double mu_out_MeV = mb * mB / (mb + mB);
+  double Q_calc     = ma + mA - mb - mB;
+
+  if (useRelativisticKinematics) {
+    // ── Relativistic kinematics (4-momentum) ──────────────────────────────
+    // Incoming CM frame
+    double E_tot_a  = ma + Incoming.Elab;
+    double p_a      = std::sqrt(E_tot_a * E_tot_a - ma * ma);
+    double s_in     = (E_tot_a + mA) * (E_tot_a + mA) - p_a * p_a;
+    double E_cm_tot = std::sqrt(s_in);
+    Incoming.Ecm    = E_cm_tot - ma - mA;
+    double p_cm_in  = p_a * mA / E_cm_tot;
+    Incoming.k      = p_cm_in / HBARC_B;
+    double E1_cm    = std::sqrt(p_cm_in * p_cm_in + ma * ma);
+    double E2_cm    = std::sqrt(p_cm_in * p_cm_in + mA * mA);
+    Incoming.eta    = Z1 * Z2 * FINE_B * E1_cm * E2_cm / (p_cm_in * E_cm_tot);
+    Incoming.mu     = mu_in_MeV / AMU_B;
+
+    // Outgoing CM frame (energy conservation: same sqrt(s))
+    double s_out    = s_in;
+    double mB_star  = mB + Ex;
+    double p_cm_out2 = (s_out - (mb + mB_star) * (mb + mB_star)) *
+                       (s_out - (mb - mB_star) * (mb - mB_star)) / (4.0 * s_out);
+    if (p_cm_out2 < 0) {
+      std::cerr << "Error: Channel closed (below threshold)." << std::endl;
+      p_cm_out2 = 0;
+    }
+    double p_cm_out = std::sqrt(p_cm_out2);
+    Outgoing.k      = p_cm_out / HBARC_B;
+    Outgoing.Ecm    = E_cm_tot - mb - mB_star;
+    double E3_cm    = std::sqrt(p_cm_out2 + mb * mb);
+    double E4_cm    = std::sqrt(p_cm_out2 + mB_star * mB_star);
+    Outgoing.eta    = Z3 * Z4 * FINE_B * E3_cm * E4_cm / (p_cm_out * E_cm_tot);
+    Outgoing.mu     = mu_out_MeV / AMU_B;
+
+  } else {
+    // ── Non-relativistic kinematics (Ptolemy default) ─────────────────────
+    // Ecm = Elab * mA/(ma+mA),  k = sqrt(2*mu*Ecm)/hbarc
+    Incoming.Ecm = Incoming.Elab * mA / (ma + mA);
+    Incoming.mu  = mu_in_MeV / AMU_B;
+    Incoming.k   = std::sqrt(2.0 * mu_in_MeV * Incoming.Ecm) / HBARC_B;
+    Incoming.eta = Z1 * Z2 * mu_in_MeV / (137.036 * HBARC_B * Incoming.k);
+
+    Outgoing.Ecm = Incoming.Ecm + Q_calc;
+    if (Outgoing.Ecm < 0) {
+      std::cerr << "Error: Channel closed (below threshold)." << std::endl;
+      Outgoing.Ecm = 0;
+    }
+    Outgoing.mu  = mu_out_MeV / AMU_B;
+    Outgoing.k   = std::sqrt(2.0 * mu_out_MeV * Outgoing.Ecm) / HBARC_B;
+    Outgoing.eta = Z3 * Z4 * mu_out_MeV / (137.036 * HBARC_B * Outgoing.k);
+  }
 
   // Set projectile spin (JSPS = 2*spin) for each channel
   // For 33Si(d,p)34Si: incoming = deuteron (s=1, JSPS=2), outgoing = proton (s=1/2, JSPS=1)
