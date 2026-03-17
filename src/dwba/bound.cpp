@@ -408,19 +408,16 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
 }
 
 // ---------------------------------------------------------------
-// DWBA::LoadReidWavefunction
+// DWBA::LoadDeuteronWavefunction
 //
-// Computes the Reid soft-core deuteron S-state wavefunction and
-// effective potential by cubic spline on Reid's 34-point tabulation,
-// exactly matching Ptolemy's Reid linkule (linkulesfitters.mor SUBROUTINE REID).
+// Loads the deuteron S-state wavefunction and effective vertex potential.
+// Dispatches to either AV18 or Reid implementation based on `filename`:
+//   "av18-phi-v"  → Argonne V18 (tabulated, 3-point interp, grid_step=0.05 fm)
+//   "reid-phi-v"  → Reid soft-core (cubic spline, 34-point tabulation)
 //
 // Outputs:
-//   ch.WaveFunction[I] = phi_S(r) = U_S(r)/r, normalized to ∫u²dr=1
-//   ch.VPhiProduct[I]  = phi_S(r) * V_eff(r)  [IVPHI_P, signed]
-//
-// where V_eff(r) = -(VC + sqrt(8)*VT*W/U)  (Reid S-state effective potential)
-//
-// This replaces the previous file-based approach which misread reid-phi-v.
+//   ch.WaveFunction[I] = phi_S(r) = u_S(r)/r, normalized to ∫u²dr=1
+//   ch.VPhiProduct[I]  = phi_S(r) * V_eff(r)  [IVPHI_P, signed, MeV·fm⁻¹]
 //
 // File structure (ASCII, 2564 values total, 641 per block):
 //   Block 0 [0..640]:    phi_S(r) = u_S(r)/r  (L=0, S-state)
@@ -440,16 +437,120 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
 // ---------------------------------------------------------------
 bool DWBA::LoadDeuteronWavefunction(Channel &ch, const std::string &dataPath,
                                     const std::string &filename) {
-  // Reid soft-core S-state wavefunction via cubic spline on 34-point tabulation.
-  // Matches Ptolemy's Reid linkule (linkulesfitters.mor SUBROUTINE REID, IREQUE=3).
-  //
-  // phi_S(r) = U_S(r)/r  (normalized to ∫u²dr = 1, i.e. SUMIN from BOUND lines 4109-4169)
-  // V_eff(r) = -(VC + sqrt(8)*VT*W/U)  [VMULT=-1, as in linkule]
-  // IVPHI_P  = phi_S * V_eff
+  // ---------------------------------------------------------------
+  // Dispatch: choose AV18 or Reid based on filename
+  // ---------------------------------------------------------------
+  bool useAV18 = (filename == "av18-phi-v");
+  int NSTEPS = ch.NSteps;
+  double h   = ch.StepSize;
 
-  // Reid tabulated data: x = 0.7*r, u_S(x), du_S/dx  (from linkulesfitters.mor)
-  static const int NTAB = 34;
-  static const double XX[34] = {
+  ch.WaveFunction.assign(NSTEPS, std::complex<double>(0.0, 0.0));
+  ch.VPhiProduct .assign(NSTEPS, 0.0);
+
+  // ---------------------------------------------------------------
+  // AV18 implementation
+  // Matches Ptolemy linkule build/av18.mor (3/16/03, based on Reid)
+  // Grid: r = 0, 0.05, 0.10, ... 12.0 fm  (241 points, grid_step=0.05)
+  // phi_S is stored as phi(r)*1 (already u/r convention, normalized to int(u^2)dr=1)
+  // vs_S is stored as the effective potential V_eff(r) [MeV, sign: negative = attractive]
+  // IVPHI_P = phi_S * (-vs_S) because av18 stores array2 = -v (VMULT=-1 convention)
+  // ---------------------------------------------------------------
+  static const int    AV18_N    = 241;
+  static const double AV18_H    = 0.05;  // fm
+  // S-state wavefunction (normalized, phi = u/r)
+  static const double AV18_PHI[241] = {
+    .08152, .083498, .089482, .09958, .1139, .13244, .15504,
+    .18127, .21044, .24155, .2734, .30473, .33428, .36098, .38402,
+    .40291, .41745, .42774, .43406, .43685, .43658, .43378,
+    .42891, .42243, .4147, .40605, .39675, .38701, .37699, .36684,
+    .35665, .34652, .3365, .32664, .31698, .30754, .29833, .28938,
+    .28069, .27226, .2641, .2562, .24856, .24118, .23405, .22716,
+    .22051, .21409, .2079, .20192, .19615, .19058, .18521, .18002,
+    .17501, .17018, .16551, .161, .15665, .15244, .14837, .14444,
+    .14064, .13697, .13341, .12997, .12664, .12342, .1203, .11728,
+    .11436, .11152, .10878, .10611, .10353, .10103, .098599,
+    .096243, .093957, .091737, .089583, .087491, .085459, .083485,
+    .081567, .079703, .077891, .07613, .074417, .072751, .071131,
+    .069554, .06802, .066527, .065073, .063658, .06228, .060938,
+    .059631, .058357, .057116, .055907, .054728, .053579, .052459,
+    .051367, .050301, .049262, .048249, .047259, .046295, .045353,
+    .044434, .043537, .042661, .041806, .040971, .040155, .039359,
+    .038581, .037821, .037078, .036353, .035644, .03495, .034273,
+    .033611, .032964, .032331, .031712, .031107, .030515, .029936,
+    .029369, .028815, .028273, .027743, .027224, .026716, .026219,
+    .025733, .025257, .024791, .024334, .023887, .02345, .023022,
+    .022602, .022191, .021789, .021395, .021008, .02063, .02026,
+    .019897, .019541, .019192, .018851, .018516, .018188, .017866,
+    .017551, .017242, .016939, .016642, .016351, .016065, .015785,
+    .015511, .015241, .014977, .014718, .014465, .014215, .013971,
+    .013731, .013496, .013265, .013039, .012817, .012599, .012385,
+    .012175, .01197, .011767, .011569, .011375, .011183, .010996,
+    .010812, .010631, .010454, .01028, .010109, .0099407,
+    .0097759, .0096141, .0094552, .0092991, .0091459, .0089954,
+    .0088476, .0087024, .0085599, .0084199, .0082823, .0081472,
+    .0080145, .0078842, .0077561, .0076303, .0075068, .0073853,
+    .007266, .0071488, .0070336, .0069205, .0068093, .0067,
+    .0065926, .0064871, .0063834, .0062815, .0061813, .0060829,
+    .0059861, .005891, .0057976, .0057057, .0056154, .0055266,
+    .0054393, .0053535, .0052692, .0051862, .0051047, .0050246,
+    .0049457, .0048683, .0047921, .0047172
+  };
+  // S-state effective potential [MeV] — stored as -V (attractive = negative)
+  static const double AV18_VS[241] = {
+    2408., 2368.4, 2247.6, 2055.6, 1812.6, 1541.7, 1263.9, 995.83,
+    749.81, 533.59, 351.2, 203.56, 89.222, 5.0502, -53.16,
+    -90.118, -110.55, -118.84, -118.74, -113.3, -104.84, -95.015,
+    -84.918, -75.227, -66.31, -58.323, -51.294, -45.172, -39.872,
+    -35.292, -31.332, -27.901, -24.917, -22.312, -20.028, -18.018,
+    -16.24, -14.664, -13.262, -12.011, -10.892, -9.8895, -8.99,
+    -8.1816, -7.454, -6.7984, -6.2072, -5.6734, -5.191, -4.7547,
+    -4.3597, -4.0017, -3.677, -3.3823, -3.1144, -2.8707, -2.6489,
+    -2.4467, -2.2622, -2.0937, -1.9397, -1.7987, -1.6695, -1.5511,
+    -1.4423, -1.3424, -1.2504, -1.1657, -1.0877, -1.0156, -.94907,
+    -.88754, -.8306, -.77785, -.72895, -.68357, -.64142, -.60224,
+    -.56579, -.53185, -.50022, -.47073, -.44322, -.41752, -.3935,
+    -.37104, -.35002, -.33034, -.31191, -.29462, -.27841, -.26319,
+    -.24889, -.23547, -.22284, -.21097, -.19979, -.18927, -.17936,
+    -.17003, -.16122, -.15292, -.14509, -.1377, -.13071, -.12412,
+    -.11789, -.11199, -.10642, -.10115, -.096165, -.091444,
+    -.086974, -.082739, -.078728, -.074926, -.071322, -.067904,
+    -.064662, -.061586, -.058667, -.055896, -.053266, -.050767,
+    -.048394, -.046139, -.043995, -.041958, -.040021, -.038179,
+    -.036428, -.034761, -.033175, -.031666, -.030229, -.028861,
+    -.027559, -.026318, -.025137, -.024011, -.022939, -.021916,
+    -.020942, -.020013, -.019127, -.018283, -.017478, -.016709,
+    -.015976, -.015277, -.01461, -.013973, -.013365, -.012785,
+    -.012231, -.011702, -.011197, -.010714, -.010253, -.0098131,
+    -.0093925, -.0089906, -.0086066, -.0082396, -.0078888,
+    -.0075535, -.007233, -.0069265, -.0066335, -.0063533,
+    -.0060853, -.005829, -.0055839, -.0053494, -.0051251,
+    -.0049104, -.0047051, -.0045086, -.0043205, -.0041405,
+    -.0039683, -.0038034, -.0036455, -.0034944, -.0033497,
+    -.0032112, -.0030786, -.0029516, -.0028299, -.0027134,
+    -.0026018, -.002495, -.0023926, -.0022945, -.0022005,
+    -.0021105, -.0020242, -.0019416, -.0018624, -.0017865,
+    -.0017137, -.001644, -.0015772, -.0015131, -.0014517,
+    -.0013928, -.0013364, -.0012823, -.0012304, -.0011807,
+    -.001133, -.0010873, -.0010434, -.0010014, -9.6106E-4,
+    -9.2238E-4, -8.8528E-4, -8.497E-4, -8.1557E-4, -7.8283E-4,
+    -7.5142E-4, -7.2129E-4, -6.9238E-4, -6.6465E-4, -6.3804E-4,
+    -6.1251E-4, -5.8802E-4, -5.6451E-4, -5.4196E-4, -5.2032E-4,
+    -4.9955E-4, -4.7961E-4, -4.6048E-4, -4.4212E-4, -4.245E-4,
+    -4.0759E-4, -3.9136E-4, -3.7577E-4, -3.6082E-4, -3.4646E-4,
+    -3.3268E-4
+  };
+  // Tail parameters: phi ~ A * h_0(kappa*r), V ~ A2 * exp(-kappa2*r)/(kappa2*r)
+  static const double AV18_PHI_TAIL_A     =  0.21114;
+  static const double AV18_PHI_TAIL_KAPPA =  0.2316;
+  static const double AV18_V_TAIL_A       = -18.019;
+  static const double AV18_V_TAIL_KAPPA   =  0.72772;
+
+  // ---------------------------------------------------------------
+  // Reid 34-point cubic spline tables (linkulesfitters.mor SUBROUTINE REID)
+  // x = 0.7*r, U_S(x), dU_S/dx and similarly for D-state
+  // ---------------------------------------------------------------
+  static const int REID_N = 34;
+  static const double REID_XX[34] = {
     .0100, .041250, .07250, .1350, .19750,
     .2600, .32250, .3850, .44750, .5100,
     .57250, .6350, .69750, .7600, .8850,
@@ -458,7 +559,7 @@ bool DWBA::LoadDeuteronWavefunction(Channel &ch, const std::string &dataPath,
     4.0100, 4.5100, 5.0100, 5.5100, 6.0100,
     7.0100, 8.0100, 9.0100, 10.0100
   };
-  static const double UI_S[34] = {
+  static const double REID_UI_S[34] = {
     .000000, .333730e-4, .239010e-3, .276210e-2, .127370e-1,
     .360620e-1, .753590e-1, .128470, .189930, .253490,
     .313900, .367700, .413170, .449920, .499530,
@@ -467,7 +568,7 @@ bool DWBA::LoadDeuteronWavefunction(Channel &ch, const std::string &dataPath,
     .232510, .197190, .167180, .141720, .120120,
     .862900e-1, .619830e-1, .445230e-1, .319820e-1
   };
-  static const double UPI_S[34] = {
+  static const double REID_UPI_S[34] = {
     .297510e-3, .261270e-2, .123350e-1, .829510e-1, .253260,
     .500520, .750720, .933490, .101620e1, .100340e1,
     .920420, .796740, .657440, .519850, .284940,
@@ -476,7 +577,7 @@ bool DWBA::LoadDeuteronWavefunction(Channel &ch, const std::string &dataPath,
     -.765100e-1, -.650540e-1, -.552290e-1, -.468500e-1, -.397260e-1,
     -.285470e-1, -.205080e-1, -.147310e-1, -.105820e-1
   };
-  static const double UI_D[34] = {
+  static const double REID_UI_D[34] = {
     .000000, .108500e-4, .840730e-4, .103690e-2, .496420e-2,
     .144460e-1, .307950e-1, .531570e-1, .789950e-1, .105250,
     .129330, .149580, .165290, .176450, .187100,
@@ -485,7 +586,7 @@ bool DWBA::LoadDeuteronWavefunction(Channel &ch, const std::string &dataPath,
     .291150e-1, .220160e-1, .168710e-1, .130790e-1, .102430e-1,
     .644120e-2, .415750e-2, .273630e-2, .182770e-2
   };
-  static const double UPI_D[34] = {
+  static const double REID_UPI_D[34] = {
     .742020e-4, .893210e-3, .447550e-2, .318920e-1, .101210,
     .205960, .314770, .393710, .424660, .408420,
     .357720, .288480, .214280, .144270, .332940e-1,
@@ -494,71 +595,161 @@ bool DWBA::LoadDeuteronWavefunction(Channel &ch, const std::string &dataPath,
     -.166910e-1, -.120020e-1, -.877680e-2, -.652010e-2, -.491360e-2,
     -.289560e-2, -.177580e-2, -.112270e-2, -.726440e-3
   };
-  const double ROOT8 = 2.8284271250;
+  const double REID_ROOT8 = 2.8284271250;
 
-  // Cubic spline interpolation: returns {U_S, W_D} at r
+  // ---------------------------------------------------------------
+  // AV18 path
+  // ---------------------------------------------------------------
+  if (useAV18) {
+    // 3-point interpolation (av18.mor lines 408-430)
+    // j = NINT(r/h), frac = r/h - j
+    // phi_out = (1-frac^2)*phi[j] + 0.5*(frac^2+frac)*phi[j+1] + 0.5*(frac^2-frac)*phi[j-1]
+    // (edge case j==0: use one-sided stencil)
+    double hi = 1.0 / AV18_H;
+    double grid_max = (AV18_N - 1) * AV18_H;  // 12.0 fm
+
+    auto av18_interp = [&](const double* tab, double r) -> double {
+      if (r <= 0.0) return tab[0];
+      if (r >= grid_max) {
+        // Tail: exponential decay phi ~ A * exp(-kappa*r) / (kappa*r) for S-state (l=0)
+        // (same as Ptolemy av18.mor tail section)
+        double x = AV18_PHI_TAIL_KAPPA * r;
+        return AV18_PHI_TAIL_A * std::exp(-x) / x;  // h_0(x) = exp(-x)/x for l=0
+      }
+      double frac_f = r * hi;
+      int j = (int)(frac_f + 0.5);
+      if (j >= AV18_N) j = AV18_N - 1;
+      double frac = frac_f - j;
+      double fras = frac * frac;
+      double x0, xpl, xmn;
+      if (j == 0) {
+        x0  = 2.0*frac - fras;
+        xpl = -0.5*(frac - fras);
+        xmn = 1.0 - 1.5*frac + 0.5*fras;
+        // j-1 out of range → clamp to j+1 mirrored
+        return x0*tab[j] + xpl*tab[j+1] + xmn*tab[j];  // use tab[j] for j-1 edge
+      } else {
+        x0  = 1.0 - fras;
+        xpl = 0.5*(fras + frac);
+        xmn = 0.5*(fras - frac);
+        int jp1 = std::min(j+1, AV18_N-1);
+        int jm1 = std::max(j-1, 0);
+        return x0*tab[j] + xpl*tab[jp1] + xmn*tab[jm1];
+      }
+    };
+
+    auto av18_vs_interp = [&](double r) -> double {
+      if (r <= 0.0) return AV18_VS[0];
+      if (r >= grid_max) {
+        // Tail: V ~ A * exp(-kappa*r) / (kappa*r) + Vc/r  (Vc=0 for neutron)
+        double x = AV18_V_TAIL_KAPPA * r;
+        return AV18_V_TAIL_A * std::exp(-x) / x;
+      }
+      double frac_f = r * hi;
+      int j = (int)(frac_f + 0.5);
+      if (j >= AV18_N) j = AV18_N - 1;
+      double frac = frac_f - j;
+      double fras = frac * frac;
+      double x0, xpl, xmn;
+      if (j == 0) {
+        x0  = 2.0*frac - fras;
+        xpl = -0.5*(frac - fras);
+        xmn = 1.0 - 1.5*frac + 0.5*fras;
+        return x0*AV18_VS[j] + xpl*AV18_VS[j+1] + xmn*AV18_VS[j];
+      } else {
+        x0  = 1.0 - fras;
+        xpl = 0.5*(fras + frac);
+        xmn = 0.5*(fras - frac);
+        int jp1 = std::min(j+1, AV18_N-1);
+        int jm1 = std::max(j-1, 0);
+        return x0*AV18_VS[j] + xpl*AV18_VS[jp1] + xmn*AV18_VS[jm1];
+      }
+    };
+
+    // Fill WaveFunction and VPhiProduct
+    // av18.mor stores phi(r) directly (not u/r) → phi = u/r convention already
+    // vs is stored as -V_eff (negative = attractive) → IVPHI_P = phi * (-vs) = phi * V_eff
+    // BUT Ptolemy BSSET IVPHI_P = phi * (-V) where V is the raw potential.
+    // av18.mor array2(i) = -v (i.e. array2 = -V_eff) → IVPHI_P = phi * array2 = phi*(-V_eff)
+    // Convention: IVPHI_P as used in InelDc = phi_P * (-V_eff) (same sign as Reid)
+    for (int i = 1; i < NSTEPS; ++i) {
+      double r = i * h;
+      double phi = av18_interp(AV18_PHI, r);
+      double vs  = av18_vs_interp(r);  // = -V_eff (av18 sign convention)
+      ch.WaveFunction[i] = std::complex<double>(phi, 0.0);
+      // IVPHI_P = phi * array2 = phi * (-V_eff) — matches Ptolemy BSSET
+      ch.VPhiProduct[i] = phi * vs;  // vs is already -V_eff → IVPHI_P = phi*(-V_eff)
+    }
+
+    // Diagnostics
+    double maxPhi = 0.0, maxVPhi = 0.0;
+    int maxPhiI = 1, maxVPhiI = 1;
+    for (int i = 1; i < NSTEPS; ++i) {
+      double p  = std::abs(ch.WaveFunction[i].real());
+      double vp = std::abs(ch.VPhiProduct[i]);
+      if (p  > maxPhi)  { maxPhi  = p;  maxPhiI  = i; }
+      if (vp > maxVPhi) { maxVPhi = vp; maxVPhiI = i; }
+    }
+    std::cout << "LoadDeuteronWavefunction: AV18 (3-point interp, grid_step="
+              << AV18_H << " fm)" << std::endl;
+    std::cout << "  phi_S: peak=" << maxPhi << " at r=" << maxPhiI * h << " fm" << std::endl;
+    std::cout << "  IVPHI_P: peak=" << maxVPhi << " at r=" << maxVPhiI * h << " fm" << std::endl;
+    return true;
+  }
+
+  // ---------------------------------------------------------------
+  // Reid path (cubic spline on 34-point table)
+  // ---------------------------------------------------------------
   auto reid_spline = [&](double r) -> std::pair<double,double> {
     double x = 0.7 * r;
-    if (x <= XX[0] || x >= XX[NTAB-1]) return {0.0, 0.0};
-    int ii = (int)(std::lower_bound(XX, XX+NTAB, x) - XX);
+    if (x <= REID_XX[0] || x >= REID_XX[REID_N-1]) return {0.0, 0.0};
+    int ii = (int)(std::lower_bound(REID_XX, REID_XX+REID_N, x) - REID_XX);
     if (ii <= 0) ii = 1;
-    if (ii >= NTAB) ii = NTAB-1;
+    if (ii >= REID_N) ii = REID_N-1;
     int im = ii - 1;
-    double H = XX[ii] - XX[im];
-    double P = (x - XX[im]) / H;
-    // S-wave
-    double dU = UI_S[ii]-UI_S[im];
-    double A1=UI_S[im], A2=H*UPI_S[im];
-    double A3=3*dU-H*(2*UPI_S[im]+UPI_S[ii]);
-    double A4=-2*dU+H*(UPI_S[im]+UPI_S[ii]);
+    double H = REID_XX[ii] - REID_XX[im];
+    double P = (x - REID_XX[im]) / H;
+    double dU = REID_UI_S[ii]-REID_UI_S[im];
+    double A1=REID_UI_S[im], A2=H*REID_UPI_S[im];
+    double A3=3*dU-H*(2*REID_UPI_S[im]+REID_UPI_S[ii]);
+    double A4=-2*dU+H*(REID_UPI_S[im]+REID_UPI_S[ii]);
     double U = A1+P*(A2+P*(A3+P*A4));
-    // D-wave (for V_eff coupling term)
-    double dW = UI_D[ii]-UI_D[im];
-    double B1=UI_D[im], B2=H*UPI_D[im];
-    double B3=3*dW-H*(2*UPI_D[im]+UPI_D[ii]);
-    double B4=-2*dW+H*(UPI_D[im]+UPI_D[ii]);
+    double dW = REID_UI_D[ii]-REID_UI_D[im];
+    double B1=REID_UI_D[im], B2=H*REID_UPI_D[im];
+    double B3=3*dW-H*(2*REID_UPI_D[im]+REID_UPI_D[ii]);
+    double B4=-2*dW+H*(REID_UPI_D[im]+REID_UPI_D[ii]);
     double W = B1+P*(B2+P*(B3+P*B4));
     return {U, W};
   };
 
-  // Pass 1: compute L2 norm = sqrt(h * sum(U_S^2))  [BOUND lines 4109-4169]
+  // Pass 1: L2 norm
   double norm_sq = 0.0;
-  int NSTEPS = ch.NSteps;
-  double h = ch.StepSize;
   for (int i = 1; i < NSTEPS; ++i) {
     double r = i * h;
     auto [U, W] = reid_spline(r);
-    double wt = (i == 1) ? 0.5 : 1.0;  // trapezoidal, first point half-weight
-    norm_sq += wt * U * U;
+    norm_sq += U * U;
   }
   norm_sq *= h;
   double norm_scale = (norm_sq > 0.0) ? 1.0 / std::sqrt(norm_sq) : 1.0;
 
   std::cout << "LoadDeuteronWavefunction: Reid cubic spline (linkule convention)" << std::endl;
-  std::cout << "  norm_sq=" << norm_sq << "  norm_scale=" << norm_scale
-            << "  (expected ~1.035)" << std::endl;
+  std::cout << "  norm_sq=" << norm_sq << "  norm_scale=" << norm_scale << std::endl;
 
   // Pass 2: fill phi_S and IVPHI_P
-  ch.WaveFunction.assign(NSTEPS, std::complex<double>(0.0, 0.0));
-  ch.VPhiProduct .assign(NSTEPS, 0.0);
-
   for (int i = 1; i < NSTEPS; ++i) {
     double r = i * h;
     auto [U, W] = reid_spline(r);
-    // phi_S(r) = U(r)/r * norm_scale  [BOUND converts u→phi=u/r]
     double phi = U * norm_scale / r;
     ch.WaveFunction[i] = std::complex<double>(phi, 0.0);
 
-    // V_eff(r): Reid effective S-state potential
-    // From linkule (JUMPL=332): V_eff = VC + sqrt(8)*VT*W/U, then *VMULT=-1
     double x = 0.7 * r;
     if (x > 0.0) {
       double yy  = std::exp(-x);
       double y2  = yy*yy, y4=y2*y2, y6=y4*y2;
       double VC  = (-10.463*yy + 105.468*y2 - 3187.8*y4 + 9924.3*y6) / x;
       double VT  = (-10.463*(yy + 3.0*((yy-4*y4)+(yy-y4)/x)/x) + 351.77*y4 - 1673.5*y6) / x;
-      double Veff = VC + (std::abs(U) > 1e-30 ? ROOT8*VT*W/U : 0.0);
-      ch.VPhiProduct[i] = phi * (-Veff);  // VMULT=-1 → V_eff stored as -(VC+...)
+      double Veff = VC + (std::abs(U) > 1e-30 ? REID_ROOT8*VT*W/U : 0.0);
+      ch.VPhiProduct[i] = phi * (-Veff);  // VMULT=-1
     }
   }
 
@@ -571,10 +762,7 @@ bool DWBA::LoadDeuteronWavefunction(Channel &ch, const std::string &dataPath,
     if (p  > maxPhi)  { maxPhi  = p;  maxPhiI  = i; }
     if (vp > maxVPhi) { maxVPhi = vp; maxVPhiI = i; }
   }
-  std::cout << "  phi_S:      peak=" << maxPhi
-            << " at r=" << maxPhiI * h << " fm" << std::endl;
-  std::cout << "  IVPHI_P:    peak=" << maxVPhi
-            << " at r=" << maxVPhiI * h << " fm" << std::endl;
-  std::cout << "  Vertex potential: Reid V_eff (cubic spline)" << std::endl;
+  std::cout << "  phi_S: peak=" << maxPhi << " at r=" << maxPhiI * h << " fm" << std::endl;
+  std::cout << "  IVPHI_P: peak=" << maxVPhi << " at r=" << maxVPhiI * h << " fm" << std::endl;
   return true;
 }
