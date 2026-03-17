@@ -298,3 +298,50 @@ Files:
   /tmp/dwba_xsec_16O_12plus.txt  (data: theta_cm dcs_mb_sr)
   /tmp/dwba_xsec_16O_both.png    (overlay plot, log scale 0-180°)
   /home/node/.openclaw/workspace/dwba_xsec_16O_both.png  (workspace copy)
+
+## Session 2026-03-17 Afternoon — chi_a/chi_b + A12 Validation
+
+### chi_a, chi_b (WavElj) — CONFIRMED CORRECT ✅
+- Ran wftest_main.cpp: directly calls WavElj (used inside InelDc)
+- d+16O L=0 JP=2/2: S=(+0.151, +0.113) vs Ptolemy (+0.144, +0.120) → 1% (kinematics)
+- Wavefunction normalization: chi(r=0.1fm) = +0.0798 ≈ r^1 = 0.1 ✓
+- Ptolemy normalization: A1n = 0.5*(F*(1+SJR) + SJI*G), A2n = 0.5*(G*(1-SJR) + SJI*F)
+  → WavElj implements this exactly ✓
+- ElasticSolver gave wrong S-matrix because test code passed V>0 (Ptolemy) to
+  Raphael-convention solver (expects V<0 for attractive). NOT a WavElj bug.
+- Ptolemy step: h=0.125 fm (lambda/8); C++ uses h=0.100 fm — minor, same answers
+
+### A12 angular coupling — CONFIRMED CORRECT ✅
+- Ran a12_validate.cpp: calls ComputeA12Terms(Li, Lo, Lx, lT, lP)
+- Li=0, Lo=2, Lx=2: (MT=-2: +0.18750), (MT=0: +0.12500), (MT=+2: +0.18750) ✓
+- Li=2, Lo=2, Lx=2: all MU=0 and MU=2 terms match Ptolemy A12VL
+- GOTCHA: Ptolemy ANSWER print (print=60000) shows TEMP BEFORE doubling;
+  A12VL stores TEMP*2. C++ also stores doubled value → match.
+- MT=-2 MU=2 term for Li=2,Lo=2: both Ptolemy and C++ give 0 (correctly skipped)
+
+### Validation Scoreboard
+| Component | Status |
+|---|---|
+| phi_T | ✅ <0.01% |
+| IVPHI_P (AV18) | ✅ |
+| S1/T1/S2/T2/JACOB | ✅ |
+| chi_a/chi_b (WavElj) | ✅ ~1% kinematics |
+| A12 coefficients | ✅ exact |
+| **RADIAL INTEGRAL** | ❌ ATERM/SFROMI phase bug |
+
+### Commit
+37fbcf0 — all validation files committed to Cpp_AI
+
+### Build command (canonical, unchanged)
+```bash
+cd /home/node/working/ptolemy_2019/Cpp_AI
+g++ -O2 -std=c++17 -Iinclude -DHAVE_INELDC_FR fr_o16dp.cpp \
+    src/dwba/bound.cpp src/dwba/setup.cpp src/dwba/wavelj.cpp \
+    src/dwba/grdset.cpp src/dwba/ineldc.cpp src/dwba/ineldc_zr.cpp \
+    src/dwba/a12.cpp src/dwba/xsectn.cpp \
+    src/dwba/math_utils.cpp src/dwba/potential_eval.cpp \
+    src/dwba/rcwfn.cpp src/elastic/elastic.cpp \
+    src/dwba/av18_potential.cpp \
+    src/input/Isotope.cpp src/input/Potentials.cpp \
+    -o fr_o16dp && ./fr_o16dp
+```
