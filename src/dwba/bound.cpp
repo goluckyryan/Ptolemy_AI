@@ -222,9 +222,55 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
                         int* nodes_out) -> double {
 
     // --- Outer (inward) integration ---
+    // Outer wavefunction: Ptolemy uses Whittaker function W_{-eta, l+0.5}(2*kappa*r)
+    // For a neutron (eta=0): W_{0, l+0.5}(2*kappa*r) = sqrt(2*kappa*r/pi) * K_{l+0.5}(kappa*r)
+    // where K is the modified Bessel function of the second kind.
+    // This differs from bare exp(-kappa*r) by a polynomial factor that matters at finite r.
+    // Use Whittaker function via the exact finite-sum formula for integer l:
+    //   k_l(z) = (pi/(2z))^{1/2} * K_{l+0.5}(z)  (spherical modified Bessel 2nd kind)
+    //   Whittaker W_{0,l+0.5}(2z) = sqrt(2z/pi) * K_{l+0.5}(z) = z^{1/2} * (2/pi)^{1/2} * K_{l+0.5}(z)
+    //   = sqrt(z) * sqrt(2) * k_l(z) / sqrt(pi/2) ... simplifying:
+    //   W_{0,l+0.5}(2*kappa*r) = (2*kappa*r/pi)^{1/2} * K_{l+0.5}(kappa*r)
+    //
+    // For eta=0 and integer l: K_{l+0.5}(z) = sqrt(pi/(2z)) * exp(-z) * sum_{k=0}^{l} (l+k)!/(k!(l-k)!) * (2z)^{-k}
+    // (exact finite sum — no approximation)
+    //
+    // So W_{0,l+0.5}(2*kappa*r) = exp(-kappa*r) * sum_{k=0}^{l} (l+k)!/(k!(l-k)!) * (2*kappa*r)^{-k}
+    //
+    // For l=2: sum = 1 + 3/(2*kappa*r) + 3/(2*kappa*r)^2
+    // For l=1: sum = 1 + 1/(2*kappa*r)
+    // For l=0: sum = 1
+    // General l: Horner evaluation
+    auto whittaker_eta0 = [&](double kappa_val, double r_val, int l_val) -> double {
+      double z = kappa_val * r_val;  // kappa*r
+      double iz = 1.0 / (2.0 * z);  // 1/(2*kappa*r)
+      // Compute sum_{k=0}^{l} (l+k)!/(k!(l-k)!) * iz^k using upward recursion
+      // Coefficient c_k = (l+k)! / (k! * (l-k)!)
+      // c_0 = 1; c_{k+1} = c_k * (l-k)(l+k+1) / ((k+1)*1)  ... wait
+      // Actually: (l+k)!/(k!(l-k)!) = C(l+k,k)*l!/... let me just compute directly
+      double sum = 0.0;
+      double izk = 1.0;  // iz^k
+      double fact_lk = 1.0;  // (l+k)!
+      double fact_k  = 1.0;  // k!
+      double fact_lmk = 1.0; // (l-k)!
+      // Precompute l!
+      for (int i = 1; i <= l_val; i++) fact_lmk *= i;
+      fact_lk = fact_lmk;  // (l+0)! = l! at k=0
+      for (int k = 0; k <= l_val; k++) {
+        sum += (fact_lk / (fact_k * fact_lmk)) * izk;
+        if (k < l_val) {
+          izk *= iz;
+          fact_lk *= (l_val + k + 1);
+          fact_k  *= (k + 1);
+          fact_lmk /= (l_val - k);  // (l-k-1)! for next step
+        }
+      }
+      return std::exp(-z) * sum;
+    };
+
     std::vector<double> wf(NSTEPS+5, 0.0);
-    wf[NSTEPS]   = std::exp(-kappa * NSTEPS * h);
-    wf[NSTEPS-1] = std::exp(-kappa * (NSTEPS-1) * h);
+    wf[NSTEPS]   = whittaker_eta0(kappa, NSTEPS   * h, l);
+    wf[NSTEPS-1] = whittaker_eta0(kappa, (NSTEPS-1) * h, l);
 
     for (int II = NSTEPS-1; II >= NMBOT; II--) {
       double ALL = (II > 0) ? DL2/(h*II)/(h*II) : 0.0;
@@ -240,6 +286,10 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
       if (std::abs(wf[II]) > XXMAX) { XXMAX = std::abs(wf[II]); NMATCH = II; }
     }
 
+
+    // Fortran BOUND: SUMOUT = 0.5*(wf[NMATCH]^2 + wf[NSTEPS-1]^2)
+    //                + sum(wf[II]^2) for II = NMATCH+3..NSTEPS-1
+    // (trapezoidal endpoints at NMATCH and NSTEPS-1; inner points NMATCH+3..NSTEPS-2)
     double SUMOUT = 0.5*(wf[NMATCH]*wf[NMATCH] + wf[NSTEPS-1]*wf[NSTEPS-1]);
     for (int II = NMATCH+1; II <= NSTEPS-2; II++) SUMOUT += wf[II]*wf[II];
     double VALOUT = wf[NMATCH];
@@ -251,6 +301,11 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
     // --- Inner (forward) integration ---
     std::fill(wf.begin(), wf.end(), 0.0);
     wf[0] = 0.0;
+    // Ptolemy BOUND starting condition (line ~4143):
+    //   TEMP = -AFAC*(LV1[1] + V*LV2[1]) + kappa^2
+    // Note: Fortran TEMP does NOT include the centrifugal DL2/r^2 term in the starting
+    // value (it is an approximation for the power-series starting, same as Ptolemy).
+    // The centrifugal ALL is added inside the main Numerov loop (II=1..NMATCH).
     double TEMP = -AFAC*(V1[1] + V0*V2[1]) + kappa*kappa;
     wf[1] = h * (1.0 + h2*TEMP/6.0);
 
