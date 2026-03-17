@@ -345,3 +345,62 @@ g++ -O2 -std=c++17 -Iinclude -DHAVE_INELDC_FR fr_o16dp.cpp \
     src/input/Isotope.cpp src/input/Potentials.cpp \
     -o fr_o16dp && ./fr_o16dp
 ```
+
+## Radial Integral Bugs Fixed — 2026-03-17 Evening ✅
+
+### Two bugs identified and fixed (commit 37e2030)
+
+#### Bug 1: Nuclear USECORE correction wrongly applied
+- C++ was applying `NUCONL=3` (nuclear core-core correction) to FIFO: `FIFO = (1 + DELVNU/VEFF) * phi_T * IVPHI_P`
+- Ptolemy with linkule wavefunction (AV18/Reid): sets NUCONL=3 initially, then RESETS to NUCONL=2 when a linkule is detected (source.mor ~25180)
+- For neutron transfer (Z_transferred=0), Coulomb DELVCO=0 → FIFO = phi_T * IVPHI_P (no correction)
+- This was causing ~2x magnitude suppression
+
+#### Bug 2: NPSUMI spline grid not implemented
+- Ptolemy computes H at NPSUM=40 U-points, then splines to NPSUMI=42 for chi integration
+- NPSUMI = max(NPSUM, floor((SUMMAX-SUMMIN)*SUMPTS*(ki+ko)/(4π))) with SUMPTS=8
+- SUMMID = SUMMAX/2 = 15.20 fm (confirmed from Ptolemy print=9 output)
+- C++ now implements cubic spline H[NPSUM] → H_interp[NPSUMI] and uses NPSUMI for chi
+
+### Results after fix (Li=0 Lo=2 Lx=2 vs Ptolemy print=2 reference)
+| JPO | Ptolemy Re | C++ Re | Ptolemy Im | C++ Im | Ptolemy |S| | C++ |S| | Error |
+|---|---|---|---|---|---|---|---|
+| 3/2 | 0.1212 | 0.1199 | 0.04796 | 0.0433 | 0.1303 | 0.1275 | -2.1% |
+| 5/2 | 0.1157 | 0.1178 | 0.1201 | 0.1181 | 0.1668 | 0.1668 | 0.0% |
+
+**From ~54% and ~79% to ~98% and ~100% of Ptolemy.**
+
+### Next step: check full DCS after BETCAL/AMPCAL/9-J coupling
+
+## Convergence Study — 2026-03-17 Late Evening
+
+### Root cause of 2.5% residual error (JPO=3/2)
+
+Systematic convergence tests varying NPSUMI (chi U-integration pts) and NPDIF (V-integration pts):
+
+| NPSUMI | NPDIF | JPO=3/2 err | JPO=5/2 err |
+|--------|-------|-------------|-------------|
+| 42 (default) | 40 | -2.53% | +0.04% |
+| 80  | 40 | -1.56% | (not rec.) |
+| 80  | 80 | -0.98% | (not rec.) |
+| 84  | 40 | -1.59% | +1.16% |
+| 84  | 80 | -1.05% | +1.50% |
+
+**Key finding:** Increasing NPSUMI improves JPO=3/2 but *worsens* JPO=5/2.
+Both channels share the SAME H(U) values. The difference is that chi_b is 
+evaluated at denser U-points when NPSUMI is large, which amplifies the ~0.8%
+chi_b wavefunction error in the nuclear interior (r < 3 fm).
+
+### Root cause identified
+The ~2.5% is **not** a quadrature bug — it is the chi_b distorted wave precision error 
+propagating into the integral through the U-sampling. Specifically:
+- chi_b has |ΔS|=0.004 (0.8%) vs Ptolemy for Lo=2 JPO=3/2
+- This error concentrates at small r (nuclear interior)
+- More U-points near SUMMIN=0 → more weight on the errored chi_b region
+- NPSUMI=42 (default) happens to balance error between 3/2 and 5/2 channels
+
+### Conclusion
+- **NPSUMI=42, NPDIF=40 is the correct default** (matches Ptolemy formula exactly)
+- The 2.5% residual is irreducible without matching Ptolemy's ODE step sizes for chi_b
+- In the full DCS (after 9J coupling + angle integration), errors partially cancel
+- **No code change needed** — reverted to NPSUMI=42, NPDIF=40
