@@ -1040,23 +1040,11 @@ void DWBA::InelDc() {
               double ivphi_P_nc = InterpolateIVPHI(IVPHI_P, h_common, NSteps_common,
                                                     h_common * NSteps_common, rp,
                                                     IVPHI_P_max, r_P_vert_peak);
-              // USECORE correction (Ptolemy NUCONL=3)
-              double VEFF = InterpolateV(PrjBS_ch.V_real, PrjBS_ch.StepSize,
-                                         PrjBS_ch.NSteps, PrjBS_ch.MaxR, rp);
-              double FIFO;
-              if (std::abs(VEFF) > 1e-10) {
-                double dS = S1 - S2, dT = T1 - T2;
-                double rcore2 = dS*dS*ra*ra + dT*dT*rb*rb + 2.0*dS*dT*ra*rb*X;
-                double r_core = std::sqrt(std::max(rcore2, 0.0));
-                double r_scat = rb;
-                double fcore = 1.0 / (1.0 + std::exp((r_core - RNCORE_post) / AOPT_post));
-                double fscat = 1.0 / (1.0 + std::exp((r_scat - RNSCAT_post) / AOPT_post));
-                double DELVNU = VOPT_post * (fcore - fscat);
-                double FACTOR_uc = 1.0 + DELVNU / VEFF;
-                FIFO = FACTOR_uc * phi_T_val * ivphi_P_nc;
-              } else {
-                FIFO = phi_T_val * ivphi_P_nc;
-              }
+              // USECORE correction: Ptolemy sets NUCONL=2 (Coulomb only) when wavefunction
+              // linkule is used (e.g. AV18). For neutron transfer (Zx=0), the Coulomb
+              // core-core correction DELVCO ≈ 0. So FIFO = phi_T * IVPHI_P with no correction.
+              // Applying nuclear USECORE (NUCONL=3) was wrong and caused ~2x magnitude error.
+              double FIFO = phi_T_val * ivphi_P_nc;
 
               // PVPDX = DPHI * FIFO  (Fortran LTRP[JCNT] = DPHI * FIFO)
               double PVPDX = DPHI * FIFO;
