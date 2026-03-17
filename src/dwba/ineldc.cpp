@@ -525,39 +525,42 @@ void DWBA::InelDc() {
         // ---------------------------------------------------------------
         std::complex<double> Integral(0.0, 0.0);
 
-        // Chi interpolation: 5-point Lagrange (Ptolemy WAVELJ, A&S 25.2.15)
+        // Chi wavefunction interpolation.
+        // Two modes selected by compile-time flag:
+        //   INTERP_RAPHAEL (default): simple linear — matches Raphael's Python code
+        //   INTERP_PTOLEMY           : 5-point Lagrange (A&S 25.2.15) — matches Ptolemy WAVELJ
         //
-        // Ptolemy (Fortran 1-indexed): WAVR(J) = u at (J-1)*h.
-        //   I = round(r/h); P = r/h - I  (∈ [-0.5, 0.5])
-        //   stencil: WAVR(I-1), WAVR(I), WAVR(I+1), WAVR(I+2), WAVR(I+3)
-        //          = u[(I-2)*h], u[(I-1)*h], u[I*h], u[(I+1)*h], u[(I+2)*h]
+        // Ptolemy WAVELJ stores WAVR(J+1)=u(J*h).  I = nint(r/h), P = r/h - I.
+        // Stencil WAVR(I-1..I+3) = u[(I-2)*h..(I+2)*h] → our chi[I-2..I+2].
         //
-        // C++ (0-indexed): wf[j] = u at j*h.
-        //   Same I; C++ stencil: wf[I-2], wf[I-1], wf[I], wf[I+1], wf[I+2]
+        // Use -DINTERP_PTOLEMY on compile line to enable Ptolemy mode.
         const double h_chi_b = Outgoing.StepSize;
         auto interp_chi_b = [&](double r) -> std::complex<double> {
           if (r <= 0 || r >= Outgoing.MaxR) return {0.0, 0.0};
+#ifdef INTERP_PTOLEMY
+          // 5-point Lagrange (Ptolemy WAVELJ, A&S 25.2.15)
           double rbyh = r / h_chi_b;
-          int I = static_cast<int>(rbyh + 0.5);  // nearest grid index (0-indexed: I*h)
-          int IMX = static_cast<int>(chi_b.size()) - 4;  // need I+3 safe
-          I = std::max(2, std::min(I, IMX));       // need wf[I-2..I+2] valid
+          int I = static_cast<int>(rbyh + 0.5);  // nearest grid index
+          int IMX = static_cast<int>(chi_b.size()) - 4;
+          I = std::max(2, std::min(I, IMX));
           double P = rbyh - I;
           double PS = P * P;
           double X1 = P * (PS - 1.0) / 24.0;
-          double X2 = X1 + X1;
-          double X3 = X1 * P;
-          double X4 = X2 + X2 - 0.5 * P;
-          double X5 = X4 * P;
-          double C1 = X3 - X2;
-          double C5 = X3 + X2;
-          double C3 = X5 - X3;
-          double C2 = X5 - X4;
-          double C4 = X5 + X4;
+          double X2 = X1 + X1, X3 = X1 * P;
+          double X4 = X2 + X2 - 0.5 * P, X5 = X4 * P;
+          double C1 = X3 - X2, C5 = X3 + X2;
+          double C3 = X5 - X3, C2 = X5 - X4, C4 = X5 + X4;
           C3 = C3 + C3 + 1.0;
-          // Fortran: C1*WAVR(I-1) - C2*WAVR(I) + C3*WAVR(I+1) - C4*WAVR(I+2) + C5*WAVR(I+3)
-          // = u at: (I-2)*h,      (I-1)*h,       I*h,            (I+1)*h,        (I+2)*h
           return C1*chi_b[I-2] - C2*chi_b[I-1] + C3*chi_b[I]
                - C4*chi_b[I+1] + C5*chi_b[I+2];
+#else
+          // Linear interpolation (Raphael mode — default)
+          double idx_f = r / h_chi_b;
+          int ii = static_cast<int>(idx_f);
+          if (ii >= (int)chi_b.size() - 1) return {0.0, 0.0};
+          double frac = idx_f - ii;
+          return chi_b[ii] * (1.0 - frac) + chi_b[ii+1] * frac;
+#endif
         };
 
 #ifdef USE_ZR
@@ -669,26 +672,31 @@ void DWBA::InelDc() {
         std::vector<double> xi_s(NPSUM), wi_s(NPSUM);
         GaussLegendre(NPSUM, -1.0, 1.0, xi_s, wi_s);
 
-        // Chi interpolation: 5-point Lagrange (Ptolemy WAVELJ A&S 25.2.15)
+        // Chi_a interpolation (same two-mode design as chi_b above)
         auto interp_chi_a = [&](double r) -> std::complex<double> {
           if (r <= 0 || r >= Incoming.MaxR) return {0.0, 0.0};
+#ifdef INTERP_PTOLEMY
           double rbyh = r / h;
           int I = static_cast<int>(rbyh + 0.5);
-          int IMX = static_cast<int>(chi_a.size()) - 4;  // need I+3 safe
+          int IMX = static_cast<int>(chi_a.size()) - 4;
           I = std::max(2, std::min(I, IMX));
           double P = rbyh - I;
           double PS = P * P;
           double X1 = P * (PS - 1.0) / 24.0;
-          double X2 = X1 + X1;
-          double X3 = X1 * P;
-          double X4 = X2 + X2 - 0.5 * P;
-          double X5 = X4 * P;
-          double C1 = X3 - X2;  double C5 = X3 + X2;
-          double C3 = X5 - X3;  double C2 = X5 - X4;
-          double C4 = X5 + X4;  C3 = C3 + C3 + 1.0;
-          // Same stencil fix as chi_b: use wf[I-2..I+2] not wf[I-1..I+3]
+          double X2 = X1 + X1, X3 = X1 * P;
+          double X4 = X2 + X2 - 0.5 * P, X5 = X4 * P;
+          double C1 = X3 - X2, C5 = X3 + X2;
+          double C3 = X5 - X3, C2 = X5 - X4, C4 = X5 + X4;
+          C3 = C3 + C3 + 1.0;
           return C1*chi_a[I-2] - C2*chi_a[I-1] + C3*chi_a[I]
                - C4*chi_a[I+1] + C5*chi_a[I+2];
+#else
+          double idx_f = r / h;
+          int ii = static_cast<int>(idx_f);
+          if (ii >= (int)chi_a.size() - 1) return {0.0, 0.0};
+          double frac = idx_f - ii;
+          return chi_a[ii] * (1.0 - frac) + chi_a[ii+1] * frac;
+#endif
         };
         // Note: interp_chi_b already defined above (before #ifdef USE_ZR) — reuse it here.
 
