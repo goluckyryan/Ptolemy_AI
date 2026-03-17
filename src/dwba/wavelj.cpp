@@ -23,11 +23,35 @@
 // DWBA::WavSet
 //
 // Allocates the radial grid and evaluates the optical potential at each point.
-// Matches Ptolemy's WAVSET: sets step size H = 0.1 fm, MaxR = 30 fm.
+// Step size follows Ptolemy's formula:
+//   - Scattering channel (k > 0 set externally): h = min(2π/k, 1.0) / STEPSPER
+//   - Bound state: h = min(1/kappa, A_diffuseness) / STEPSPER  (set in InelDc)
+// Default: h = 0.1 fm (Ptolemy scattering h ≈ 0.125 fm at typical energies;
+//   caller sets ch.StepSize before calling WavSet to override).
 // EvaluatePotential fills V_real, V_imag, V_so_real, V_so_imag, V_coulomb.
 // ---------------------------------------------------------------------------
+
+// Ptolemy step size for a scattering channel:
+//   h = min(2π/k, 1.0) / STEPSPER  (STEPSPER=8 from dpsb parameterset)
+static double PtolemyScatStepSize(double k_fm, int stepsper = 8) {
+  if (k_fm < 1e-10) return 0.1;
+  double lambda = 2.0 * M_PI / k_fm;
+  return std::min(lambda, 1.0) / stepsper;
+}
+
+// Ptolemy step size for a bound state channel:
+//   h = min(1/kappa, A_diff) / STEPSPER
+static double PtolemyBoundStepSize(double kappa_fm, double A_diff, int stepsper = 8) {
+  if (kappa_fm < 1e-10) return 0.1;
+  double asym_range = std::min(1.0 / kappa_fm, A_diff);
+  return asym_range / stepsper;
+}
+
 void DWBA::WavSet(Channel &ch) {
-  ch.StepSize = 0.1;
+  // Use caller-set StepSize if already specified (> 0); otherwise default 0.1 fm.
+  // Scattering channels call WavSet with ch.k already set → caller can pre-set StepSize.
+  // Bound state channels override StepSize in InelDc before calling WavSet.
+  if (ch.StepSize <= 0.0) ch.StepSize = 0.1;
   ch.MaxR = 30.0;
   ch.NSteps = static_cast<int>(ch.MaxR / ch.StepSize) + 1;
 
@@ -37,6 +61,7 @@ void DWBA::WavSet(Channel &ch) {
   ch.V_so_real.resize(ch.NSteps);
   ch.V_so_imag.resize(ch.NSteps);
   ch.V_coulomb.resize(ch.NSteps);
+  ch.WaveFunction.assign(ch.NSteps + 2, {0.0, 0.0});  // pre-allocate for CalculateBoundState
 
   double A_target = ch.Target.A;
   double A_projectile = ch.Projectile.A;

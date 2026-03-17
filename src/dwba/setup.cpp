@@ -234,6 +234,12 @@ void DWBA::Calculate() {
   PrintParameters();
 
   // Setup grids and potentials
+  // Ptolemy step size for scattering channels: h = min(2π/k, 1.0) / STEPSPER (STEPSPER=8)
+  const int STEPSPER = 8;
+  Incoming.StepSize = std::min(2.0 * M_PI / Incoming.k, 1.0) / STEPSPER;
+  Outgoing.StepSize = std::min(2.0 * M_PI / Outgoing.k, 1.0) / STEPSPER;
+  fprintf(stderr, "Incoming step: h=%.5f fm (k=%.5f fm^-1)\n", Incoming.StepSize, Incoming.k);
+  fprintf(stderr, "Outgoing step: h=%.5f fm (k=%.5f fm^-1)\n", Outgoing.StepSize, Outgoing.k);
   WavSet(Incoming);
   WavSet(Outgoing);
 
@@ -266,7 +272,10 @@ void DWBA::CalculateZR() {
 
   PrintParameters();
 
-  // Setup grids and potentials
+  // Setup grids and potentials (Ptolemy step size formula)
+  const int STEPSPER_ZR = 8;
+  Incoming.StepSize = std::min(2.0 * M_PI / Incoming.k, 1.0) / STEPSPER_ZR;
+  Outgoing.StepSize = std::min(2.0 * M_PI / Outgoing.k, 1.0) / STEPSPER_ZR;
   WavSet(Incoming);
   WavSet(Outgoing);
 

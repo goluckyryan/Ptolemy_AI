@@ -143,30 +143,17 @@ void DWBA::InelDc() {
   TgtBS_ch.Projectile.A    = Incoming.Projectile.A - Outgoing.Projectile.A;
   TgtBS_ch.Projectile.Mass = mx;
   TgtBS_ch.mu   = mA * mx / (mA + mx) / AMU_MEV;   // AMU
-  // Ptolemy BOUND step size: h = min(1/kappa, A) / STEPSPER (STEPSPER=8 from dpsb)
-  // where kappa = sqrt(2*mu*BE)/hbarc and A = diffuseness of the BS WS potential.
-  // For 17O gs: kappa=0.4337 fm^-1 → 1/kappa=2.306 fm, A=0.65 fm → h=0.65/8=0.08125 fm
+  // Ptolemy BOUND step size: h = min(1/kappa, A_diff) / STEPSPER (STEPSPER=8 from dpsb)
+  // kappa = sqrt(2*mu_AMU*AMU_MEV*|BE|) / HBARC;  A_diff = WS diffuseness of BS potential
   {
+    const int STEPSPER = 8;
     double kappa_T = std::sqrt(2.0 * TgtBS_ch.mu * AMU_MEV * std::abs(TargetBS.BindingEnergy)) / HBARC;
-    double A_tbs   = (TargetBS.Pot.A > 0) ? TargetBS.Pot.A : Incoming.StepSize;
-    double h_tbs   = std::min(1.0 / kappa_T, A_tbs) / 8.0;
-    double maxR_tbs = Incoming.MaxR;
-    int nsteps_tbs  = static_cast<int>(maxR_tbs / h_tbs) + 2;
-    TgtBS_ch.StepSize = h_tbs;
-    TgtBS_ch.MaxR     = maxR_tbs;
-    TgtBS_ch.NSteps   = nsteps_tbs;
-    TgtBS_ch.RGrid.resize(nsteps_tbs);
-    for (int i = 0; i < nsteps_tbs; ++i) TgtBS_ch.RGrid[i] = (i + 1) * h_tbs;
-    fprintf(stderr, "TgtBS step: kappa=%.5f, A=%.4f → h=%.5f fm (%d steps)\n",
-            kappa_T, A_tbs, h_tbs, nsteps_tbs);
+    double A_tbs   = (TargetBS.Pot.A > 0) ? TargetBS.Pot.A : 0.65;
+    TgtBS_ch.StepSize = std::min(1.0 / kappa_T, A_tbs) / STEPSPER;
+    fprintf(stderr, "TgtBS step: kappa=%.5f fm^-1, A=%.4f → h=%.5f fm\n",
+            kappa_T, A_tbs, TgtBS_ch.StepSize);
   }
-  TgtBS_ch.WaveFunction.resize(Incoming.NSteps);
-  TgtBS_ch.V_real.resize(Incoming.NSteps);
-  TgtBS_ch.V_imag.resize(Incoming.NSteps);
-  TgtBS_ch.V_so_real.resize(Incoming.NSteps);
-  TgtBS_ch.V_so_imag.resize(Incoming.NSteps);
-  TgtBS_ch.V_coulomb.resize(Incoming.NSteps);
-
+  // WavSet will allocate NSteps and RGrid based on StepSize (≤0 uses default 0.1)
   WavSet(TgtBS_ch);
   CalculateBoundState(TgtBS_ch, TargetBS.n, TargetBS.l, TargetBS.j, TargetBS.BindingEnergy);
 
@@ -178,17 +165,22 @@ void DWBA::InelDc() {
   PrjBS_ch.Projectile.A    = Incoming.Projectile.A - Outgoing.Projectile.A;
   PrjBS_ch.Projectile.Mass = mx;
   PrjBS_ch.mu   = mb * mx / (mb + mx) / AMU_MEV;   // AMU
-  PrjBS_ch.StepSize = Incoming.StepSize;
-  PrjBS_ch.MaxR     = Incoming.MaxR;
-  PrjBS_ch.NSteps   = Incoming.NSteps;
-  PrjBS_ch.RGrid    = Incoming.RGrid;
-  PrjBS_ch.WaveFunction.resize(Incoming.NSteps);
-  PrjBS_ch.V_real.resize(Incoming.NSteps);
-  PrjBS_ch.V_imag.resize(Incoming.NSteps);
-  PrjBS_ch.V_so_real.resize(Incoming.NSteps);
-  PrjBS_ch.V_so_imag.resize(Incoming.NSteps);
-  PrjBS_ch.V_coulomb.resize(Incoming.NSteps);
-
+  // Projectile BS step: same Ptolemy formula h = min(1/kappa_P, A_P) / STEPSPER
+  // But keep on the same grid as TgtBS for shared IVPHI array indexing.
+  // Deuteron (AV18): kappa=0.2316 fm^-1, A_pot=0.5 → h=min(4.32,0.5)/8=0.0625 fm
+  // Use TgtBS step to keep IVPHI_T and IVPHI_P comparable (both h_common = PrjBS step).
+  {
+    const int STEPSPER = 8;
+    double kappa_P = std::sqrt(2.0 * PrjBS_ch.mu * AMU_MEV * std::abs(ProjectileBS.BindingEnergy)) / HBARC;
+    double A_pbs   = (ProjectileBS.Pot.A > 0) ? ProjectileBS.Pot.A : 0.5;
+    PrjBS_ch.StepSize = std::min(1.0 / kappa_P, A_pbs) / STEPSPER;
+    // Clamp to TgtBS step for consistency (both IVPHI arrays share NSteps_common=PrjBS.NSteps)
+    // If PrjBS step is much finer than TgtBS, IVPHI_T would be on different size → mismatch.
+    // Safest: use same step for both BS grids.
+    PrjBS_ch.StepSize = TgtBS_ch.StepSize;
+    fprintf(stderr, "PrjBS step: kappa=%.5f fm^-1, A=%.4f → h=%.5f fm (matched to TgtBS)\n",
+            kappa_P, A_pbs, PrjBS_ch.StepSize);
+  }
   WavSet(PrjBS_ch);
 
   // Projectile bound state: for the deuteron (n+p), use the tabulated Reid soft-core
