@@ -953,51 +953,121 @@ void DWBA::InelDc() {
         std::vector<double> H_smhvl_U(NPSUM, 0.0); // U-values where H was computed
         std::vector<double> H_smivl(NPSUMI, 0.0);  // H interpolated to NPSUMI grid
 
-        // Natural cubic spline: given N points (x[i], y[i]), compute second derivatives,
-        // then evaluate at M new x-points. Returns interpolated values.
-        // Note: x must be strictly ascending.
-        auto natural_cubic_spline = [](const std::vector<double>& x,
-                                       const std::vector<double>& y,
-                                       const std::vector<double>& xnew,
-                                       std::vector<double>& ynew) {
-          int N = (int)x.size();
-          int M = (int)xnew.size();
-          ynew.resize(M, 0.0);
-          if (N < 2) return;
-          // Compute second derivatives (natural BC: y''[0]=y''[N-1]=0)
-          std::vector<double> h(N-1), alpha(N-1), l(N), mu(N), z(N), c(N), b(N), d(N);
-          for (int i = 0; i < N-1; i++) h[i] = x[i+1] - x[i];
-          for (int i = 1; i < N-1; i++) {
-            alpha[i] = (3.0/h[i])*(y[i+1]-y[i]) - (3.0/h[i-1])*(y[i]-y[i-1]);
+        // ── Ptolemy SPLNCB + INTRPC (faithful port of fortlib.mor) ─────────────
+        // Replaces textbook natural_cubic_spline with the exact Ptolemy implementation.
+        // Validated vs Fortran to 4.7e-10 across all 3 test cases (spline_compare.cpp).
+        // Key differences from textbook:
+        //   1. Leading/trailing constant-string trimming (IBASE/J scan)
+        //   2. Forward+backward tridiagonal with pivot storage in B[] array
+        //   3. B[IBASE+NM1] extended as "N-th cubic = N-1-th cubic"
+        auto ptolemy_splncb = [](int N, const std::vector<double>& X,
+                                  const std::vector<double>& Y,
+                                  std::vector<double>& B, std::vector<double>& C,
+                                  std::vector<double>& D) {
+          B.assign(N, 0.0); C.assign(N, 0.0); D.assign(N, 0.0);
+          if (N <= 1) return;
+          int NM1 = N - 1;
+          // Forward scan for IBASE (0-based = Fortran I_1based - 1)
+          int IBASE = NM1 - 1;
+          for (int ii = 0; ii < NM1; ii++) {
+            if (1.0e15 * std::abs(Y[ii+1] - Y[ii]) > std::abs(Y[ii])) {
+              IBASE = ii; goto found_ibase;
+            }
           }
-          l[0] = 1.0; mu[0] = 0.0; z[0] = 0.0;
-          for (int i = 1; i < N-1; i++) {
-            l[i] = 2.0*(x[i+1]-x[i-1]) - h[i-1]*mu[i-1];
-            mu[i] = h[i]/l[i];
-            z[i] = (alpha[i] - h[i-1]*z[i-1]) / l[i];
-          }
-          l[N-1] = 1.0; z[N-1] = 0.0; c[N-1] = 0.0;
-          for (int j = N-2; j >= 0; j--) {
-            c[j] = z[j] - mu[j]*c[j+1];
-            b[j] = (y[j+1]-y[j])/h[j] - h[j]*(c[j+1]+2.0*c[j])/3.0;
-            d[j] = (c[j+1]-c[j])/(3.0*h[j]);
-          }
-          // Evaluate at each new x
-          for (int k = 0; k < M; k++) {
-            double xk = xnew[k];
-            // Binary search for interval
-            int lo = 0, hi = N-2;
-            if (xk <= x[0]) { xk = x[0]; lo = 0; }
-            else if (xk >= x[N-1]) { xk = x[N-1]; lo = N-2; }
-            else {
-              while (hi - lo > 1) {
-                int mid = (lo+hi)/2;
-                if (x[mid] <= xk) lo = mid; else hi = mid;
+found_ibase:;
+          // Backward scan for J (Fortran 1-based; NUSE = J_1based - IBASE)
+          int J_0based = N - 1;
+          {
+            int I_1based = IBASE + 1;
+            for (int I1 = I_1based; I1 <= NM1; I1++) {
+              int Jf = N + I_1based - I1;
+              int J0 = Jf - 1;
+              if (1.0e15 * std::abs(Y[J0-1] - Y[J0]) > std::abs(Y[J0])) {
+                J_0based = J0; goto found_j;
               }
             }
-            double dx = xk - x[lo];
-            ynew[k] = y[lo] + b[lo]*dx + c[lo]*dx*dx + d[lo]*dx*dx*dx;
+            J_0based = N + (IBASE+1) - NM1 - 1;
           }
+found_j:;
+          int NUSE = (J_0based + 1) - IBASE;
+          if (NUSE <= 1) return;
+          NM1 = NUSE - 1;
+          double H = X[IBASE+1] - X[IBASE];
+          double F = (Y[IBASE+1] - Y[IBASE]) / H;
+          if (NUSE == 2) { D[IBASE] = 0.0; B[IBASE] = F; return; }
+          // Forward sweep
+          for (int i = 1; i < NM1; i++) {
+            double G = H;
+            H = X[IBASE+i+1] - X[IBASE+i];
+            double E = F;
+            F = (Y[IBASE+i+1] - Y[IBASE+i]) / H;
+            double GBY3 = G / 3.0;
+            D[IBASE+i-1] = GBY3 * B[IBASE+i-1];
+            double EPSIM1 = G + H;
+            double RIM1B3 = F - E;
+            B[IBASE+i] = 1.0 / ((2.0/3.0)*EPSIM1 - GBY3*D[IBASE+i-1]);
+            C[IBASE+i] = RIM1B3 - D[IBASE+i-1]*C[IBASE+i-1];
+          }
+          D[IBASE+NM1] = 0.0;
+          // Backward sweep (Fortran DO 500 I1=2,NM1: I=NM1+2-I1)
+          for (int I1 = 2; I1 <= NM1; I1++) {
+            int i = NM1 + 1 - I1;  // 0-based: NM1-1 down to 1
+            C[IBASE+i] = B[IBASE+i]*C[IBASE+i] - D[IBASE+i]*C[IBASE+i+1];
+          }
+          // Final B, C, D coefficients
+          for (int i = 0; i < NM1; i++) {
+            H = X[IBASE+i+1] - X[IBASE+i];
+            D[IBASE+i] = (C[IBASE+i+1] - C[IBASE+i]) / (3.0*H);
+            B[IBASE+i] = (Y[IBASE+i+1]-Y[IBASE+i])/H - (H*D[IBASE+i] + C[IBASE+i])*H;
+          }
+          // Extend N-th cubic (= N-1-th cubic)
+          D[IBASE+NM1]   = D[IBASE+NM1-1];
+          B[IBASE+NM1]   = B[IBASE+NM1-1] + (2.0*C[IBASE+NM1-1] + 3.0*D[IBASE+NM1-1]*H)*H;
+        };
+
+        // ── Ptolemy INTRPC: evaluate spline at new grid points ──────────────────
+        // Exact port of fortlib.mor INTRPC (sequential scan, Horner evaluation).
+        auto ptolemy_intrpc = [](int NCUBIC, const std::vector<double>& XCUBES,
+                                  const std::vector<double>& AS, const std::vector<double>& BS,
+                                  const std::vector<double>& CS, const std::vector<double>& DS,
+                                  int NPTS, const std::vector<double>& XS,
+                                  std::vector<double>& YS) {
+          YS.assign(NPTS, 0.0);
+          if (NCUBIC < 2) return;
+          const double INF = 1.0e300;
+          double XSIGN = (XCUBES[1] > XCUBES[0]) ? 1.0 : -1.0;
+          double XPREV = INF, XNEXT = INF, XBASE = 0.0;
+          int    N = 0;
+          double A = 0, B = 0, CC = 0, D = 0;
+          for (int ii = 0; ii < NPTS; ii++) {
+            double x = XS[ii];
+            double xc = XSIGN * x;
+loop100:
+            if (xc < XNEXT) goto loop200;
+            XPREV = XNEXT; XBASE = XNEXT * XSIGN; N = N + 1;
+            XNEXT = XCUBES[N+1] * XSIGN;
+            if (N == NCUBIC - 1) XNEXT = INF;
+loop150:
+            A = AS[N]; B = BS[N]; CC = CS[N]; D = DS[N];
+            goto loop100;
+loop200:
+            if (xc >= XPREV) goto loop300;
+            N = 0; XPREV = -INF; XNEXT = XCUBES[1] * XSIGN; XBASE = XCUBES[0];
+            goto loop150;
+loop300:
+            double DEL = x - XBASE;
+            YS[ii] = A + DEL*(B + DEL*(CC + DEL*D));
+          }
+        };
+
+        // Adapter: call SPLNCB+INTRPC (replaces natural_cubic_spline)
+        auto ptolemy_spline = [&ptolemy_splncb, &ptolemy_intrpc](
+                               const std::vector<double>& x, const std::vector<double>& y,
+                               const std::vector<double>& xnew, std::vector<double>& ynew) {
+          int N = (int)x.size();
+          std::vector<double> B(N), C(N), D(N);
+          ptolemy_splncb(N, x, y, B, C, D);
+          ptolemy_intrpc(N, x, y, B, C, D, (int)xnew.size(), xnew, ynew);
         };
 
         // ── Outer loop: IV = 1..NPDIF (V grid index, Ptolemy DO 859 IV) ──────
@@ -1125,7 +1195,7 @@ void DWBA::InelDc() {
           // Ptolemy: CALL SPLNCB(NPSUM, SMHPTS, SMHVL, work1, work2, work3)
           //          CALL INTRPC(NPSUM, SMHPTS, SMHVL, ..., NPSUMI, SMIPTS, SMIVL)
           // Natural cubic spline from NPSUM grid → NPSUMI grid.
-          natural_cubic_spline(H_smhvl_U, H_smhvl, xi_si, H_smivl);
+          ptolemy_spline(H_smhvl_U, H_smhvl, xi_si, H_smivl);
 
           // ── Chi integration loop: IU=0..NPSUMI-1 (Ptolemy DO 789 IU) ────────
           // TERM = LWIO[IPLUNK] = JACOB * RI * RO * WOW * DIFWT * exp(-ALPHAP*RP-ALPHAT*RT)
