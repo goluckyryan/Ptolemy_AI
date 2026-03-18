@@ -648,7 +648,7 @@ void DWBA::InelDc() {
         const int NPPHI = 20;    // GL points for phi (dpsb: NPPHI=20)
         const double SUMMAX = 30.4;    // asymptopia=30 → SUMMAX≈30.4 (Ptolemy output)
         const double GAMSUM = 2.0;     // dpsb: GAMSUM=2 (rational-sinh for sum)
-        const double GAMDIF = 12.0;    // dpsb: GAMDIF=12 (cubic-sinh for dif)
+        const double GAMDIF = 5.0;     // Ptolemy default GAMDIF=5 (cubic-sinh for dif)
         const double GAMPHI = 1.0e-6;  // dpsb: GAMPHI≈0 → nearly linear phi map
         const double PHIMID_frac = 0.20; // dpsb: PHIMID=0.20 (fraction of [0,1])
         const double DWCUT = 2.0e-6;  // dpsb: DWCUTOFF=2e-6 (from RGRIDS row C)
@@ -657,6 +657,11 @@ void DWBA::InelDc() {
         const double DXV = 2.0 / ((double)LOOKST * LOOKST);
         const int IXTOPZ = LOOKST + 1;
         const double SUMPTS = 8.0;    // dpsb: SUMPTS=8 (from RGRIDS row C, col 2)
+        // XS_phi: two test cos(phi) values for GRDSET BSPROD scan (near ±1)
+        // Ptolemy: XS(1)=1-DXV (near forward), XS(2)=-1+DXV (near backward)
+        // But DXV here uses LOOKST=100 (Fortran GRDSET LOOKST, not phi-scan LOOKST)
+        const double DXV_grdset = 2.0 / (100.0 * 100.0);   // LOOKST=100 in GRDSET
+        const double XS_phi[2] = {1.0 - DXV_grdset, -1.0 + DXV_grdset};
 
         // Ptolemy GRDSET: NPSUMI = (SUMMAX-SUMMIN)*SUMPTS*(AKI+AKO)/(4*PI), >= NPSUM
         // This is the chi-integration grid size (splined from NPSUM H-computation grid)
@@ -883,61 +888,138 @@ void DWBA::InelDc() {
         // then for each (IV,IU) pair compute V = CUBMAP(IV_frac, VMIN_u, VMID_u, VMAX_u).
         // For simplicity (and correctness for nearly-symmetric bsprod): VMID_u = 0.
 
-        // Pre-compute per-U V-range on NPSUM H-grid (GRDSET Stage 1 equivalent)
-        std::vector<double> VMAX_per_U(NPSUM), VMIN_per_U(NPSUM);
-        for (int IU = 0; IU < NPSUM; ++IU) {
-          double U = xi_s[IU];
-          if (U < 1e-6) { VMAX_per_U[IU] = 0; VMIN_per_U[IU] = 0; continue; }
-          double VMAX_u = 2.0 * U;
-          {
-            int LOOKST_v = 100;
-            double DV = 2.0 * U / LOOKST_v;
-            for (double vt = 2.0*U; vt >= 0; vt -= DV) {
-              double ra_t = U + 0.5*vt, rb_t = U - 0.5*vt;
-              if (ra_t < 1e-6 || rb_t < 1e-6) { VMAX_u = vt; break; }
-              double fifo = std::abs(bsprod_val(ra_t, rb_t,  1.0))
-                          + std::abs(bsprod_val(ra_t, rb_t, -0.5));
-              double ULIM = RVRLIM / std::max(1e-6, ra_t * rb_t);
-              if (fifo > ULIM) { VMAX_u = std::min(vt + DV, 2.0*U); break; }
-              VMAX_u = vt;
+        // ── GRDSET Stage 1: find VMIN/VMAX per U-point ─────────────────────────
+        // Faithful port of Ptolemy GRDSET Stage 1 scan (source.mor ~line 16190-16280).
+        //
+        // KEY: Fortran VVAL is a FRACTION in [0,1] of the half-range.
+        //   VLEN = 2*U, SYNE = ±0.5*VLEN = ±U
+        //   RI = U + VVAL*SYNE = U*(1+VVAL)  (positive scan)
+        //   RO = U - VVAL*SYNE = U*(1-VVAL)
+        //   Stored absolute: LVMAX = VMAX_frac * VLEN = VMAX_frac * 2*U
+        //
+        // Scan starts at VVAL = min(1, prev_VMAX+3*DV) (DV=1/LOOKST=0.01),
+        // then increments VVAL in DO 420, then decrements in DO 422 until BSPROD>ULIM.
+        // VMIN is scanned separately with SYNE<0 (RI=U-VVAL*U, RO=U+VVAL*U).
+        // Both are carried between U iterations (warm start from previous VMAX/VMIN).
+        std::vector<double> VMAX_per_U(NPSUM), VMIN_per_U(NPSUM), VMID_per_U(NPSUM);
+        {
+          const int LOOKST_v = 100;
+          const double DV = 1.0 / LOOKST_v;  // fraction step
+          double VMAX_frac = 1.0, VMIN_frac = 1.0;  // carried between U iters
+          for (int IU = 0; IU < NPSUM; ++IU) {
+            double U = xi_s[IU];
+            double VLEN = 2.0 * U;
+            if (U < 1.0) {
+              // For small U, Ptolemy skips scan and uses full range
+              VMAX_per_U[IU] = VLEN;
+              VMIN_per_U[IU] = -VLEN;
+              VMID_per_U[IU] = 0.0;
+              continue;
             }
+            // ---- Positive V scan (SYNE = +U) ----
+            double vval = std::min(1.0, VMAX_frac + 3.0*DV);
+            // DO 420: increment once more
+            vval = std::min(1.0, vval + 3.0*DV);
+            // DO 422: scan down until BSPROD > ULIM
+            while (vval > 0.5*DV) {
+              double ra = U + vval * U;   // U*(1+vval)
+              double rb = U - vval * U;   // U*(1-vval)
+              double ULIM = RVRLIM / std::max(1e-2, ra * rb);
+              bool triggered = false;
+              for (int k = 0; k < 2; ++k) {
+                double f = std::abs(bsprod_val(ra, rb, (k==0) ? XS_phi[0] : XS_phi[1]));
+                if (f > ULIM) { triggered = true; break; }
+              }
+              if (triggered) { vval = std::min(1.0, vval + DV); break; }
+              vval -= DV;
+            }
+            vval = std::min(1.0, vval);
+            // Asymptopia check
+            {
+              double ra = U + vval*U, rb = U - vval*U;
+              double rt = std::sqrt(S1*S1*ra*ra + T1*T1*rb*rb + 2.0*S1*T1*ra*rb*(1.0-DXV));
+              double rp = std::sqrt(S2*S2*ra*ra + T2*T2*rb*rb + 2.0*S2*T2*ra*rb*(1.0-DXV));
+              if (rt > TgtBS_ch.MaxR || rp > TgtBS_ch.MaxR) vval -= DV;
+            }
+            VMAX_frac = std::max(0.0, vval);
+            VMAX_per_U[IU] = VMAX_frac * VLEN;
+
+            // ---- Negative V scan (SYNE = -U) ----
+            vval = std::min(1.0, VMIN_frac + 3.0*DV);
+            vval = std::min(1.0, vval + 3.0*DV);
+            while (vval > 0.5*DV) {
+              double ra = U - vval * U;   // U*(1-vval) — SYNE<0 swaps ra,rb
+              double rb = U + vval * U;   // U*(1+vval)
+              if (ra < 0 || rb < 0) { vval = 0; break; }
+              double ULIM = RVRLIM / std::max(1e-2, std::abs(ra * rb));
+              bool triggered = false;
+              for (int k = 0; k < 2; ++k) {
+                double f = std::abs(bsprod_val(ra, rb, (k==0) ? XS_phi[0] : XS_phi[1]));
+                if (f > ULIM) { triggered = true; break; }
+              }
+              if (triggered) { vval = std::min(1.0, vval + DV); break; }
+              vval -= DV;
+            }
+            vval = std::min(1.0, vval);
+            {
+              double ra = U - vval*U, rb = U + vval*U;
+              double rt = std::sqrt(S1*S1*ra*ra + T1*T1*rb*rb + 2.0*S1*T1*ra*rb*(1.0-DXV));
+              double rp = std::sqrt(S2*S2*ra*ra + T2*T2*rb*rb + 2.0*S2*T2*ra*rb*(1.0-DXV));
+              if (rt > TgtBS_ch.MaxR || rp > TgtBS_ch.MaxR) vval -= DV;
+            }
+            VMIN_frac = std::max(0.0, vval);
+            VMIN_per_U[IU] = -VMIN_frac * VLEN;
+
+            // ---- Stage 2: VMID = V of max |bsprod| (GRDSET Stage 2) ----
+            double vmn = VMIN_per_U[IU], vmx = VMAX_per_U[IU];
+            int IMAX = 2 * NPDIF;
+            double dv2 = (vmx - vmn) / (IMAX + 1);
+            double vv2 = vmn, pvpmax = 0.0, vofmax = 0.5*(vmn+vmx);
+            for (int IV2 = 1; IV2 <= IMAX; ++IV2) {
+              vv2 += dv2;
+              double ra = U + 0.5*vv2, rb = U - 0.5*vv2;
+              double temp = 0;
+              for (int k = 0; k < 2; ++k)
+                temp += std::abs(bsprod_val(ra, rb, (k==0) ? XS_phi[0] : XS_phi[1]));
+              if (temp > pvpmax) { pvpmax = temp; vofmax = vv2; }
+            }
+            double vm = vofmax;
+            double tmp30 = 0.3*(vmx - vmn);
+            vm = std::min(std::max(vm, vmn + tmp30), vmx - tmp30);
+            VMID_per_U[IU] = vm;
           }
-          VMAX_u = std::max(VMAX_u, 0.5);
-          VMAX_u = std::min(VMAX_u, 2.0*U);
-          VMAX_per_U[IU] =  VMAX_u;
-          VMIN_per_U[IU] = -VMAX_u;  // symmetric
         }
 
-        // Pre-compute per-U V-range on NPSUMI chi-integration grid
-        // Interpolate VMAX from NPSUM H-grid to NPSUMI chi-grid using linear interp.
-        // Ptolemy uses polynomial fit (LSQPOL, degree NVPOLY=3); linear interp is simpler.
-        std::vector<double> VMAX_per_U_i(NPSUMI), VMIN_per_U_i(NPSUMI);
+        // ── GRDSET Stage 3: interpolate VMIN/VMID/VMAX to NPSUMI chi-grid ────────
+        // Ptolemy uses LSQPOL degree-3 polynomial fit to the NPSUM-point tables,
+        // then evaluates at each NPSUMI point.
+        // We use linear interpolation from NPSUM to NPSUMI (same data, close grids).
+        // Both grids use the same CUBMAP(2, SUMMIN, SUMMID, SUMMAX, GAMSUM) mapping,
+        // so the grids are similar and linear interp is accurate.
+        std::vector<double> VMAX_per_U_i(NPSUMI), VMIN_per_U_i(NPSUMI), VMID_per_U_i(NPSUMI);
+        auto interp_vparam = [&](const std::vector<double>& param, double U) -> double {
+          if (NPSUM < 2) return param[0];
+          if (U <= xi_s[0]) return param[0];
+          if (U >= xi_s[NPSUM-1]) return param[NPSUM-1];
+          int lo=0, hi=NPSUM-1;
+          while (hi-lo>1){int mid=(lo+hi)/2;if(xi_s[mid]<=U)lo=mid;else hi=mid;}
+          double t=(U-xi_s[lo])/(xi_s[hi]-xi_s[lo]);
+          return param[lo]*(1.0-t)+param[hi]*t;
+        };
         for (int IU = 0; IU < NPSUMI; ++IU) {
           double U = xi_si[IU];
-          if (U < 1e-6) { VMAX_per_U_i[IU] = 0; VMIN_per_U_i[IU] = 0; continue; }
-          // Linear interpolation of VMAX from xi_s (NPSUM pts, sorted ascending)
-          // xi_s is already sorted (CubMap preserves order for MAPSUM=2)
-          double VMAX_u = 2.0 * U;  // default: full range
-          if (NPSUM >= 2) {
-            // Find bracketing interval in xi_s
-            if (U <= xi_s[0]) {
-              VMAX_u = VMAX_per_U[0];
-            } else if (U >= xi_s[NPSUM-1]) {
-              VMAX_u = VMAX_per_U[NPSUM-1];
-            } else {
-              int lo = 0, hi = NPSUM - 1;
-              while (hi - lo > 1) {
-                int mid = (lo + hi) / 2;
-                if (xi_s[mid] <= U) lo = mid; else hi = mid;
-              }
-              double t = (U - xi_s[lo]) / (xi_s[hi] - xi_s[lo]);
-              VMAX_u = VMAX_per_U[lo] * (1.0 - t) + VMAX_per_U[hi] * t;
-            }
-          }
-          VMAX_u = std::max(VMAX_u, 0.5);
-          VMAX_u = std::min(VMAX_u, 2.0*U);
-          VMAX_per_U_i[IU] =  VMAX_u;
-          VMIN_per_U_i[IU] = -VMAX_u;
+          if (U < 1e-6) { VMAX_per_U_i[IU]=0; VMIN_per_U_i[IU]=0; VMID_per_U_i[IU]=0; continue; }
+          double vmx = interp_vparam(VMAX_per_U, U);
+          double vmn = interp_vparam(VMIN_per_U, U);
+          double vmd = interp_vparam(VMID_per_U, U);
+          vmx = std::max(vmx, 0.5); vmx = std::min(vmx, 2.0*U);
+          vmn = std::min(vmn, -0.5); vmn = std::max(vmn, -2.0*U);
+          // Clamp VMID to 30% margin inside [VMIN,VMAX]
+          double tmp30 = 0.3*(vmx-vmn);
+          vmd = std::min(std::max(vmd, vmn+tmp30), vmx-tmp30);
+          VMAX_per_U_i[IU] = vmx;
+          VMIN_per_U_i[IU] = vmn;
+          VMID_per_U_i[IU] = vmd;
         }
 
         // Base GL points for V (NPDIF), will be CubMapped per (IV,IU) inside loops
@@ -1084,11 +1166,10 @@ loop300:
 
             if (U < 1e-6) continue;
 
-            // CubMap V fraction to [VMIN_u, VMAX_u] with VMID=0
+            // CubMap V fraction to [VMIN_u, VMID_u, VMAX_u] (Ptolemy MAPDIF=1, GAMDIF=5)
             double VMIN_u = VMIN_per_U[IU];
             double VMAX_u = VMAX_per_U[IU];
-            double VMID_u = 0.0;
-
+            double VMID_u = VMID_per_U[IU];  // V of max |bsprod| from Stage 2
             std::vector<double> vv(1, gl_v_frac), vw(1, gl_v_wt);
             CubMap(1, VMIN_u, VMID_u, VMAX_u, GAMDIF, vv, vw);
             double V     = vv[0];
@@ -1209,11 +1290,10 @@ loop300:
 
             if (U < 1e-6) continue;
 
-            // Get V at this NPSUMI U-point via CubMap
+            // Get V at this NPSUMI U-point via CubMap (Ptolemy MAPDIF=1, GAMDIF=5)
             double VMIN_u = VMIN_per_U_i[IU];
             double VMAX_u = VMAX_per_U_i[IU];
-            double VMID_u = 0.0;
-
+            double VMID_u = VMID_per_U_i[IU];
             std::vector<double> vv(1, gl_v_frac), vw(1, gl_v_wt);
             CubMap(1, VMIN_u, VMID_u, VMAX_u, GAMDIF, vv, vw);
             double V     = vv[0];
