@@ -17,7 +17,7 @@ int main() {
     // We need Outgoing.Projectile = proton → pass "1H" as recoil arg
     dwba.SetReaction("16O", "2H", "17O", "1H");
     dwba.SetEnergy(20.0);
-    dwba.SetAngles(0.0, 180.0, 5.0);
+    dwba.SetAngles(0.0, 180.0, 1.0);
 
     {
         ChannelPotential p = {};

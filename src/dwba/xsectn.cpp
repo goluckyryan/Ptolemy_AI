@@ -318,14 +318,16 @@ void DWBA::XSectn() {
         if (sf == 0.0) continue;
 
         // Associated Legendre polynomial P_lo^mx(cos_theta)
-        // Both std::legendre (m=0) and std::assoc_legendre (m>0) match Ptolemy PLMSUB
+        // Ptolemy PLMSUB uses Condon-Shortley convention: includes (-1)^m factor
+        // (built into recursion: PRAY(I) = -(2*M+1)*ROOT*PRAY(J) at each M step).
+        // std::assoc_legendre also includes (-1)^m — matches Ptolemy exactly.
+        // std::legendre (m=0) has no phase — correct as-is.
         double PLo_Mx;
         if (mx == 0) {
           PLo_Mx = std::legendre(lo, cos_theta);
         } else if (mx > lo) {
           continue;
         } else {
-          // std::assoc_legendre includes (-1)^m Condon-Shortley phase — same as Ptolemy
           PLo_Mx = std::assoc_legendre(lo, mx, cos_theta);
         }
 
@@ -334,12 +336,9 @@ void DWBA::XSectn() {
           F_amp += contrib;
       }
 
-      // FMNEG * |F|^2 contribution; factor 10 applied outside inner loop
-      // Ptolemy CALANG/BETCAL includes spin average 1/(2*sa+1) where sa=spin of projectile.
-      // For deuteron (JA=2 doubled → sa=1): 1/(2*1+1) = 1/3.
-      // This factor comes from the implicit average over incoming magnetic substates.
-      double spin_avg = 1.0 / (JA + 1.0);  // = 1/(2*sa+1); JA = 2*sa
-      dSigma += 10.0 * spin_avg * FMNEG * std::norm(F_amp);
+      // FMNEG * |F|^2 contribution; factor 10 converts fm^2 -> mb/sr
+      // Ptolemy XSECTN: CONTRI = (10*AJACOB)*(FR^2+FI^2)*FMNEG — NO spin average for reactions
+      dSigma += 10.0 * FMNEG * std::norm(F_amp);
     }
 
     std::cout << std::fixed << std::setprecision(1) << theta_deg
