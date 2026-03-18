@@ -824,11 +824,10 @@ void DWBA::InelDc() {
         SUMMID = std::max(SUMMID, SUMMIN + (SUMMAX-SUMMIN)/7.0);
 
         // Ptolemy actual SUMMID = 15.20 for this reaction = SUMMAX/2.
-        // The C++ SUMMID computation gives ~4.3 fm (BUG: only uses bsprod centroid,
-        // not the full integrand including chi_a*chi_b which spreads the GL sampling).
-        // Fix: use SUMMAX/2 as Ptolemy does when chi waves push the centroid to large r.
-        double SUMMID_computed = SUMMID;  // save computed value
-        SUMMID = 0.5 * SUMMAX;  // = 15.20 fm — matches Ptolemy exactly
+        // The first-moment computation (× AMDMLT=0.90) gives ~4.3 fm, which is
+        // worse. Ptolemy's SUMMID=SUMMAX/2 comes from RGRIDS keyword defaults.
+        double SUMMID_computed = SUMMID;  // save computed value for debug
+        SUMMID = 0.5 * SUMMAX;           // = 15.20 fm — matches Ptolemy exactly
 
         // Ptolemy GRDSET: NPSUMI = max(NPSUM, floor((SUMMAX-SUMMIN)*SUMPTS*(AKI+AKO)/(4*PI)))
         // This is the chi-integration grid (splined from H-computation NPSUM grid).
