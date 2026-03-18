@@ -283,6 +283,45 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
       ch.WaveFunction[i] = u[i] * alpha;
   }
 
+  // --- Coulomb asymptotic extension beyond NSTEP (Ptolemy WAVELJ NSTP2S logic) ---
+  // Ptolemy extends chi to NSTP2S = RIMAX/h+3.5 (RIMAX can exceed MaxR=30fm).
+  // Integration domain reaches RI,RO up to SUMMAX=30.4fm > MaxR.
+  // Without extension, 5-pt Lagrange stencil reads guard zeros → large error.
+  // Here we extend with the exact Coulomb asymptotic:
+  //   chi_b(r) = 0.5*[(1+S)*F_L + i*(1-S)*G_L] / (normalized to our convention)
+  // Since we already know alpha = normalization constant, and the Coulomb functions,
+  // just call Rcwfn at each extension point and apply alpha.
+  {
+    const int NEXTRA = 10;  // ~1.25fm extra (10 × 0.125fm) to cover 30→31.25fm
+    int old_size = static_cast<int>(ch.WaveFunction.size());
+    int need_size = N + NEXTRA + 4;
+    if (need_size > old_size) ch.WaveFunction.resize(need_size, {0.0, 0.0});
+
+    if (den2 > 1e-60) {
+      double alpha_r = (ur * A1n + ui * A2n) / den2;
+      double alpha_i = (ur * A2n - ui * A1n) / den2;
+      std::complex<double> alpha(alpha_r, alpha_i);
+
+      std::vector<double> FC_ext(L + 2, 0.0), FCP_ext(L + 2, 0.0);
+      std::vector<double> GC_ext(L + 2, 0.0), GCP_ext(L + 2, 0.0);
+
+      for (int I = N + 1; I <= N + NEXTRA; ++I) {
+        double r_ext   = I * h;
+        double rho_ext = ch.k * r_ext;
+        Rcwfn(rho_ext, ch.eta, L, L, FC_ext, FCP_ext, GC_ext, GCP_ext);
+        double FL_ext = FC_ext[L];
+        double GL_ext = GC_ext[L];
+        // Unnormalized chi at r_ext: same asymptotic as at matching point
+        // u_unnorm = 0.5*((1+S)*F + i*(1-S)*G) at large r
+        double A1_ext = 0.5 * (FL_ext * (1.0 + SJR) + SJI * GL_ext);
+        double A2_ext = 0.5 * (GL_ext * (1.0 - SJR) + SJI * FL_ext);
+        // Normalized: chi = (A1+iA2) * alpha
+        std::complex<double> chi_ext(A1_ext, A2_ext);
+        ch.WaveFunction[I] = chi_ext * alpha;
+      }
+    }
+  }
+
   if (std::isnan(SJR) || std::isnan(SJI))
     std::cerr << "WavElj NaN: L=" << L << " k=" << ch.k
               << " eta=" << ch.eta << std::endl;

@@ -535,8 +535,11 @@ void DWBA::InelDc() {
         //
         // Use -DINTERP_PTOLEMY on compile line to enable Ptolemy mode.
         const double h_chi_b = Outgoing.StepSize;
+        // max r covered by chi_b (includes Coulomb extension beyond MaxR=30fm)
+        const double chi_b_maxR = (chi_b.size() >= 4)
+            ? (static_cast<int>(chi_b.size()) - 4) * h_chi_b : Outgoing.MaxR;
         auto interp_chi_b = [&](double r) -> std::complex<double> {
-          if (r <= 0 || r >= Outgoing.MaxR) return {0.0, 0.0};
+          if (r <= 0 || r > chi_b_maxR) return {0.0, 0.0};
 #ifdef INTERP_PTOLEMY
           // 5-point Lagrange (Ptolemy WAVELJ, A&S 25.2.15)
           double rbyh = r / h_chi_b;
@@ -673,8 +676,10 @@ void DWBA::InelDc() {
         GaussLegendre(NPSUM, -1.0, 1.0, xi_s, wi_s);
 
         // Chi_a interpolation (same two-mode design as chi_b above)
+        const double chi_a_maxR = (chi_a.size() >= 4)
+            ? (static_cast<int>(chi_a.size()) - 4) * h : Incoming.MaxR;
         auto interp_chi_a = [&](double r) -> std::complex<double> {
-          if (r <= 0 || r >= Incoming.MaxR) return {0.0, 0.0};
+          if (r <= 0 || r > chi_a_maxR) return {0.0, 0.0};
 #ifdef INTERP_PTOLEMY
           double rbyh = r / h;
           int I = static_cast<int>(rbyh + 0.5);
