@@ -408,31 +408,70 @@ void DWBA::InelDc() {
   // phi'(r) = phi_max for r < r_peak; phi(r) for r >= r_peak
   // Ptolemy Pass 2 uses ITYPE=1 (PHI V PHI), NO clipping.
   // The bound state WFs are phi=u/r, always positive for 0-node states.
+  // 5-pt Lagrange interpolation (AITLAG equivalent) for real tables
+  // Matches Ptolemy's BSPROD ITYPE=1 which uses AITLAG(NAIT=4 → 5-pt)
+  auto aitlag5 = [](const double* tab, int ntab, double stepinv, double r) -> double {
+    if (r < 0) return tab[0];
+    double idx = r * stepinv;
+    if (idx >= ntab - 1) return tab[ntab-1];
+    int I = static_cast<int>(idx + 0.5);  // nearest index (AITLAG convention)
+    I = std::max(2, std::min(I, ntab - 3));
+    double P = idx - I;
+    double PS = P * P;
+    double X1 = P*(PS-1.0)/24.0, X2 = X1+X1, X3 = X1*P;
+    double X4 = X2+X2-0.5*P, X5 = X4*P;
+    double C1=X3-X2, C5=X3+X2, C3=X5-X3, C2=X5-X4, C4=X5+X4;
+    C3 = C3+C3+1.0;
+    return C1*tab[I-2] - C2*tab[I-1] + C3*tab[I] - C4*tab[I+1] + C5*tab[I+2];
+  };
+
   auto InterpolateClipped = [&](const std::vector<std::complex<double>> &wf,
                                 const std::vector<double> &/*grid*/,
                                 int nsteps, double stepsize, double maxr,
                                 double r, double /*phi_max*/, double /*r_peak*/) -> double {
     if (r >= maxr || r < 0) return 0.0;
+    // Extract real part into temp array for aitlag5
+    // Use linear for speed in non-PTOLEMY mode; 5-pt Lagrange in PTOLEMY mode
+#ifdef INTERP_PTOLEMY
+    // Build pointer into real parts (wf is contiguous complex<double>)
+    // Use direct 5-pt formula on real parts
+    double idx = r / stepsize;
+    int I = static_cast<int>(idx + 0.5);
+    I = std::max(2, std::min(I, nsteps - 3));
+    double P = idx - I;
+    double PS = P*P;
+    double X1=P*(PS-1.0)/24.0, X2=X1+X1, X3=X1*P;
+    double X4=X2+X2-0.5*P, X5=X4*P;
+    double C1=X3-X2, C5=X3+X2, C3=X5-X3, C2=X5-X4, C4=X5+X4;
+    C3=C3+C3+1.0;
+    return C1*wf[I-2].real()-C2*wf[I-1].real()+C3*wf[I].real()
+          -C4*wf[I+1].real()+C5*wf[I+2].real();
+#else
     double idx = r / stepsize;
     int ii = static_cast<int>(idx);
     if (ii >= nsteps - 1) return 0.0;
     double frac = idx - ii;
     return wf[ii].real() * (1.0 - frac) + wf[ii + 1].real() * frac;
+#endif
   };
 
   // Clipped IVPHI interpolation for vertex product (V*phi at vertex side):
   // IVPHI'(r) = IVPHI_max for r < r_vert_peak; IVPHI(r) for r >= r_vert_peak
   // InterpolateIVPHI: interpolate V(r)*phi(r) product WITHOUT clipping
-  // Ptolemy Pass 2 uses ITYPE=1 (PHI V PHI), no clipping.
+  // Ptolemy Pass 2 uses ITYPE=1 (PHI V PHI) with AITLAG (5-pt Lagrange).
   auto InterpolateIVPHI = [&](const std::vector<double> &ivphi,
                                double stepsize, int nsteps, double maxr,
                                double r, double /*ivphi_max*/, double /*r_vert_peak*/) -> double {
     if (r >= maxr || r < 0) return 0.0;
+#ifdef INTERP_PTOLEMY
+    return aitlag5(ivphi.data(), nsteps, 1.0/stepsize, r);
+#else
     double idx = r / stepsize;
     int ii = static_cast<int>(idx);
     if (ii >= nsteps - 1) return 0.0;
     double frac = idx - ii;
     return ivphi[ii] * (1.0 - frac) + ivphi[ii + 1] * frac;
+#endif
   };
 
   auto InterpolateV = [&](const std::vector<double> &v,
@@ -975,6 +1014,11 @@ void DWBA::InelDc() {
             double tmp30 = 0.3*(vmx - vmn);
             vm = std::min(std::max(vm, vmn + tmp30), vmx - tmp30);
             VMID_per_U[IU] = vm;
+#ifdef DEBUG_VGRID
+            if (Li==0 && Lo==2 && Lx==2 && JPI==2 && JPO==3 && IU < 10)
+              fprintf(stderr,"VGRID IU=%2d U=%7.4f  VMIN=%9.5f VMID=%9.5f VMAX=%9.5f  VLEN=%9.5f\n",
+                      IU, U, vmn, vm, vmx, VLEN);
+#endif
           }
         }
 
