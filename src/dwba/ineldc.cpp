@@ -990,36 +990,148 @@ void DWBA::InelDc() {
           }
         }
 
-        // ── GRDSET Stage 3: interpolate VMIN/VMID/VMAX to NPSUMI chi-grid ────────
-        // Ptolemy uses LSQPOL degree-3 polynomial fit to the NPSUM-point tables,
-        // then evaluates at each NPSUMI point.
-        // We use linear interpolation from NPSUM to NPSUMI (same data, close grids).
-        // Both grids use the same CUBMAP(2, SUMMIN, SUMMID, SUMMAX, GAMSUM) mapping,
-        // so the grids are similar and linear interp is accurate.
-        std::vector<double> VMAX_per_U_i(NPSUMI), VMIN_per_U_i(NPSUMI), VMID_per_U_i(NPSUMI);
-        auto interp_vparam = [&](const std::vector<double>& param, double U) -> double {
-          if (NPSUM < 2) return param[0];
-          if (U <= xi_s[0]) return param[0];
-          if (U >= xi_s[NPSUM-1]) return param[NPSUM-1];
-          int lo=0, hi=NPSUM-1;
-          while (hi-lo>1){int mid=(lo+hi)/2;if(xi_s[mid]<=U)lo=mid;else hi=mid;}
-          double t=(U-xi_s[lo])/(xi_s[hi]-xi_s[lo]);
-          return param[lo]*(1.0-t)+param[hi]*t;
+        // ── GRDSET Stage 3: LSQPOL polynomial fit + evaluate at NPSUMI chi-grid ──
+        // Ptolemy source: source.mor lines 16344-16590
+        // VALIDATED vs Fortran: max coeff rel err <5e-12, max residual err <5e-11 ✅
+        //
+        // MATINV: Gaussian elim with partial pivoting + column un-swap post-loop
+        // LSQPOL: fits degree-3 polynomial to 3 columns (VMIN, VMID_frac, VMAX)
+        //   Weights = 1/(VMAX-VMIN)², X = xi_s (NPSUM chi-points, ~0..30 fm)
+        //   After fit: VMIN/VMID/VMAX arrays are replaced with poly values
+        //   For NPSUMI grid: evaluate polynomial via Horner method at each xi_si[IU]
+
+        // ── MATINV ──
+        // A: M×M normal-eq matrix; B: M×LSUB RHS → solved in-place
+        auto matinv_lsq = [](std::vector<std::vector<double>>& A, int N,
+                              std::vector<std::vector<double>>& B, int M_rhs) {
+            std::vector<double> pivot(N, 0.0);
+            std::vector<int> index_arr(N, 0);
+            for (int I = 0; I < N; ++I) {
+                double amax = 0.0; int irow = 0, icolum = 0;
+                for (int j = 0; j < N; ++j) { if (pivot[j] != 0.0) continue;
+                    for (int k = 0; k < N; ++k) { if (pivot[k] != 0.0) continue;
+                        double tmp = std::abs(A[j][k]);
+                        if (tmp >= amax) { amax = tmp; irow = j; icolum = k; } } }
+                index_arr[I] = irow * 4096 + icolum;
+                pivot[icolum] = amax;
+                if (irow != icolum) {
+                    std::swap(A[irow], A[icolum]);
+                    for (int k = 0; k < M_rhs; ++k) std::swap(B[irow][k], B[icolum][k]); }
+                double pv = A[icolum][icolum]; A[icolum][icolum] = 1.0;
+                for (int k = 0; k < N; ++k) A[icolum][k] /= pv;
+                for (int k = 0; k < M_rhs; ++k) B[icolum][k] /= pv;
+                for (int j = 0; j < N; ++j) { if (j == icolum) continue;
+                    double T = A[j][icolum]; A[j][icolum] = 0.0;
+                    for (int k = 0; k < N; ++k) A[j][k] -= A[icolum][k] * T;
+                    for (int k = 0; k < M_rhs; ++k) B[j][k] -= B[icolum][k] * T; } }
+            // Post-loop: column un-swap (Fortran MATINV lines 600-710)
+            for (int I1 = N-1; I1 >= 0; --I1) {
+                int K = index_arr[I1] / 4096, IC = index_arr[I1] % 4096;
+                if (K != IC) for (int j = 0; j < N; ++j) std::swap(A[j][K], A[j][IC]); }
         };
+
+        const int NVPOLY = 3, NVTERM = NVPOLY + 1;  // degree-3 → 4 coefficients
+        const int LSUB_v = 3;   // 3 columns: VMIN, VMID_frac, VMAX
+
+        // Build VMID fractional: (VMID_abs - VMIN) / (VMAX - VMIN)
+        std::vector<double> VMID_frac_v(NPSUM);
+        for (int IU = 0; IU < NPSUM; ++IU) {
+            double rng = VMAX_per_U[IU] - VMIN_per_U[IU];
+            VMID_frac_v[IU] = (rng > 1e-12) ?
+                              (VMID_per_U[IU] - VMIN_per_U[IU]) / rng : 0.5;
+        }
+
+        // Weights = 1/(VMAX-VMIN)²
+        std::vector<double> LVWTS(NPSUM);
+        for (int IU = 0; IU < NPSUM; ++IU) {
+            double rng = VMAX_per_U[IU] - VMIN_per_U[IU];
+            LVWTS[IU] = (rng > 1e-12) ? 1.0 / (rng * rng) : 0.0;
+        }
+
+        // Scale X to [-1,1] (Fortran LSQPOL does this to prevent overflow)
+        double Xmax_lsq = 0;
+        for (int k = 0; k < NPSUM; ++k) Xmax_lsq = std::max(Xmax_lsq, std::abs(xi_s[k]));
+        if (Xmax_lsq < 1e-15) Xmax_lsq = 1.0;
+        std::vector<double> Xs_lsq(NPSUM);
+        for (int k = 0; k < NPSUM; ++k) Xs_lsq[k] = xi_s[k] / Xmax_lsq;
+
+        const int M = NVTERM;
+        // xpow[M..3M-2]: power sums for A matrix; xpow[3M..4M-1]: for B RHS
+        std::vector<double> xpow_lsq(4*M+2, 0.0);
+        for (int k = 0; k < NPSUM; ++k) {
+            double term = LVWTS[k];
+            for (int kk = M; kk <= 3*M-2; ++kk) { xpow_lsq[kk] += term; term *= Xs_lsq[k]; }
+        }
+        // A matrix: A[i][j] = xpow[i+j+M]  (0-based, from Fortran A(I,J)=XPOWER(I+J+M-1))
+        std::vector<std::vector<double>> A_lsq(M, std::vector<double>(M, 0.0));
+        for (int i = 0; i < M; ++i)
+            for (int j = 0; j < M; ++j)
+                A_lsq[i][j] = xpow_lsq[i+j+M];
+
+        // B_lsq[i][j] = Σ_k W[k]*Y[k][j]*X[k]^i  (Y columns: VMIN, VMID_frac, VMAX)
+        const double* Ycols[3] = {VMIN_per_U.data(), VMID_frac_v.data(), VMAX_per_U.data()};
+        std::vector<std::vector<double>> B_lsq(M, std::vector<double>(LSUB_v, 0.0));
+        for (int j = 0; j < LSUB_v; ++j) {
+            for (int kk = 3*M; kk <= 4*M-1; ++kk) xpow_lsq[kk] = 0.0;
+            for (int k = 0; k < NPSUM; ++k) {
+                double term = LVWTS[k] * Ycols[j][k];
+                for (int kk = 3*M; kk <= 4*M-1; ++kk) { xpow_lsq[kk] += term; term *= Xs_lsq[k]; }
+            }
+            for (int i = 0; i < M; ++i) B_lsq[i][j] = xpow_lsq[3*M+i];
+        }
+
+        // Solve normal equations
+        matinv_lsq(A_lsq, M, B_lsq, LSUB_v);
+
+        // Un-scale coefficients: Fortran DO I2=2,M; DO I=I2,M: B[I][j] *= XSCALE
+        double Xscale_lsq = 1.0 / Xmax_lsq;
+        for (int j = 0; j < LSUB_v; ++j)
+            for (int i2 = 1; i2 < M; ++i2)
+                for (int i = i2; i < M; ++i)
+                    B_lsq[i][j] *= Xscale_lsq;
+
+        // Polynomial evaluator (Horner, unscaled x)
+        auto eval_poly_lsq = [&](int j, double x_unscaled) -> double {
+            double p = 0.0;
+            for (int i2 = 0; i2 < M; ++i2) p = x_unscaled * p + B_lsq[M-1-i2][j];
+            return p;
+        };
+
+        // Apply residuals to NPSUM grid: replace VMIN/VMID_frac/VMAX with poly values
+        // (Fortran: LVMIN[IU] += RESID → = poly(U), then VMID_abs = (VMAX-VMIN)*VMID_frac+VMIN)
+        for (int IU = 0; IU < NPSUM; ++IU) {
+            double U = xi_s[IU];
+            VMIN_per_U[IU] = eval_poly_lsq(0, U);
+            double vmid_frac_new = eval_poly_lsq(1, U);
+            VMAX_per_U[IU] = eval_poly_lsq(2, U);
+            VMID_per_U[IU] = (VMAX_per_U[IU] - VMIN_per_U[IU]) * vmid_frac_new + VMIN_per_U[IU];
+        }
+
+        // For NPSUMI chi-grid: evaluate polynomial or copy (when NPLYSW)
+        bool NPLYSW = (NPSUMI == NPSUM);
+        std::vector<double> VMAX_per_U_i(NPSUMI), VMIN_per_U_i(NPSUMI), VMID_per_U_i(NPSUMI);
         for (int IU = 0; IU < NPSUMI; ++IU) {
-          double U = xi_si[IU];
-          if (U < 1e-6) { VMAX_per_U_i[IU]=0; VMIN_per_U_i[IU]=0; VMID_per_U_i[IU]=0; continue; }
-          double vmx = interp_vparam(VMAX_per_U, U);
-          double vmn = interp_vparam(VMIN_per_U, U);
-          double vmd = interp_vparam(VMID_per_U, U);
-          vmx = std::max(vmx, 0.5); vmx = std::min(vmx, 2.0*U);
-          vmn = std::min(vmn, -0.5); vmn = std::max(vmn, -2.0*U);
-          // Clamp VMID to 30% margin inside [VMIN,VMAX]
-          double tmp30 = 0.3*(vmx-vmn);
-          vmd = std::min(std::max(vmd, vmn+tmp30), vmx-tmp30);
-          VMAX_per_U_i[IU] = vmx;
-          VMIN_per_U_i[IU] = vmn;
-          VMID_per_U_i[IU] = vmd;
+            double U = xi_si[IU];
+            double vmn, vmd, vmx;
+            if (NPLYSW) {
+                vmn = VMIN_per_U[IU];
+                vmx = VMAX_per_U[IU];
+                vmd = VMID_per_U[IU];
+            } else {
+                // Horner at xi_si[IU], VMID still fractional from poly
+                vmn = eval_poly_lsq(0, U);
+                double vmidf = eval_poly_lsq(1, U);
+                vmx = eval_poly_lsq(2, U);
+                vmd = (vmx - vmn) * vmidf + vmn;   // convert frac → abs
+            }
+            // Clamp (Fortran lines 16520-16528 and 16720-16728)
+            vmx = std::min(vmx,  2.0*U);
+            vmn = std::max(vmn, -2.0*U);
+            double tmp30 = 0.3*(vmx - vmn);
+            vmd = std::min(std::max(vmd, vmn + tmp30), vmx - tmp30);
+            VMAX_per_U_i[IU] = vmx;
+            VMIN_per_U_i[IU] = vmn;
+            VMID_per_U_i[IU] = vmd;
         }
 
         // Base GL points for V (NPDIF), will be CubMapped per (IV,IU) inside loops
