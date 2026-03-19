@@ -107,12 +107,16 @@ void DWBA::XSectn() {
       S_koffs[{JBP, LxMax_bs, Lo, Li}] += elem.S;
     }
   } else {
+    fprintf(stderr, "[XSectn] SOSWT branch, TransferSMatrix size=%zu\n", TransferSMatrix.size()); fflush(stderr);
+    int dbg_count = 0;
     for (const auto &elem : TransferSMatrix) {
       int Lx  = elem.Lx;
       int Li  = elem.Li;
       int Lo  = elem.Lo;
       int JPI = elem.JPI;   // 2*J_incoming (already J-split in InelDc)
       int JPO = elem.JPO;   // 2*J_outgoing
+      if (++dbg_count <= 3 || dbg_count % 100 == 0)
+        fprintf(stderr, "  [SFROMI] elem %d: Li=%d JPI=%d Lo=%d JPO=%d Lx=%d\n", dbg_count, Li, JPI, Lo, JPO, Lx); fflush(stderr);
 
       // Parity filter: (Li + Lo + Lx) must be even
       if ((Li + Lo + Lx) % 2 != 0) continue;
