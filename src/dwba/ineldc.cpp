@@ -353,6 +353,22 @@ void DWBA::InelDc() {
   double r_T_vert_peak = idx_T_vert_peak * h_T;
   double r_P_vert_peak = idx_P_vert_peak * h_common;
 
+#ifdef DEBUG_DUMP_TABLES
+  // Dump phi_T and IVPHI_P to files for Fortran comparison
+  {
+    FILE* fp = fopen("phi_T_table.txt", "w");
+    for (int i = 0; i < NSteps_T; ++i)
+      fprintf(fp, "%.6f  %.10e\n", i * h_T, TgtBS_ch.WaveFunction[i].real());
+    fclose(fp);
+    FILE* fp2 = fopen("ivphi_P_table.txt", "w");
+    for (int i = 0; i < NSteps_common; ++i)
+      fprintf(fp2, "%.6f  %.10e\n", i * h_common, IVPHI_P[i]);
+    fclose(fp2);
+    fprintf(stderr, "Dumped phi_T (%d pts, h=%.5f) and IVPHI_P (%d pts, h=%.5f)\n",
+            NSteps_T, h_T, NSteps_common, h_common);
+  }
+#endif
+
   // Report vertex peaks for diagnostic comparison vs Ptolemy BSSET output
   std::cout << std::fixed << std::setprecision(4);
   std::cout << "  IVPHI_T peak = " << IVPHI_T_max << " at r=" << r_T_vert_peak << " fm" << std::endl;
@@ -609,22 +625,23 @@ void DWBA::InelDc() {
         double h    = Incoming.StepSize;   // step for chi_a (incoming distorted wave)
 
         // ---------------------------------------------------------------
-        // Quadrature parameters (dpsb parameterset, Ptolemy GRDSET convention):
-        //   Sum (U): CUBMAP(MAPSUM=2, rational-sinh, GAMSUM=2.0)
-        //   Dif (V): CUBMAP(MAPDIF=1, cubic-sinh, GAMDIF=12.0) per-U adaptive
-        //   Phi:     CUBMAP(MAPPHI=2, rational-sinh, GAMPHI≈0, PHIMID=0.20)
+        // Quadrature parameters — verified from Ptolemy print=2 output header:
+        //   (RI+RO)/2: NPSUMI=42, NPSUM=40, MAP=2, GAMSUM=2.00, [0..30.40]
+        //   RI-RO:     NPDIF=40,            MAP=1, GAMDIF=12.00
+        //   COS(PHI):  NPPHI=20,            MAP=2, GAMPHI≈0, NPHIAD=4, PHIMID=0.20
+        //   DWCUT=2e-6
         // ---------------------------------------------------------------
-        const int NPSUM = 40;    // GL points for U  (dpsb: NPSUM=40)
-        const int NPDIF = 40;    // GL points for V  (dpsb: NPDIF=40)
-        const int NPPHI = 20;    // GL points for phi (dpsb: NPPHI=20)
-        const double SUMMAX = 30.4;    // asymptopia=30 → SUMMAX≈30.4 (Ptolemy output)
-        const double GAMSUM = 2.0;     // dpsb: GAMSUM=2 (rational-sinh for sum)
-        const double GAMDIF = 5.0;     // Ptolemy default GAMDIF=5 (cubic-sinh for dif)
-        const double GAMPHI = 1.0e-6;  // dpsb: GAMPHI≈0 → nearly linear phi map
-        const double PHIMID_frac = 0.20; // dpsb: PHIMID=0.20 (fraction of [0,1])
-        const double DWCUT = 2.0e-6;  // dpsb: DWCUTOFF=2e-6 (from RGRIDS row C)
+        const int NPSUM = 40;    // GL points for H-computation U grid
+        const int NPDIF = 40;    // GL points for V  (NPDIF=40 from Ptolemy header)
+        const int NPPHI = 20;    // GL points for phi (NPPHI=20 from Ptolemy header)
+        const double SUMMAX = 30.4;    // asymptopia=30 → SUMMAX=30.4 (Ptolemy output)
+        const double GAMSUM = 2.0;     // GAMSUM=2.00 (rational-sinh for sum)
+        const double GAMDIF = 12.0;    // GAMDIF=12.00 (from Ptolemy header RI-RO row)
+        const double GAMPHI = 1.0e-6;  // GAMPHI≈0 → nearly linear phi map
+        const double PHIMID_frac = 0.20; // PHIMID=0.2000 (from Ptolemy header COS(PHI) row)
+        const double DWCUT = 2.0e-6;  // DWCUTOFF=2e-6
         const int LOOKST = 250;       // test points for phi scan
-        const int NPHIAD = 4;         // extra phi points margin (dpsb: NPHIAD=4)
+        const int NPHIAD = 4;         // NPHIAD=4 (from Ptolemy header)
         const double DXV = 2.0 / ((double)LOOKST * LOOKST);
         const int IXTOPZ = LOOKST + 1;
         const double SUMPTS = 8.0;    // dpsb: SUMPTS=8 (from RGRIDS row C, col 2)
@@ -1343,6 +1360,13 @@ loop300:
 
               // Accumulate H (Fortran: HINT[IH] += SALLOC[LHSM1+IH])
               H_real += PVPDX * A12_kernel;
+
+#ifdef DEBUG_PHI_LOOP
+              if (Li==0 && Lo==2 && Lx==2 && JPI==2 && JPO==3 && IV==0 && IU==1)
+                fprintf(stderr,"PHILOOP k=%2d PHI=%8.5f X=%8.5f rx=%8.5f rp=%8.5f "
+                        "phi_T=%11.4e IVPHI_P=%11.4e FIFO=%11.4e PVPDX=%11.4e PHIT=%8.5f A12=%8.5f contrib=%11.4e\n",
+                        k, PHI, X, rx, rp, phi_T_val, ivphi_P_nc, FIFO, PVPDX, PHIT_angle, A12_kernel, PVPDX*A12_kernel);
+#endif
             }
             // ── End phi loop (Ptolemy DO 489) ─────────────────────────────
 
@@ -1355,8 +1379,8 @@ loop300:
             // Dump H-grid for key element, first IV slice only
             if (Li == 0 && Lo == 2 && Lx == 2 && JPI == 2 && JPO == 3 && IV == 0) {
               fprintf(stderr, "HGRD IU=%3d  U=%7.4f  ra=%7.4f rb=%7.4f  "
-                      "H_real=%11.4e  RIOEX=%11.4e  H_smhvl=%11.4e\n",
-                      IU, U, ra, rb, H_real, RIOEX, H_smhvl[IU]);
+                      "H_real=%11.4e  RIOEX=%11.4e  H_smhvl=%11.4e  PHI0=%8.5f\n",
+                      IU, U, ra, rb, H_real, RIOEX, H_smhvl[IU], PHI0);
             }
 #endif
 
