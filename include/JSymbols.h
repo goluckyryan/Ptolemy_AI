@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <cmath>
 #include <algorithm>
+#include "sixj_racah.h"
  
 double factorial(double n){
   if( n < 0 ) return -100.;
@@ -161,11 +162,12 @@ double NineJSymbol( double J1, double J2, double J3, double J4, double J5, doubl
  
   double nineJ = 0;
   for( double x = xMin; x <= xMax + 1e-9; x = x + 1.0){
-    double s1 = SixJSymbol(J1, J2, J3, J6, J9, x);
+    // Use fast Racah-formula SixJ (O(k_range) instead of O(J^6) m-loop)
+    double s1 = SixJSymbol_Racah(J1, J2, J3, J6, J9, x);
     if( s1 == 0 || std::isnan(s1) ) continue;
-    double s2 = SixJSymbol(J4, J5, J6, J2, x, J8);
+    double s2 = SixJSymbol_Racah(J4, J5, J6, J2, x, J8);
     if( s2 == 0 || std::isnan(s2) ) continue;
-    double s3 = SixJSymbol(J7, J8, J9, x, J1, J4);
+    double s3 = SixJSymbol_Racah(J7, J8, J9, x, J1, J4);
     if( s3 == 0 || std::isnan(s3) ) continue;
     double f = pow(-1.0, 2.0*x) * (2.0*x+1.0);
     nineJ += f * s1 * s2 * s3;

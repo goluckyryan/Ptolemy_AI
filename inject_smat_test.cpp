@@ -654,7 +654,7 @@ int main() {
     // Set up the reaction identically to fr_o16dp.cpp
     dwba.SetReaction("16O", "2H", "17O", "1H");
     dwba.SetEnergy(20.0);
-    dwba.SetAngles(0.0, 180.0, 5.0);   // 5° steps for speed
+    dwba.SetAngles(0.0, 180.0, 30.0);   // 5° steps for speed
 
     {
         ChannelPotential p = {};
@@ -689,7 +689,9 @@ int main() {
 
     // Run kinematics + Coulomb phases but skip INELDC.
     // Inject Ptolemy S-matrix instead.
+    fprintf(stderr, "[inject] calling SetupChannels...\n"); fflush(stderr);
     dwba.SetupChannels();   // computes k, eta, sigma_L for both channels
+    fprintf(stderr, "[inject] SetupChannels done\n"); fflush(stderr);
 
     // Build TransferSMatrix from Ptolemy data
     std::vector<DWBA::TransferSMatrixElement> injected;
@@ -702,9 +704,12 @@ int main() {
         injected.push_back(e);
     }
     dwba.SetTransferSMatrix(injected);
+    fprintf(stderr, "[inject] S-matrix injected (%zu entries)\n", injected.size()); fflush(stderr);
 
     // Compute DCS via BETCAL/AMPCAL/XSECTN
+    fprintf(stderr, "[inject] calling ComputeDCS...\n"); fflush(stderr);
     dwba.ComputeDCS();
+    fprintf(stderr, "[inject] ComputeDCS done\n"); fflush(stderr);
 
     return 0;
 }

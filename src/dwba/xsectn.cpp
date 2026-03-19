@@ -15,6 +15,7 @@
 #include <tuple>
 
 void DWBA::XSectn() {
+  fprintf(stderr, "[XSectn] START\n"); fflush(stderr);
   // ============================================================
   // DWBA Cross Section — Ptolemy SFROMI (double 9-J) + BETCAL + AMPCAL + XSECTN
   //
@@ -168,6 +169,7 @@ void DWBA::XSectn() {
         }
       }
     }
+  fprintf(stderr, "[XSectn] SFROMI done, S_koffs size=%zu\n", S_koffs.size()); fflush(stderr);
   } // end SOSWT block
 
   // -----------------------------------------------
@@ -260,11 +262,6 @@ void DWBA::XSectn() {
 
       double TEMPS = FACTOR_BET * (2.0*Li + 1.0) * cg;
       BETAS[{JP_cons, Lx2, official_Mx, Lo}] += TEMPS * S_phased;
-      // DEBUG: print each BETA contribution
-      auto& bval = BETAS[{JP_cons, Lx2, official_Mx, Lo}];
-      fprintf(stderr, "BETA[JP=%d,Lx2=%d,Mx=%d,Lo=%d] += %.4e+%.4ei  (Li=%d,LDEL=%d,TEMPS=%.4e,|S|=%.4e)\n",
-              JP_cons, Lx2, official_Mx, Lo, TEMPS*S_phased.real(), TEMPS*S_phased.imag(),
-              Li, LDEL, TEMPS, std::abs(S_val));
     }
   }
 
@@ -279,52 +276,47 @@ void DWBA::XSectn() {
   //
   // PLM: Ptolemy PLMSUB uses Condon-Shortley phase convention.
   //   std::assoc_legendre(l, m, x) also includes (-1)^m — same convention.
+  fprintf(stderr, "[XSectn] BETCAL done, BETAS size=%zu\n", BETAS.size()); fflush(stderr);
   //   std::legendre(l, x) = P_l(x) for m=0 (no phase).
   //
   // dSigma/dOmega = 10 * sum_{JP_cons,Lx2,Mx} FMNEG(Mx) * |F(theta)|^2
   //   Factor 10 converts fm^2 -> mb (1 fm^2 = 10 mb).
   //   FMNEG = 1 for Mx=0; FMNEG = 2 for Mx>0 (time-reversal degeneracy).
   // -----------------------------------------------
+  // ── Pre-index BETAS by (JP_cons, Lx2, Mx) for O(N) angle loop ──
+  // koffs_map[{jp,lx2,mx}] = vector of {Lo, beta_val * sf(Lo,Mx)}
+  // sf is Lo/Mx-dependent but not angle-dependent → precompute here
+  using KoffsKey = std::tuple<int,int,int>;
+  std::map<KoffsKey, std::vector<std::pair<int, std::complex<double>>>> koffs_map;
+
+  for (auto &[k, b] : BETAS) {
+    auto [jp, lx2, mx, lo] = k;
+    if (lo < mx) continue;
+    double sf = 1.0;
+    for (int n = 1; n <= mx; n++) {
+      double denom = double(lo + n) * double(lo - n + 1);
+      if (denom <= 0.0) { sf = 0.0; break; }
+      sf /= std::sqrt(denom);
+    }
+    if (sf == 0.0 || !std::isfinite(sf)) continue;
+    koffs_map[{jp,lx2,mx}].emplace_back(lo, b * sf);
+  fprintf(stderr, "[XSectn] koffs_map precomputed, size=%zu\n", koffs_map.size()); fflush(stderr);
+  }
+
   std::cout << "\nAngle (deg)    dSigma/dOmega (mb/sr)\n";
 
   for (double theta_deg = AngleMin; theta_deg <= AngleMax + 1e-9; theta_deg += AngleStep) {
-    double theta_rad  = theta_deg * M_PI / 180.0;
-    double cos_theta  = std::cos(theta_rad);
+    double theta_rad = theta_deg * M_PI / 180.0;
+    double cos_theta = std::cos(theta_rad);
 
     double dSigma = 0.0;
 
-    // Collect unique (JP_cons, Lx2, Mx) KOFFS slots from BETAS
-    std::set<std::tuple<int,int,int>> koffs_set;
-    for (auto &[k, b] : BETAS) {
-      auto [jp, lx2, mx, lo] = k;
-      koffs_set.insert({jp, lx2, mx});
-    }
-
-    for (auto &[jp, lx2, mx] : koffs_set) {
+    for (auto &[key, entries] : koffs_map) {
+      auto [jp, lx2, mx] = key;
       double FMNEG = (mx == 0) ? 1.0 : 2.0;
 
       std::complex<double> F_amp(0.0, 0.0);
-
-      for (auto &[k2, b] : BETAS) {
-        auto [jp2, lx3, mx2, lo] = k2;
-        if (jp2 != jp || lx3 != lx2 || mx2 != mx) continue;
-        if (lo < mx) continue;  // guard against invalid PLM
-
-        // sf: sqrt_factorial correction (Ptolemy BETCAL second-pass / AMPCAL correction)
-        // sf = prod_{n=1}^{mx} 1 / sqrt( (lo+n)*(lo-n+1) )
-        double sf = 1.0;
-        for (int n = 1; n <= mx; n++) {
-          double denom = double(lo + n) * double(lo - n + 1);
-          if (denom <= 0.0) { sf = 0.0; break; }
-          sf /= std::sqrt(denom);
-        }
-        if (sf == 0.0) continue;
-
-        // Associated Legendre polynomial P_lo^mx(cos_theta)
-        // Ptolemy PLMSUB uses Condon-Shortley convention: includes (-1)^m factor
-        // (built into recursion: PRAY(I) = -(2*M+1)*ROOT*PRAY(J) at each M step).
-        // std::assoc_legendre also includes (-1)^m — matches Ptolemy exactly.
-        // std::legendre (m=0) has no phase — correct as-is.
+      for (auto &[lo, bsf] : entries) {
         double PLo_Mx;
         if (mx == 0) {
           PLo_Mx = std::legendre(lo, cos_theta);
@@ -333,14 +325,10 @@ void DWBA::XSectn() {
         } else {
           PLo_Mx = std::assoc_legendre(lo, mx, cos_theta);
         }
-
-        auto contrib = b * sf * PLo_Mx;
+        auto contrib = bsf * PLo_Mx;
         if (std::isfinite(contrib.real()) && std::isfinite(contrib.imag()))
           F_amp += contrib;
       }
-
-      // FMNEG * |F|^2 contribution; factor 10 converts fm^2 -> mb/sr
-      // Ptolemy XSECTN: CONTRI = (10*AJACOB)*(FR^2+FI^2)*FMNEG — NO spin average for reactions
       dSigma += 10.0 * FMNEG * std::norm(F_amp);
     }
 
