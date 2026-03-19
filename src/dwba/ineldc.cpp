@@ -150,8 +150,8 @@ void DWBA::InelDc() {
     double kappa_T = std::sqrt(2.0 * TgtBS_ch.mu * AMU_MEV * std::abs(TargetBS.BindingEnergy)) / HBARC;
     double A_tbs   = (TargetBS.Pot.A > 0) ? TargetBS.Pot.A : 0.65;
     TgtBS_ch.StepSize = std::min(1.0 / kappa_T, A_tbs) / STEPSPER;
-    fprintf(stderr, "TgtBS step: kappa=%.5f fm^-1, A=%.4f → h=%.5f fm\n",
-            kappa_T, A_tbs, TgtBS_ch.StepSize);
+    // fprintf(stderr, "TgtBS step: kappa=%.5f fm^-1, A=%.4f → h=%.5f fm\n",
+    //         kappa_T, A_tbs, TgtBS_ch.StepSize);
   }
   // WavSet will allocate NSteps and RGrid based on StepSize (≤0 uses default 0.1)
   WavSet(TgtBS_ch);
@@ -173,8 +173,8 @@ void DWBA::InelDc() {
     double kappa_P = std::sqrt(2.0 * PrjBS_ch.mu * AMU_MEV * std::abs(ProjectileBS.BindingEnergy)) / HBARC;
     double A_pbs   = (ProjectileBS.Pot.A > 0) ? ProjectileBS.Pot.A : 0.5;
     PrjBS_ch.StepSize = std::min(1.0 / kappa_P, A_pbs) / STEPSPER;
-    fprintf(stderr, "PrjBS step: kappa=%.5f fm^-1, A=%.4f → h=%.5f fm\n",
-            kappa_P, A_pbs, PrjBS_ch.StepSize);
+    // fprintf(stderr, "PrjBS step: kappa=%.5f fm^-1, A=%.4f → h=%.5f fm\n",
+    //         kappa_P, A_pbs, PrjBS_ch.StepSize);
   }
   WavSet(PrjBS_ch);
 
@@ -358,26 +358,7 @@ void DWBA::InelDc() {
   std::cout << "  IVPHI_T peak = " << IVPHI_T_max << " at r=" << r_T_vert_peak << " fm" << std::endl;
   std::cout << "  IVPHI_P peak = " << IVPHI_P_max << " at r=" << r_P_vert_peak << " fm" << std::endl;
 
-  // DIAGNOSTIC: print IVPHI_P and phi_P at sample rP values vs Fortran reference
-  {
-    double rP_vals[] = {0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0};
-    double fort_ref[] = {-174.148, 45.868, 17.487, 3.697, 0.844, 0.245, 0.090, 0.039};
-    fprintf(stderr, "\n# IVPHI_P comparison: C++ vs Fortran (Reid cubic+norm, V_Reid)\n");
-    fprintf(stderr, "# %6s  %14s  %14s  %8s  %14s\n",
-            "rP(fm)", "C++_IVPHI_P", "Fort_ref", "Ratio", "C++_phi_P");
-    for (int k = 0; k < 8; ++k) {
-      double rP = rP_vals[k];
-      int idx = (int)std::round(rP / h_common);
-      if (idx >= NSteps_common) continue;
-      double cpp_ivphi = IVPHI_P[idx];
-      double cpp_phi   = std::abs(PrjBS_ch.WaveFunction[idx].real());
-      double fort      = fort_ref[k];
-      double ratio     = (std::abs(fort) > 1e-8) ? cpp_ivphi / fort : 0.0;
-      fprintf(stderr, "  %6.2f  %14.5e  %14.5e  %8.4f  %14.5e\n",
-              rP, cpp_ivphi, fort, ratio, cpp_phi);
-    }
-    fprintf(stderr, "\n");
-  }
+
 
   // The "other" WF (non-vertex side): clipped separately
   auto findWFPeak = [&](const std::vector<std::complex<double>> &wf, int nsteps)
@@ -487,17 +468,7 @@ void DWBA::InelDc() {
         if (JPO < 1) continue;  // must be positive
         WavElj(Outgoing, Lo, JPO);
         chi_b_byJPO[JPO] = Outgoing.WaveFunction;
-        // Debug: print chi_b at a few radii
-        if (Li == 0 && Lo == 2) {
-          auto& wf = Outgoing.WaveFunction;
-          double h_s = Outgoing.StepSize;  // should be 0.1
-          printf("DEBUG chi_b: Lo=%d JPO=%d/2 Outgoing.StepSize=%.4f NSteps=%d\n",
-                 Lo, JPO, h_s, Outgoing.NSteps);
-          printf("  at r=2.0fm: (%.6f,%.6f)\n",  wf[(int)(2.0/h_s)].real(), wf[(int)(2.0/h_s)].imag());
-          printf("  at r=4.0fm: (%.6f,%.6f)\n",  wf[(int)(4.0/h_s)].real(), wf[(int)(4.0/h_s)].imag());
-          printf("  at r=6.0fm: (%.6f,%.6f)\n",  wf[(int)(6.0/h_s)].real(), wf[(int)(6.0/h_s)].imag());
-          printf("  Incoming.StepSize=%.4f (h_interp in lambda)\n", Incoming.StepSize);
-        }
+
       }
       
       // For each allowed Lx, compute the radial integral — separate per (JPI, JPO)
@@ -1380,6 +1351,15 @@ loop300:
             // so H_smhvl is numerically large and smooth → good for spline).
             H_smhvl[IU] = H_real * RIOEX;
 
+#ifdef DEBUG_INTEGRAND
+            // Dump H-grid for key element, first IV slice only
+            if (Li == 0 && Lo == 2 && Lx == 2 && JPI == 2 && JPO == 3 && IV == 0) {
+              fprintf(stderr, "HGRD IU=%3d  U=%7.4f  ra=%7.4f rb=%7.4f  "
+                      "H_real=%11.4e  RIOEX=%11.4e  H_smhvl=%11.4e\n",
+                      IU, U, ra, rb, H_real, RIOEX, H_smhvl[IU]);
+            }
+#endif
+
           }
           // ── End H-computation IU loop (Ptolemy DO 549) ─────────────────────
 
@@ -1428,8 +1408,31 @@ loop300:
 
             auto contrib = ca * cb_conj * H_smivl[IU] * TERM;
             Integral += contrib;
+
+#ifdef DEBUG_INTEGRAND
+            // Dump integrand for the single reference element (Li=0,Lo=2,Lx=2,JPI=2/2,JPO=3/2)
+            if (Li == 0 && Lo == 2 && Lx == 2 && JPI == 2 && JPO == 3) {
+              fprintf(stderr, "INTG IV=%3d IU=%3d  ra=%7.4f rb=%7.4f  "
+                      "H=%11.4e  TERM=%11.4e  "
+                      "ca=(%10.4e,%10.4e)  cb=(%10.4e,%10.4e)  "
+                      "contrib=(%11.4e,%11.4e)\n",
+                      IV, IU, ra, rb,
+                      H_smivl[IU], TERM,
+                      ca.real(), ca.imag(),
+                      cb_conj.real(), cb_conj.imag(),
+                      contrib.real(), contrib.imag());
+            }
+#endif
           }
           // ── End chi integration IU loop (Ptolemy DO 789) ───────────────────
+
+#ifdef DEBUG_INTEGRAND
+          // Running integral after each IV slice
+          if (Li == 0 && Lo == 2 && Lx == 2 && JPI == 2 && JPO == 3) {
+            fprintf(stderr, "INTG IV=%3d DONE  RunInteg=(%11.4e,%11.4e)\n",
+                    IV, Integral.real(), Integral.imag());
+          }
+#endif
         }
         // ── End IV loop (Ptolemy DO 859) ────────────────────────────────────────
 
@@ -1522,11 +1525,14 @@ loop300:
         auto S_pre9j = Integral * sfromi_norm;
         TransferSMatrix.push_back({Lx, Li, Lo, JPI, JPO, S_pre9j});
 
-        // Print pre-9J S-matrix (compare vs Ptolemy PRINT=2 "S-MATRIX BEFORE 9-J" table)
-        fprintf(stderr, "PRE9J Li=%2d JPI=%2d/2  Lo=%2d JPO=%2d/2  Lx=%d  "
-                "S=(%9.4e, %9.4e)  |S|=%9.4e\n",
-                Li, JPI, Lo, JPO, Lx,
-                S_pre9j.real(), S_pre9j.imag(), std::abs(S_pre9j));
+        // Print pre-9J S-matrix for key element only (enable with -DDEBUG_PRE9J)
+#ifdef DEBUG_PRE9J
+        if (Li == 0 && Lo == 2 && Lx == 2)
+          fprintf(stderr, "PRE9J Li=%2d JPI=%2d/2  Lo=%2d JPO=%2d/2  Lx=%d  "
+                  "S=(%9.4e, %9.4e)  |S|=%9.4e\n",
+                  Li, JPI, Lo, JPO, Lx,
+                  S_pre9j.real(), S_pre9j.imag(), std::abs(S_pre9j));
+#endif
 
         } // end JPO loop
         } // end JPI loop

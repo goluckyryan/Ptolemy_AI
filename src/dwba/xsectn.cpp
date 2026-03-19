@@ -15,7 +15,6 @@
 #include <tuple>
 
 void DWBA::XSectn() {
-  fprintf(stderr, "[XSectn] START\n"); fflush(stderr);
   // ============================================================
   // DWBA Cross Section — Ptolemy SFROMI (double 9-J) + BETCAL + AMPCAL + XSECTN
   //
@@ -107,16 +106,12 @@ void DWBA::XSectn() {
       S_koffs[{JBP, LxMax_bs, Lo, Li}] += elem.S;
     }
   } else {
-    fprintf(stderr, "[XSectn] SOSWT branch, TransferSMatrix size=%zu\n", TransferSMatrix.size()); fflush(stderr);
-    int dbg_count = 0;
     for (const auto &elem : TransferSMatrix) {
       int Lx  = elem.Lx;
       int Li  = elem.Li;
       int Lo  = elem.Lo;
       int JPI = elem.JPI;   // 2*J_incoming (already J-split in InelDc)
       int JPO = elem.JPO;   // 2*J_outgoing
-      if (++dbg_count <= 3 || dbg_count % 100 == 0)
-        fprintf(stderr, "  [SFROMI] elem %d: Li=%d JPI=%d Lo=%d JPO=%d Lx=%d\n", dbg_count, Li, JPI, Lo, JPO, Lx); fflush(stderr);
 
       // Parity filter: (Li + Lo + Lx) must be even
       if ((Li + Lo + Lx) % 2 != 0) continue;
@@ -173,7 +168,6 @@ void DWBA::XSectn() {
         }
       }
     }
-  fprintf(stderr, "[XSectn] SFROMI done, S_koffs size=%zu\n", S_koffs.size()); fflush(stderr);
   } // end SOSWT block
 
   // -----------------------------------------------
@@ -280,7 +274,6 @@ void DWBA::XSectn() {
   //
   // PLM: Ptolemy PLMSUB uses Condon-Shortley phase convention.
   //   std::assoc_legendre(l, m, x) also includes (-1)^m — same convention.
-  fprintf(stderr, "[XSectn] BETCAL done, BETAS size=%zu\n", BETAS.size()); fflush(stderr);
   //   std::legendre(l, x) = P_l(x) for m=0 (no phase).
   //
   // dSigma/dOmega = 10 * sum_{JP_cons,Lx2,Mx} FMNEG(Mx) * |F(theta)|^2
@@ -304,7 +297,6 @@ void DWBA::XSectn() {
     }
     if (sf == 0.0 || !std::isfinite(sf)) continue;
     koffs_map[{jp,lx2,mx}].emplace_back(lo, b * sf);
-  fprintf(stderr, "[XSectn] koffs_map precomputed, size=%zu\n", koffs_map.size()); fflush(stderr);
   }
 
   std::cout << "\nAngle (deg)    dSigma/dOmega (mb/sr)\n";
