@@ -262,7 +262,7 @@ void DWBA::InelDc() {
   // -------------------------------------------------------
   // Partial wave loops
   // -------------------------------------------------------
-  int Lmax = 15;  // Increased; Lmax=20 needed for full accuracy
+  int Lmax = 40;  // Match Ptolemy lmax=40
 
   TransferSMatrix.clear();
 

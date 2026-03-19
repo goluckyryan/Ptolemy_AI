@@ -61,6 +61,12 @@ public:
   DWBA();
   ~DWBA();
 
+  // Transfer S-matrix element (public so injection tests can use it)
+  struct TransferSMatrixElement {
+    int Lx, Li, Lo, JPI, JPO;
+    std::complex<double> S;
+  };
+
   // Configuration
   void SetReaction(const std::string &target, const std::string &projectile,
                    const std::string &ejectile, const std::string &recoil);
@@ -122,14 +128,6 @@ private:
   std::vector<double> ThetaWeights;
 
   // Transfer S-matrix elements (indexed by La)
-  struct TransferSMatrixElement {
-    int Lx;
-    int Li;
-    int Lo;
-    int JPI;  // 2*J_incoming (doubled)
-    int JPO;  // 2*J_outgoing (doubled)
-    std::complex<double> S;
-  };
   std::vector<TransferSMatrixElement> TransferSMatrix;
 
   // Projectile WF table (optional: loaded from Ptolemy-output file)
@@ -168,6 +166,8 @@ public:
   }
   // Public accessor for transfer S-matrix (before 9-J coupling)
   const std::vector<TransferSMatrixElement>& GetTransferSMatrix() const { return TransferSMatrix; }
+  void SetTransferSMatrix(const std::vector<TransferSMatrixElement>& smat) { TransferSMatrix = smat; }
+  void ComputeDCS();  // Run BETCAL/AMPCAL/XSECTN on existing TransferSMatrix
   void Integrate(const Channel &ch, int L,
                  std::vector<std::complex<double>> &wf);
 

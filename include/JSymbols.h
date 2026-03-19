@@ -14,6 +14,11 @@ double CGcoeff(double J, double m, double J1, double m1, double J2, double m2){
   // (J1,m1) + (J2, m2) = (J, m)
  
   if( m != m1 + m2 ) return 0;
+
+  // Check |m| <= J, |m1| <= J1, |m2| <= J2 (prevents factorial of negative number → NaN)
+  if( m < -J || m > J ) return 0;
+  if( m1 < -J1 || m1 > J1 ) return 0;
+  if( m2 < -J2 || m2 > J2 ) return 0;
  
   double Jmin = abs(J1 - J2);
   double Jmax = J1+J2;

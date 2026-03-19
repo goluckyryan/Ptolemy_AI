@@ -77,7 +77,7 @@ static void CubMap(int maptyp, double xlo, double xmid, double xhi, double gamma
 DWBA::DWBA() {
   AngleMin = 0.0;
   AngleMax = 180.0;
-  AngleStep = 1.0;
+  AngleStep = 0.5;
   Ex = 0.0;
 
   // Initialize Bound States with safe defaults
@@ -366,4 +366,10 @@ void DWBA::PrintParameters() {
   std::cout
       << "================================================================="
       << std::endl;
+}
+
+// ComputeDCS: run BETCAL/AMPCAL/XSECTN on an externally-set TransferSMatrix
+// Call after SetupChannels() and SetTransferSMatrix()
+void DWBA::ComputeDCS() {
+  XSectn();
 }

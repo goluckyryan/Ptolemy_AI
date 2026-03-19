@@ -238,10 +238,13 @@ void DWBA::XSectn() {
     // divide by i: (re + i*im) / i = im - i*re
     std::complex<double> S_phased(S_eiph.imag(), -S_eiph.real());
 
-    // BETCAL Mx_loop range: [max(0, Lx2+LDEL), Lx2]
-    int MXZ_loop = Lx2 + LDEL;
+    // BETCAL Mx_loop range: Fortran MXZ = MOD(Lx + Li - Lo, 2) → start Mx at 0 or 1
+    // C++ was wrong: used Lx2 + LDEL which overflows for Lo > Li
+    // Correct: MXZ = (Lx + Li - Lo) % 2  (always 0 or 1)
+    int MXZ_loop = (Lx2 + Li - Lo) % 2;  // same as MOD(LX+LI-LO, 2) in Fortran
+    if (MXZ_loop < 0) MXZ_loop += 2;     // ensure non-negative
 
-    for (int Mx_loop = std::max(0, MXZ_loop); Mx_loop <= Lx2; Mx_loop++) {
+    for (int Mx_loop = MXZ_loop; Mx_loop <= Lx2; Mx_loop++) {
       if (Lo < Mx_loop) continue;  // CG vanishes: m cannot exceed L
 
       // official_Mx = Mx_loop (see Ptolemy AMPCAL line ~389 derivation in header)
