@@ -1595,11 +1595,10 @@ loop300:
 
         // Print pre-9J S-matrix for key element only (enable with -DDEBUG_PRE9J)
 #ifdef DEBUG_PRE9J
-        if (Li == 0 && Lo == 2 && Lx == 2)
-          fprintf(stderr, "PRE9J Li=%2d JPI=%2d/2  Lo=%2d JPO=%2d/2  Lx=%d  "
-                  "S=(%9.4e, %9.4e)  |S|=%9.4e\n",
-                  Li, JPI, Lo, JPO, Lx,
-                  S_pre9j.real(), S_pre9j.imag(), std::abs(S_pre9j));
+        fprintf(stderr, "PRE9J Li=%2d JPI=%2d/2  Lo=%2d JPO=%2d/2  Lx=%d  "
+                "S=(%9.4e, %9.4e)  |S|=%9.4e\n",
+                Li, JPI, Lo, JPO, Lx,
+                S_pre9j.real(), S_pre9j.imag(), std::abs(S_pre9j));
 #endif
 
         } // end JPO loop
