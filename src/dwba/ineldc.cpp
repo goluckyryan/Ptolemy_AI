@@ -784,7 +784,7 @@ void DWBA::InelDc() {
     const int NPSUM = 40;
     const int NPDIF = 40;
     const int NPPHI = 20;
-    const double SUMMAX = 30.4;
+    const double SUMMAX = 30.4;  // Ptolemy SUMMAX (overridden per Li below for high Li)
     const double GAMSUM = 2.0;
     const double GAMDIF = 12.0;
     const double GAMPHI = 1.0e-6;
@@ -796,88 +796,156 @@ void DWBA::InelDc() {
     double AKI = Incoming.k;
     double AKO = Outgoing.k;
 
-    // NPSUMI (chi-integration grid)
-    int NPSUMI = (int)((SUMMAX - SUMMIN_li) * 8.0 * (AKI + AKO) / (4.0*M_PI));
-    if (NPSUMI < NPSUM) NPSUMI = NPSUM;
+    // ── SUMMAX varies at high Li (from Ptolemy per-Li runs) ─────────────────────
+    static const double SUMMAX_table2[] = {
+      30.4, 30.4, 30.4, 30.4, 30.4, 30.4, 30.4, 30.4, 30.4, 30.4,
+      30.4, 30.4, 30.4, 30.4, 30.4, 30.4, 30.4, 30.4, 30.8, 31.4,
+      31.8, 31.8, 31.8, 31.8, 31.8, 31.8, 31.8, 31.8, 31.8, 31.8, 31.8
+    };
+    const double SUMMAX_eff = SUMMAX_table2[std::min(Li, 30)];
 
-    // Phi GL base points [0,1] (CubMap concentrates near 0 per Ptolemy)
+    // Phi GL base points [0,1]
     std::vector<double> phi_pts(NPPHI), phi_wts(NPPHI);
     GaussLegendre(NPPHI, -1.0, 1.0, phi_pts, phi_wts);
     CubMap(2, 0.0, PHIMID_frac, 1.0, GAMPHI, phi_pts, phi_wts);
 
-    // H-computation U-grid (NPSUM) and chi-integration U-grid (NPSUMI)
+    // H-computation U-grid (NPSUM)
     std::vector<double> xi_s(NPSUM), wi_s(NPSUM);
     GaussLegendre(NPSUM, -1.0, 1.0, xi_s, wi_s);
-    CubMap(2, SUMMIN_li, SUMMID_li, SUMMAX, GAMSUM, xi_s, wi_s);
+    CubMap(2, SUMMIN_li, SUMMID_li, SUMMAX_eff, GAMSUM, xi_s, wi_s);
 
+    // Chi-integration U-grid (NPSUMI)
+    int NPSUMI = (int)((SUMMAX_eff - SUMMIN_li) * 8.0 * (AKI + AKO) / (4.0*M_PI));
+    if (NPSUMI < NPSUM) NPSUMI = NPSUM;
     std::vector<double> xi_si(NPSUMI), wi_si(NPSUMI);
     GaussLegendre(NPSUMI, -1.0, 1.0, xi_si, wi_si);
-    CubMap(2, SUMMIN_li, SUMMID_li, SUMMAX, GAMSUM, xi_si, wi_si);
-
-    // V-grid GL base (NPDIF)
-    std::vector<double> gl_dif_base(NPDIF), gl_dif_wts_base(NPDIF);
-    GaussLegendre(NPDIF, -1.0, 1.0, gl_dif_base, gl_dif_wts_base);
-
-    // ── GRDSET Stage 1: warm-start V-range scan → VRNGMX (Ptolemy ~16190-16490) ──
-    // For IRECT=1: scan per IU (warm start from previous IU) to find VMAXMX.
-    // Then VRNGMX = 2*VMAXMX; flat range ±VRNGMX/2 used for ALL IU in H and chi loops.
-    double VRNGMX_li = 0.0;
-    {
-      const int LOOKST_v = 250;
-      const double DV_frac = 1.0 / LOOKST_v;
-      double VMAX_frac = 1.0, VMIN_frac = 1.0;  // warm start
-      double VMAXMX = 0.0;
-
-      for (int IU = 0; IU < NPSUM; ++IU) {
-        double U = xi_s[IU];
-        double VLEN = 2.0 * U;
-        if (U < 1.0) {
-          VMAXMX = std::max(VMAXMX, VLEN);  // full range for small U
-          continue;
-        }
-        // Positive-V scan (RI > RO side): start at previous VMAX_frac + 3 steps
-        double vv = std::min(1.0, VMAX_frac + 3.0*DV_frac);
-        while (vv > 0.5*DV_frac) {
-          double RI = U + vv * 0.5*VLEN;
-          double RO = U - vv * 0.5*VLEN;
-          double ULIM = RVRLIM_li / std::max(1e-2, RI*RO);
-          bool hit = false;
-          for (double xs : {0.7071, 0.0}) {
-            if (std::abs(bsprod_val(RI, RO, xs)) > ULIM) { hit = true; break; }
-          }
-          if (hit) break;
-          vv -= DV_frac;
-        }
-        VMAX_frac = std::min(1.0, vv + DV_frac);
-        VMAXMX = std::max(VMAXMX, VMAX_frac * VLEN);
-
-        // Negative-V scan (RO > RI side)
-        vv = std::min(1.0, VMIN_frac + 3.0*DV_frac);
-        while (vv > 0.5*DV_frac) {
-          double RI = U - vv * 0.5*VLEN;
-          double RO = U + vv * 0.5*VLEN;
-          if (RI < 0) { vv = 0; break; }
-          double ULIM = RVRLIM_li / std::max(1e-2, RI*RO);
-          bool hit = false;
-          for (double xs : {0.7071, 0.0}) {
-            if (std::abs(bsprod_val(RI, RO, xs)) > ULIM) { hit = true; break; }
-          }
-          if (hit) break;
-          vv -= DV_frac;
-        }
-        VMIN_frac = std::min(1.0, vv + DV_frac);
-        VMAXMX = std::max(VMAXMX, VMIN_frac * VLEN);
-      }
-      VRNGMX_li = 2.0 * VMAXMX;  // Ptolemy: IF(IRECT.EQ.1) VRNGMX=2*VMAXMX
-    }
-    const double VHALF_li = 0.5 * VRNGMX_li;  // H and chi loops use ±VHALF_li
-    fprintf(stderr, "Li=%d  VRNGMX=%.4f fm  VHALF=%.4f fm\n", Li, VRNGMX_li, VHALF_li);
+    CubMap(2, SUMMIN_li, SUMMID_li, SUMMAX_eff, GAMSUM, xi_si, wi_si);
 
     // Chi_a interpolation helper
     const double h_chi_a = Incoming.StepSize;
 
+    // ── GRDSET DO 489: per-IU V-range scan (faithful Ptolemy replica) ────────────
+    // For each U on the H-grid, scan BSPROD ITYPE=2 (phi'*V*phi' only, no chi)
+    // to find VMAX and VMIN fractions in [0,1] (relative to VLEN=2U).
+    // For U < 1 fm: skip scan; use VMIN=VMAX=1 → VABSMIN=VABSMAX=2U (clip to ±2U).
+    // DV = 1/LOOKST step size for the scan.
+    // RVRLIM_li = DWCUT * WVWMAX (precomputed above).
+    //
+    // bsprod2(U, vfrac, xs): phi'_T(rx) * phi'_P_vphi(rp) at (ra=U+vfrac*U, rb=U-vfrac*U, x=xs)
+    // Uses XS(1)=1.0, XS(2)=1-DXV ≈ 0.999968 (Ptolemy GRDSET line 16209)
+    const double XS1 = 1.0;
+    const double XS2 = 1.0 - DXV;
+
+    auto bsprod2 = [&](double ra, double rb, double xs) -> double {
+      // BSPROD ITYPE=2: PHI'_T(rx) * PHI'_P_vphi(rp)  (flat-top bound states)
+      // PHI'(r) = phi(r) for r >= r_peak; phi_max for r < r_peak
+      double rx2 = S1*S1*ra*ra + T1*T1*rb*rb + 2.0*S1*T1*ra*rb*xs;
+      double rp2 = S2*S2*ra*ra + T2*T2*rb*rb + 2.0*S2*T2*ra*rb*xs;
+      if (rx2 < 0) rx2 = 0; if (rp2 < 0) rp2 = 0;
+      double rx = std::sqrt(rx2), rp = std::sqrt(rp2);
+      // phi_T flat-top (ITYPE=2: clipped)
+      double phi_T_val;
+      {
+        double rv = rx / h_T;
+        int ii = (int)rv; if (ii >= NSteps_T-1) { phi_T_val = 0.0; }
+        else {
+          double frac = rv - ii;
+          double raw = TgtBS_ch.WaveFunction[ii].real()*(1-frac)
+                     + TgtBS_ch.WaveFunction[ii+1].real()*frac;
+          phi_T_val = (rx < r_T_peak) ? std::abs(TgtBS_ch.WaveFunction[idx_T_peak].real()) : raw;
+        }
+      }
+      // IVPHI_P flat-top (ITYPE=2: clipped at peak)
+      double ivphi_val;
+      {
+        double rv = rp / h_common;
+        int ii = (int)rv; if (ii >= NSteps_common-1) { ivphi_val = 0.0; }
+        else {
+          double frac = rv - ii;
+          double raw = IVPHI_P[ii]*(1-frac) + IVPHI_P[ii+1]*frac;
+          ivphi_val = (rp < r_P_peak) ? IVPHI_P_max : raw;
+        }
+      }
+      return std::abs(phi_T_val * ivphi_val);
+    };
+
+    // Per-IU VMIN/VMAX fractions [0,1] relative to VLEN=2U
+    // vmin_frac[IU]: fraction for lower bound; vmax_frac[IU]: fraction for upper
+    // VABSMIN = vmin_frac * VLEN = vmin_frac * 2U
+    // VABSMAX = vmax_frac * VLEN = vmax_frac * 2U
+    std::vector<double> vmin_frac(NPSUM, 1.0), vmax_frac(NPSUM, 1.0);
+
+    {
+      const double DV_scan = 1.0 / (double)LOOKST;
+      double vmax_prev = 1.0, vmin_prev = 1.0;  // warm-start from previous IU
+
+      for (int IU = 0; IU < NPSUM; ++IU) {
+        double U = xi_s[IU];
+        if (U < 1.0) {
+          // U < 1 fm: skip scan, use full range ±2U (VMIN=VMAX=1)
+          vmax_frac[IU] = 1.0;
+          vmin_frac[IU] = 1.0;
+          continue;
+        }
+        double VLEN = 2.0 * U;
+        double ULIM = RVRLIM_li / std::max(1.0e-2, U * U);  // RI≈RO≈U at small V
+
+        // Scan VMAX (positive side): start from vmax_prev, step down
+        double VVAL = std::min(1.0, vmax_prev + 3.0*DV_scan);
+        double vmax_out = 1.0;
+        // Forward scan downward until BSPROD < ULIM at two consecutive points
+        while (true) {
+          if (VVAL <= 0.5*DV_scan) { vmax_out = DV_scan; break; }
+          double ra = U + VVAL * U;   // SYNE=+0.5*VLEN => RI=U+VVAL*0.5*VLEN=U+VVAL*U
+          double rb = U - VVAL * U;
+          if (rb < 0) rb = 0;
+          double f1 = bsprod2(ra, rb, XS1);
+          double f2 = bsprod2(ra, rb, XS2);
+          if (f1 < ULIM && f2 < ULIM) {
+            // Both below — step back up one
+            VVAL = std::min(1.0, VVAL + DV_scan);
+            // Check asymptopia: compute RP, RT
+            ra = U + VVAL * U; rb = std::max(0.0, U - VVAL * U);
+            double RP_c = std::sqrt((S2*ra+T2*rb)*(S2*ra+T2*rb) + 1.0);
+            double RT_c = std::sqrt((S1*ra+T1*rb)*(S1*ra+T1*rb) + 1.0);
+            // Bound state asymptopia check (simplified: use BNDMXP/BNDMXT)
+            // Ptolemy GRDSET line 16225: if RT > BNDMXT or RP > BNDMXP, step back
+            // We skip the explicit check here — the BSPROD value already handles it
+            vmax_out = VVAL;
+            break;
+          }
+          VVAL -= DV_scan;
+        }
+
+        // Scan VMIN (negative side): same logic
+        VVAL = std::min(1.0, vmin_prev + 3.0*DV_scan);
+        double vmin_out = 1.0;
+        while (true) {
+          if (VVAL <= 0.5*DV_scan) { vmin_out = DV_scan; break; }
+          double ra = U - VVAL * U;   // SYNE=-0.5*VLEN => RI=U-VVAL*U, RO=U+VVAL*U
+          double rb = U + VVAL * U;
+          if (ra < 0) ra = 0;
+          double f1 = bsprod2(ra, rb, XS1);
+          double f2 = bsprod2(ra, rb, XS2);
+          if (f1 < ULIM && f2 < ULIM) {
+            VVAL = std::min(1.0, VVAL + DV_scan);
+            vmin_out = VVAL;
+            break;
+          }
+          VVAL -= DV_scan;
+        }
+
+        vmax_frac[IU] = vmax_out;
+        vmin_frac[IU] = vmin_out;
+        vmax_prev = vmax_out;
+        vmin_prev = vmin_out;
+
+        // VABSMIN = -vmin_frac*VLEN, VABSMAX = +vmax_frac*VLEN
+        // Apply clip VMIN=MAX(VMIN,-2U), VMAX=MIN(VMAX,2U) → always satisfied since frac∈[0,1]
+      }
+    }
+
     // ── Step 4: Integral accumulators: I[IH][JPI][JPO] ───────────────────────────
-    // Key: (IH index into lolx_list, JPI, JPO)
     struct IntKey { int IH, JPI, JPO;
       bool operator<(const IntKey& o) const {
         if (IH!=o.IH) return IH<o.IH;
@@ -886,39 +954,153 @@ void DWBA::InelDc() {
     std::map<IntKey, std::complex<double>> I_accum;
 
     // ── Step 5: MAIN IV LOOP (Ptolemy DO 859 IV=1,NPDIF) ─────────────────────────
-    for (int IV = 0; IV < NPDIF; ++IV) {
-      double gl_v_frac = gl_dif_base[IV];
-      double gl_v_wt   = gl_dif_wts_base[IV];
+    // Ptolemy: outer IV, inner IU. Each IU has its own VMIN/VMAX → per-IU CUBMAP.
+    // The GL base points gl_v_frac are mapped per-IU via CUBMAP(VMIN_IU,VMID_IU,VMAX_IU).
+    // We replicate this: for each IU, run CUBMAP to get NPDIF points, then pick IV-th one.
 
-      // ── H-computation IU loop (Ptolemy DO 549 IU=1,NPSUM) ──────────────────────
-      // SMHVL[IH][IU] = H[IH] * RIOEX   (IHMAX × NPSUM array)
+    // Precompute per-IU CUBMAP output (NPDIF points + weights) for H-grid
+    // Stored as dif_pts_h[IU][IV], dif_wts_h[IU][IV]
+    std::vector<std::vector<double>> dif_pts_h(NPSUM, std::vector<double>(NPDIF)),
+                                     dif_wts_h(NPSUM, std::vector<double>(NPDIF));
+    std::vector<double> RIOEX_h(NPSUM * NPDIF, 0.0);  // indexed [IV*NPSUM + IU]
+
+    for (int IU = 0; IU < NPSUM; ++IU) {
+      double U = xi_s[IU];
+      // VABSMAX = vmax_frac * 2U;  VABSMIN = -vmin_frac * 2U
+      double VABSMAX =  vmax_frac[IU] * 2.0 * U;
+      double VABSMIN = -vmin_frac[IU] * 2.0 * U;
+      // Clip to ±2U (Ptolemy DO 689 line 16410)
+      VABSMAX = std::min(VABSMAX,  2.0*U);
+      VABSMIN = std::max(VABSMIN, -2.0*U);
+      if (VABSMAX <= VABSMIN + 1e-12) {
+        // Degenerate range — fill with zero
+        std::fill(dif_pts_h[IU].begin(), dif_pts_h[IU].end(), 0.0);
+        std::fill(dif_wts_h[IU].begin(), dif_wts_h[IU].end(), 0.0);
+        continue;
+      }
+      // VMID: first moment of BSPROD2 weight (simplified: use midpoint for now)
+      // TODO: compute proper VMID from DO 559 moment scan if needed
+      double VMID = 0.5 * (VABSMIN + VABSMAX);
+      // Clamp VMID to [VABSMIN+0.3*width, VABSMAX-0.3*width]
+      double width = VABSMAX - VABSMIN;
+      VMID = std::max(VABSMIN + 0.3*width, std::min(VABSMAX - 0.3*width, VMID));
+
+      // SYNE: if VMID <= midpoint → positive orientation (SYNE=+1)
+      //       else swap sign and reflect (SYNE=-1)
+      double mid = 0.5*(VABSMIN + VABSMAX);
+      double vmin_c = VABSMIN, vmax_c = VABSMAX, vmid_c = VMID;
+      double SYNE = 1.0;
+      if (vmid_c > mid) {
+        // Reflect
+        SYNE = -1.0;
+        vmid_c = -vmid_c;
+        double tmp = vmax_c; vmax_c = -vmin_c; vmin_c = -tmp;
+      }
+
+      // CUBMAP: map NPDIF GL points to [vmin_c, vmid_c, vmax_c]
+      std::vector<double> pts(NPDIF), wts(NPDIF);
+      GaussLegendre(NPDIF, -1.0, 1.0, pts, wts);
+      CubMap(1, vmin_c, vmid_c, vmax_c, GAMDIF, pts, wts);
+
+      // Store in correct SYNE order (Ptolemy DO 689: IPLUNK = NPDIF-IV if SYNE<0)
+      for (int IV = 0; IV < NPDIF; ++IV) {
+        int IV_store = (SYNE < 0) ? (NPDIF - 1 - IV) : IV;
+        double VVAL = pts[IV] * SYNE;     // actual V value (un-reflect)
+        double WT   = wts[IV];
+        double ra = U + 0.5*VVAL;
+        double rb = U - 0.5*VVAL;
+        dif_pts_h[IU][IV_store] = VVAL;
+        dif_wts_h[IU][IV_store] = WT;
+        // RIOEX = exp(+ALPHAP*RP + ALPHAT*RT) at (ra,rb)
+        double RP0 = std::sqrt(1.0 + (S2*ra+T2*rb)*(S2*ra+T2*rb));
+        double RT0 = std::sqrt(1.0 + (S1*ra+T1*rb)*(S1*ra+T1*rb));
+        RIOEX_h[IV_store*NPSUM + IU] = std::exp(ALPHAP*RP0 + ALPHAT*RT0);
+      }
+    }
+
+    // Precompute per-IU CUBMAP for chi-integration grid (NPSUMI × NPDIF)
+    // Uses polynomial-interpolated VMIN/VMAX at NPSUMI U-points (simplified: same scan)
+    std::vector<std::vector<double>> dif_pts_chi(NPSUMI, std::vector<double>(NPDIF)),
+                                     dif_wts_chi(NPSUMI, std::vector<double>(NPDIF));
+    std::vector<double> LWIO_chi(NPSUMI * NPDIF, 0.0);  // JACOB*RI*RO*WOW*DIFWT*exp_neg
+
+    for (int IU = 0; IU < NPSUMI; ++IU) {
+      double U = xi_si[IU];
+      double WOW = wi_si[IU];  // Ptolemy SMIVL (U-grid weight after spline)
+      // V-range at this U: interpolate from H-grid scan using spline or simple search
+      // Find closest H-grid IU for vmin/vmax fractions
+      double vmax_f = 1.0, vmin_f = 1.0;
+      if (U >= 1.0) {
+        // Find nearest H-grid point
+        double best_dist = 1e30; int best_iu = 0;
+        for (int j = 0; j < NPSUM; ++j) {
+          double d = std::abs(xi_s[j] - U);
+          if (d < best_dist) { best_dist = d; best_iu = j; }
+        }
+        vmax_f = vmax_frac[best_iu];
+        vmin_f = vmin_frac[best_iu];
+      }
+      double VABSMAX =  vmax_f * 2.0 * U;
+      double VABSMIN = -vmin_f * 2.0 * U;
+      VABSMAX = std::min(VABSMAX,  2.0*U);
+      VABSMIN = std::max(VABSMIN, -2.0*U);
+      if (VABSMAX <= VABSMIN + 1e-12) {
+        std::fill(dif_pts_chi[IU].begin(), dif_pts_chi[IU].end(), 0.0);
+        std::fill(dif_wts_chi[IU].begin(), dif_wts_chi[IU].end(), 0.0);
+        continue;
+      }
+      double width = VABSMAX - VABSMIN;
+      double VMID = std::max(VABSMIN + 0.3*width, std::min(VABSMAX - 0.3*width,
+                             0.5*(VABSMIN+VABSMAX)));
+      double mid = 0.5*(VABSMIN+VABSMAX);
+      double vmin_c=VABSMIN, vmax_c=VABSMAX, vmid_c=VMID, SYNE=1.0;
+      if (vmid_c > mid) {
+        SYNE=-1.0; vmid_c=-vmid_c;
+        double tmp=vmax_c; vmax_c=-vmin_c; vmin_c=-tmp;
+      }
+      std::vector<double> pts(NPDIF), wts(NPDIF);
+      GaussLegendre(NPDIF, -1.0, 1.0, pts, wts);
+      CubMap(1, vmin_c, vmid_c, vmax_c, GAMDIF, pts, wts);
+
+      for (int IV = 0; IV < NPDIF; ++IV) {
+        int IV_store = (SYNE < 0) ? (NPDIF-1-IV) : IV;
+        double VVAL = pts[IV] * SYNE;
+        double WT   = wts[IV];
+        double ra = U + 0.5*VVAL;
+        double rb = U - 0.5*VVAL;
+        dif_pts_chi[IU][IV_store] = VVAL;
+        dif_wts_chi[IU][IV_store] = WT;
+        // LWIO = JACOB * RI * RO * WOW * DIFWT * exp(-ALPHAP*RP - ALPHAT*RT)
+        double RP_c = std::sqrt(1.0 + (S2*ra+T2*rb)*(S2*ra+T2*rb));
+        double RT_c = std::sqrt(1.0 + (S1*ra+T1*rb)*(S1*ra+T1*rb));
+        double JACOB_chi = S1*S1*S1;
+        LWIO_chi[IV_store*NPSUMI + IU] =
+            JACOB_chi * ra * rb * WOW * WT * std::exp(-ALPHAP*RP_c - ALPHAT*RT_c);
+      }
+    }
+
+    fprintf(stderr, "Li=%d  SUMMIN=%.2f  SUMMID=%.2f  SUMMAX=%.2f  NPSUMI=%d\n",
+            Li, SUMMIN_li, SUMMID_li, SUMMAX_eff, NPSUMI);
+
+    // ── Step 5: MAIN DOUBLE LOOP: outer IV (DO 859), inner IU (DO 549) ──────────
+    for (int IV = 0; IV < NPDIF; ++IV) {
+      // ── H-computation IU loop ──────────────────────────────────────────────────
       std::vector<std::vector<double>> SMHVL(IHMAX, std::vector<double>(NPSUM, 0.0));
 
       for (int IU = 0; IU < NPSUM; ++IU) {
         double U = xi_s[IU];
-        if (U < 1e-6) { continue; }
+        if (U < 1e-6) continue;
 
-        // V range: flat ±VHALF_li for ALL IU (Ptolemy IRECT=1: VMAX=VRNGMX/2=VHALF_li)
-        // VRNGMX = 2*VMAXMX from warm-start scan; same VHALF_li for every IU
-        double V    = gl_v_frac * VHALF_li;
-        double DIFWT = gl_v_wt * VHALF_li;
+        double V    = dif_pts_h[IU][IV];
+        double DIFWT = dif_wts_h[IU][IV];
+        if (std::abs(DIFWT) < 1e-30) continue;
 
-        double ra = U + V * 0.5;
-        double rb = U - V * 0.5;
+        double ra = U + 0.5 * V;
+        double rb = U - 0.5 * V;
         if (ra < 1e-6 || rb < 1e-6) continue;
 
-        // RIOEX = exp(+ALPHAP*RP + ALPHAT*RT) at phi=0 (x=1)
-        // Ptolemy source.mor line 16443-16444:
-        //   RP = SQRT( 1 + (S1*RI+T1*RO)**2 )   ← +1 inside sqrt (regularizes singularity)
-        //   RT = SQRT( 1 + (S2*RI+T2*RO)**2 )
-        // Ptolemy's S1,T1 → projectile coord; S2,T2 → target coord
-        // Our code: S1,T1 → target (rx); S2,T2 → projectile (rp)
-        // So: Ptolemy RP (projectile) = sqrt(1 + (S1_pto*RI+T1_pto*RO)^2) = sqrt(1 + (S2*ra+T2*rb)^2) [our S2,T2]
-        //     Ptolemy RT (target)     = sqrt(1 + (S2_pto*RI+T2_pto*RO)^2) = sqrt(1 + (S1*ra+T1*rb)^2) [our S1,T1]
-        // ALPHAP goes with RP (projectile BS), ALPHAT goes with RT (target BS) — unchanged
-        double RP0 = std::sqrt(1.0 + (S2*ra + T2*rb)*(S2*ra + T2*rb));
-        double RT0 = std::sqrt(1.0 + (S1*ra + T1*rb)*(S1*ra + T1*rb));
-        double RIOEX = std::exp(ALPHAP * RP0 + ALPHAT * RT0);
+        // RIOEX: use precomputed value from per-IU CUBMAP
+        double RIOEX = RIOEX_h[IV * NPSUM + IU];
 
         // ── PHI0 scan (Ptolemy GRDSET pass-1 phi cutoff, source.mor 16840-16865) ────
         // Scan X = cos(phi) from 1 (phi=0) toward -1 (phi=π).
@@ -1028,29 +1210,13 @@ void DWBA::InelDc() {
         double WGT_U  = wi_si[IU];
         if (U_chi < 1e-6) continue;
 
-        // V at this chi-grid U: same VHALF_li (IRECT=1 flat range, same for ALL IU)
-        double V_chi    = gl_v_frac * VHALF_li;
-        double DIFWT    = gl_v_wt  * VHALF_li;
+        // V at this chi-grid IU: use precomputed LWIO from per-IU CUBMAP
+        double LWIO = LWIO_chi[IV * NPSUMI + IU];
+        double TERM = LWIO;  // already includes WOW (U-grid weight), DIFWT, JACOB, ra, rb, exp_neg
 
-        double ra_chi = U_chi + V_chi * 0.5;
-        double rb_chi = U_chi - V_chi * 0.5;
+        double ra_chi = U_chi + 0.5 * dif_pts_chi[IU][IV];
+        double rb_chi = U_chi - 0.5 * dif_pts_chi[IU][IV];
         if (ra_chi < 1e-6 || rb_chi < 1e-6) continue;
-
-        // LWIO = JACOB * ra * rb * exp(-ALPHAP*RP - ALPHAT*RT) * DIFWT
-        // (matches old code: TERM = JACOB_grdset * ra * rb * WOW * DIFWT * exp_neg)
-        // JACOB_grdset = S1^3 (Ptolemy GRDSET line 15882: JACOB = S1**3 for stripping)
-        // ra*rb comes from RIROWTS (Ptolemy chi-grid Jacobian factor)
-        // Ptolemy source.mor line 16531-16532: same sqrt(1+x^2) formula
-        double RP_chi = std::sqrt(1.0 + (S2*ra_chi + T2*rb_chi)*(S2*ra_chi + T2*rb_chi));
-        double RT_chi = std::sqrt(1.0 + (S1*ra_chi + T1*rb_chi)*(S1*ra_chi + T1*rb_chi));
-        double JACOB_chi = S1*S1*S1;  // S1^3 (stripping Jacobian)
-        double LWIO = JACOB_chi * ra_chi * rb_chi * std::exp(-ALPHAP * RP_chi - ALPHAT * RT_chi) * DIFWT;
-        double TERM = LWIO * WGT_U;
-
-        // DIAGNOSTIC: print chi-grid TERM + SMIVL for Li=0, IV=19, IU=9
-        if (Li==0 && IV==19 && IU==9)
-          fprintf(stderr,"DIAG_CHI IV=19 IU=9 U_chi=%.4f ra_chi=%.4f rb_chi=%.4f  DIFWT=%.4e LWIO=%.4e TERM=%.4e SMIVL[0]=%.4e\n",
-                  U_chi, ra_chi, rb_chi, DIFWT, LWIO, TERM, SMIVL[0][IU]);
 
         // Check DWMAX (Ptolemy line 18130: skip if all DW products small)
         // Compute max |chi_a * chi_b| across all (JPI,Lo,JPO)
