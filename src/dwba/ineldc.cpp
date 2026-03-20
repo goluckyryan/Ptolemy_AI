@@ -1018,7 +1018,18 @@ void DWBA::InelDc() {
         // VMIN is scanned separately with SYNE<0 (RI=U-VVAL*U, RO=U+VVAL*U).
         // Both are carried between U iterations (warm start from previous VMAX/VMIN).
         std::vector<double> VMAX_per_U(NPSUM), VMIN_per_U(NPSUM), VMID_per_U(NPSUM);
+        // FAITHFUL: use full symmetric V range ±2U for all U (Ptolemy base before LSQPOL trim)
+        // LSQPOL scan is a performance shortcut; faithful version always uses ±VLEN = ±2U.
         {
+          for (int IU = 0; IU < NPSUM; ++IU) {
+            double U = xi_s[IU];
+            double VLEN = 2.0 * U;
+            VMAX_per_U[IU] =  VLEN;
+            VMIN_per_U[IU] = -VLEN;
+            VMID_per_U[IU] =  0.0;
+          }
+        }
+        if (false) {  // disabled: old LSQPOL V-scan (keep for reference)
           const int LOOKST_v = 100;
           const double DV = 1.0 / LOOKST_v;  // fraction step
           double VMAX_frac = 1.0, VMIN_frac = 1.0;  // carried between U iters
@@ -1026,7 +1037,6 @@ void DWBA::InelDc() {
             double U = xi_s[IU];
             double VLEN = 2.0 * U;
             if (U < 1.0) {
-              // For small U, Ptolemy skips scan and uses full range
               VMAX_per_U[IU] = VLEN;
               VMIN_per_U[IU] = -VLEN;
               VMID_per_U[IU] = 0.0;
@@ -1109,7 +1119,7 @@ void DWBA::InelDc() {
                       IU, U, vmn, vm, vmx, VLEN);
 #endif
           }
-        }
+        }  // end if(false) — disabled LSQPOL scan
 
         // ── GRDSET Stage 3: LSQPOL polynomial fit + evaluate at NPSUMI chi-grid ──
         // Ptolemy source: source.mor lines 16344-16590
@@ -1230,29 +1240,13 @@ void DWBA::InelDc() {
 
         // For NPSUMI chi-grid: evaluate polynomial or copy (when NPLYSW)
         bool NPLYSW = (NPSUMI == NPSUM);
+        // FAITHFUL: NPSUMI V-grid also uses flat ±2U (no LSQPOL polynomial)
         std::vector<double> VMAX_per_U_i(NPSUMI), VMIN_per_U_i(NPSUMI), VMID_per_U_i(NPSUMI);
         for (int IU = 0; IU < NPSUMI; ++IU) {
             double U = xi_si[IU];
-            double vmn, vmd, vmx;
-            if (NPLYSW) {
-                vmn = VMIN_per_U[IU];
-                vmx = VMAX_per_U[IU];
-                vmd = VMID_per_U[IU];
-            } else {
-                // Horner at xi_si[IU], VMID still fractional from poly
-                vmn = eval_poly_lsq(0, U);
-                double vmidf = eval_poly_lsq(1, U);
-                vmx = eval_poly_lsq(2, U);
-                vmd = (vmx - vmn) * vmidf + vmn;   // convert frac → abs
-            }
-            // Clamp (Fortran lines 16520-16528 and 16720-16728)
-            vmx = std::min(vmx,  2.0*U);
-            vmn = std::max(vmn, -2.0*U);
-            double tmp30 = 0.3*(vmx - vmn);
-            vmd = std::min(std::max(vmd, vmn + tmp30), vmx - tmp30);
-            VMAX_per_U_i[IU] = vmx;
-            VMIN_per_U_i[IU] = vmn;
-            VMID_per_U_i[IU] = vmd;
+            VMAX_per_U_i[IU] =  2.0 * U;
+            VMIN_per_U_i[IU] = -2.0 * U;
+            VMID_per_U_i[IU] =  0.0;
         }
 
         // Base GL points for V (NPDIF), will be CubMapped per (IV,IU) inside loops
