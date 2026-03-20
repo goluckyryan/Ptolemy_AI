@@ -818,6 +818,167 @@ void DWBA::InelDc() {
     std::vector<double> gl_dif_base(NPDIF), gl_dif_wts_base(NPDIF);
     GaussLegendre(NPDIF, -1.0, 1.0, gl_dif_base, gl_dif_wts_base);
 
+    // ── GRDSET Stage 1+2: per-U VMIN/VMAX/VMID scan (Ptolemy source.mor ~16190-16280) ─
+    // Scan bsprod(ra,rb,phi) to find the V-range where integrand is non-negligible.
+    // Two reference phi points for the scan (from GRDSET XS array, phi≈45° and phi≈90°):
+    const double XS_phi[2] = {0.7071, 0.0};  // cos(45°), cos(90°)
+
+    auto compute_vrange = [&](const std::vector<double>& xi_u,
+                               std::vector<double>& VMIN_u, std::vector<double>& VMAX_u,
+                               std::vector<double>& VMID_u) {
+      int NU = (int)xi_u.size();
+      VMIN_u.resize(NU); VMAX_u.resize(NU); VMID_u.resize(NU);
+      const int LOOKST_v = 100;
+      const double DV = 1.0 / LOOKST_v;
+      double VMAX_frac = 1.0, VMIN_frac = 1.0;
+      for (int IU = 0; IU < NU; ++IU) {
+        double U = xi_u[IU];
+        double VLEN = 2.0 * U;
+        if (U < 1.0) {
+          VMAX_u[IU] = VLEN; VMIN_u[IU] = -VLEN; VMID_u[IU] = 0.0; continue;
+        }
+        // Positive V scan (ra = U*(1+v), rb = U*(1-v))
+        double vval = std::min(1.0, VMAX_frac + 3.0*DV);
+        vval = std::min(1.0, vval + 3.0*DV);
+        while (vval > 0.5*DV) {
+          double ra = U*(1.0+vval), rb = U*(1.0-vval);
+          double ULIM = RVRLIM_li / std::max(1e-2, ra*rb);
+          bool hit = false;
+          for (int k = 0; k < 2; ++k) {
+            if (std::abs(bsprod_val(ra,rb,XS_phi[k])) > ULIM) { hit=true; break; }
+          }
+          if (hit) { vval = std::min(1.0, vval+DV); break; }
+          vval -= DV;
+        }
+        VMAX_frac = std::max(0.0, vval);
+        VMAX_u[IU] = VMAX_frac * VLEN;
+        // Negative V scan (ra = U*(1-v), rb = U*(1+v))
+        vval = std::min(1.0, VMIN_frac + 3.0*DV);
+        vval = std::min(1.0, vval + 3.0*DV);
+        while (vval > 0.5*DV) {
+          double ra = U*(1.0-vval), rb = U*(1.0+vval);
+          if (ra < 0) { vval=0; break; }
+          double ULIM = RVRLIM_li / std::max(1e-2, std::abs(ra*rb));
+          bool hit = false;
+          for (int k = 0; k < 2; ++k) {
+            if (std::abs(bsprod_val(ra,rb,XS_phi[k])) > ULIM) { hit=true; break; }
+          }
+          if (hit) { vval = std::min(1.0, vval+DV); break; }
+          vval -= DV;
+        }
+        VMIN_frac = std::max(0.0, vval);
+        VMIN_u[IU] = -VMIN_frac * VLEN;
+        // Stage 2: VMID = V of max |bsprod|
+        double vmn = VMIN_u[IU], vmx = VMAX_u[IU];
+        int IMAX2 = 2*NPDIF;
+        double dv2 = (vmx-vmn)/(IMAX2+1), vv2=vmn, pvpmax=0.0, vofmax=0.5*(vmn+vmx);
+        for (int IV2=1; IV2<=IMAX2; ++IV2) {
+          vv2 += dv2;
+          double ra=U+0.5*vv2, rb=U-0.5*vv2;
+          double temp=0;
+          for (int k=0; k<2; ++k) temp += std::abs(bsprod_val(ra,rb,XS_phi[k]));
+          if (temp>pvpmax) { pvpmax=temp; vofmax=vv2; }
+        }
+        double vm = vofmax;
+        double tmp30 = 0.3*(vmx-vmn);
+        vm = std::min(std::max(vm, vmn+tmp30), vmx-tmp30);
+        VMID_u[IU] = vm;
+      }
+    };
+
+    // LSQPOL: degree-3 polynomial fit to VMIN/VMID_frac/VMAX vs U (Ptolemy GRDSET stage 3)
+    auto lsqpol_fit = [&](const std::vector<double>& xi_u,
+                           std::vector<double>& VMIN_u, std::vector<double>& VMAX_u,
+                           std::vector<double>& VMID_u) {
+      int NU = (int)xi_u.size();
+      const int M = 4;  // degree-3 polynomial: 4 coefficients
+      // Build VMID as fraction (VMID-VMIN)/(VMAX-VMIN)
+      std::vector<double> VMID_frac(NU);
+      for (int i=0; i<NU; ++i) {
+        double rng = VMAX_u[i]-VMIN_u[i];
+        VMID_frac[i] = (rng>1e-12) ? (VMID_u[i]-VMIN_u[i])/rng : 0.5;
+      }
+      // Weights = 1/(VMAX-VMIN)^2
+      std::vector<double> W(NU);
+      for (int i=0; i<NU; ++i) {
+        double rng=VMAX_u[i]-VMIN_u[i]; W[i]=(rng>1e-12)?1.0/(rng*rng):0.0;
+      }
+      // Scale X to [-1,1]
+      double Xmax=0;
+      for (int i=0; i<NU; ++i) Xmax=std::max(Xmax,std::abs(xi_u[i]));
+      if (Xmax<1e-15) Xmax=1.0;
+      std::vector<double> Xs(NU);
+      for (int i=0; i<NU; ++i) Xs[i]=xi_u[i]/Xmax;
+      // Build normal equations A[M×M] and B[M×3]
+      std::vector<double> xpow(4*M+2, 0.0);
+      for (int k=0; k<NU; ++k) {
+        double t=W[k];
+        for (int kk=M; kk<=3*M-2; ++kk) { xpow[kk]+=t; t*=Xs[k]; }
+      }
+      std::vector<std::vector<double>> A(M, std::vector<double>(M,0.0));
+      for (int i=0; i<M; ++i) for (int j=0; j<M; ++j) A[i][j]=xpow[i+j+M];
+      const double* Ycols[3] = {VMIN_u.data(), VMID_frac.data(), VMAX_u.data()};
+      std::vector<std::vector<double>> B(M, std::vector<double>(3,0.0));
+      for (int j=0; j<3; ++j) {
+        for (int kk=3*M; kk<=4*M-1; ++kk) xpow[kk]=0.0;
+        for (int k=0; k<NU; ++k) {
+          double t=W[k]*Ycols[j][k];
+          for (int kk=3*M; kk<=4*M-1; ++kk) { xpow[kk]+=t; t*=Xs[k]; }
+        }
+        for (int i=0; i<M; ++i) B[i][j]=xpow[3*M+i];
+      }
+      // Gaussian elimination with partial pivoting
+      std::vector<double> pivot(M,0.0); std::vector<int> idx(M,0);
+      for (int I=0; I<M; ++I) {
+        double amax=0; int irow=0,icol=0;
+        for (int j=0; j<M; ++j) { if (pivot[j]!=0) continue;
+          for (int k=0; k<M; ++k) { if (pivot[k]!=0) continue;
+            if (std::abs(A[j][k])>=amax) { amax=std::abs(A[j][k]); irow=j; icol=k; } } }
+        idx[I]=irow*4096+icol; pivot[icol]=amax;
+        if (irow!=icol) { std::swap(A[irow],A[icol]); for (int j=0; j<3; ++j) std::swap(B[irow][j],B[icol][j]); }
+        double pv=A[icol][icol]; A[icol][icol]=1.0;
+        for (int k=0; k<M; ++k) A[icol][k]/=pv;
+        for (int j=0; j<3; ++j) B[icol][j]/=pv;
+        for (int j=0; j<M; ++j) { if (j==icol) continue;
+          double T=A[j][icol]; A[j][icol]=0.0;
+          for (int k=0; k<M; ++k) A[j][k]-=A[icol][k]*T;
+          for (int k=0; k<3; ++k) B[j][k]-=B[icol][k]*T; }
+      }
+      for (int I1=M-1; I1>=0; --I1) {
+        int K=idx[I1]/4096, IC=idx[I1]%4096;
+        if (K!=IC) for (int j=0; j<M; ++j) std::swap(A[j][K],A[j][IC]); }
+      // Un-scale coefficients (Fortran DO I2=2,M; DO I=I2,M: B[I][j] *= XSCALE)
+      double Xsc=1.0/Xmax;
+      for (int j=0; j<3; ++j) for (int i2=1; i2<M; ++i2) for (int i=i2; i<M; ++i) B[i][j]*=Xsc;
+      // Evaluate polynomial at each xi_u[IU] and replace VMIN/VMAX/VMID
+      auto eval = [&](int j, double x) {
+        double p=0; for (int i2=0; i2<M; ++i2) p=x*p+B[M-1-i2][j]; return p;
+      };
+      for (int IU=0; IU<NU; ++IU) {
+        double U=xi_u[IU];
+        VMIN_u[IU]=eval(0,U);
+        double vmf=eval(1,U);
+        VMAX_u[IU]=eval(2,U);
+        // Clamp
+        VMAX_u[IU]=std::min(VMAX_u[IU], 2.0*U);
+        VMIN_u[IU]=std::max(VMIN_u[IU],-2.0*U);
+        double tmp30=0.3*(VMAX_u[IU]-VMIN_u[IU]);
+        double vm=(VMAX_u[IU]-VMIN_u[IU])*vmf+VMIN_u[IU];
+        vm=std::min(std::max(vm,VMIN_u[IU]+tmp30),VMAX_u[IU]-tmp30);
+        VMID_u[IU]=vm;
+      }
+    };
+
+    // Compute per-U V-range on NPSUM H-grid and NPSUMI chi-grid
+    std::vector<double> VMIN_s(NPSUM), VMAX_s(NPSUM), VMID_s(NPSUM);
+    std::vector<double> VMIN_si(NPSUMI), VMAX_si(NPSUMI), VMID_si(NPSUMI);
+    compute_vrange(xi_s,  VMIN_s,  VMAX_s,  VMID_s);
+    lsqpol_fit(xi_s, VMIN_s, VMAX_s, VMID_s);  // replace with poly values on NPSUM grid
+    // Evaluate same polynomial on NPSUMI chi-grid:
+    // Re-scan on xi_si directly (simpler than re-evaluating polynomial)
+    compute_vrange(xi_si, VMIN_si, VMAX_si, VMID_si);
+    lsqpol_fit(xi_si, VMIN_si, VMAX_si, VMID_si);
+
     // Chi_a interpolation helper
     const double h_chi_a = Incoming.StepSize;
 
@@ -843,14 +1004,13 @@ void DWBA::InelDc() {
         double U = xi_s[IU];
         if (U < 1e-6) { continue; }
 
-        // V range: flat ±2U (symmetric, Ptolemy IRECT=1 before LSQPOL trim)
-        double VLEN = 2.0 * U;
-        double V    = gl_v_frac * VLEN;
-        double DIFWT = gl_v_wt * VLEN;
-
-        double ra = U + V * 0.5;
-        double rb = U - V * 0.5;
-        if (ra < 1e-6 || rb < 1e-6) continue;
+        // V at this H-grid U: CubMap(1, VMIN, VMID, VMAX, GAMDIF) — Ptolemy MAPDIF=1
+        std::vector<double> vv_h(1, gl_v_frac), vw_h(1, gl_v_wt);
+        CubMap(1, VMIN_s[IU], VMID_s[IU], VMAX_s[IU], GAMDIF, vv_h, vw_h);
+        double ra = U + vv_h[0] * 0.5;
+        double rb = U - vv_h[0] * 0.5;
+        if (ra < 1e-6 || rb < 1e-6) { continue; }
+        {  // scope block to match old structure
 
         // RIOEX = exp(+ALPHAP*RP + ALPHAT*RT) at phi=0 (x=1)
         double RP0 = std::sqrt(std::max(0.0, (S2*ra + T2*rb)*(S2*ra + T2*rb)));
@@ -927,6 +1087,7 @@ void DWBA::InelDc() {
           fprintf(stderr,"DIAG_H IU=%2d U=%.4f ra=%.4f rb=%.4f  HINT[0]=%.4e RIOEX=%.4e SMHVL[0]=%.4e\n",
                   IU, U, ra, rb, HINT[0], RIOEX, SMHVL[0][IU]);
 
+        }  // end scope block (ra/rb CubMap scope)
       }  // End H-computation IU loop (Ptolemy DO 549)
 
       // ── SPLNCB + INTRPC: spline SMHVL[IH][NPSUM] → SMIVL[IH][NPSUMI] ──────────
@@ -965,10 +1126,11 @@ void DWBA::InelDc() {
         double WGT_U  = wi_si[IU];
         if (U_chi < 1e-6) continue;
 
-        // V at this chi-grid U: same IV fraction, recomputed at U_chi
-        double VLEN_chi = 2.0 * U_chi;
-        double V_chi    = gl_v_frac * VLEN_chi;
-        double DIFWT    = gl_v_wt * VLEN_chi;
+        // V at this chi-grid U: CubMap with per-U VMIN/VMID/VMAX (same as H-grid)
+        std::vector<double> vv_chi(1, gl_v_frac), vw_chi(1, gl_v_wt);
+        CubMap(1, VMIN_si[IU], VMID_si[IU], VMAX_si[IU], GAMDIF, vv_chi, vw_chi);
+        double V_chi  = vv_chi[0];
+        double DIFWT  = vw_chi[0];
 
         double ra_chi = U_chi + V_chi * 0.5;
         double rb_chi = U_chi - V_chi * 0.5;
