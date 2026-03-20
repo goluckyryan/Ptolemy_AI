@@ -974,10 +974,14 @@ void DWBA::InelDc() {
         double rb_chi = U_chi - V_chi * 0.5;
         if (ra_chi < 1e-6 || rb_chi < 1e-6) continue;
 
-        // LWIO = exp(-ALPHAP*RP - ALPHAT*RT) * DIFWT (cancels RIOEX in SMIVL)
+        // LWIO = JACOB * ra * rb * exp(-ALPHAP*RP - ALPHAT*RT) * DIFWT
+        // (matches old code: TERM = JACOB_grdset * ra * rb * WOW * DIFWT * exp_neg)
+        // JACOB_grdset = S1^3 (Ptolemy GRDSET line 15882: JACOB = S1**3 for stripping)
+        // ra*rb comes from RIROWTS (Ptolemy chi-grid Jacobian factor)
         double RP_chi = std::sqrt(std::max(0.0, (S2*ra_chi + T2*rb_chi)*(S2*ra_chi + T2*rb_chi)));
         double RT_chi = std::sqrt(std::max(0.0, (S1*ra_chi + T1*rb_chi)*(S1*ra_chi + T1*rb_chi)));
-        double LWIO = std::exp(-ALPHAP * RP_chi - ALPHAT * RT_chi) * DIFWT;
+        double JACOB_chi = S1*S1*S1;  // S1^3 (stripping Jacobian)
+        double LWIO = JACOB_chi * ra_chi * rb_chi * std::exp(-ALPHAP * RP_chi - ALPHAT * RT_chi) * DIFWT;
         double TERM = LWIO * WGT_U;
 
         // DIAGNOSTIC: print chi-grid TERM + SMIVL for Li=0, IV=19, IU=9
