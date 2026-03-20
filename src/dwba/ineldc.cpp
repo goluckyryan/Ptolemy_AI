@@ -853,8 +853,16 @@ void DWBA::InelDc() {
         if (ra < 1e-6 || rb < 1e-6) continue;
 
         // RIOEX = exp(+ALPHAP*RP + ALPHAT*RT) at phi=0 (x=1)
-        double RP0 = std::sqrt(std::max(0.0, (S2*ra + T2*rb)*(S2*ra + T2*rb)));
-        double RT0 = std::sqrt(std::max(0.0, (S1*ra + T1*rb)*(S1*ra + T1*rb)));
+        // Ptolemy source.mor line 16443-16444:
+        //   RP = SQRT( 1 + (S1*RI+T1*RO)**2 )   ← +1 inside sqrt (regularizes singularity)
+        //   RT = SQRT( 1 + (S2*RI+T2*RO)**2 )
+        // Ptolemy's S1,T1 → projectile coord; S2,T2 → target coord
+        // Our code: S1,T1 → target (rx); S2,T2 → projectile (rp)
+        // So: Ptolemy RP (projectile) = sqrt(1 + (S1_pto*RI+T1_pto*RO)^2) = sqrt(1 + (S2*ra+T2*rb)^2) [our S2,T2]
+        //     Ptolemy RT (target)     = sqrt(1 + (S2_pto*RI+T2_pto*RO)^2) = sqrt(1 + (S1*ra+T1*rb)^2) [our S1,T1]
+        // ALPHAP goes with RP (projectile BS), ALPHAT goes with RT (target BS) — unchanged
+        double RP0 = std::sqrt(1.0 + (S2*ra + T2*rb)*(S2*ra + T2*rb));
+        double RT0 = std::sqrt(1.0 + (S1*ra + T1*rb)*(S1*ra + T1*rb));
         double RIOEX = std::exp(ALPHAP * RP0 + ALPHAT * RT0);
 
         // ── PHI0 scan (Ptolemy GRDSET pass-1 phi cutoff, source.mor 16840-16865) ────
@@ -978,8 +986,9 @@ void DWBA::InelDc() {
         // (matches old code: TERM = JACOB_grdset * ra * rb * WOW * DIFWT * exp_neg)
         // JACOB_grdset = S1^3 (Ptolemy GRDSET line 15882: JACOB = S1**3 for stripping)
         // ra*rb comes from RIROWTS (Ptolemy chi-grid Jacobian factor)
-        double RP_chi = std::sqrt(std::max(0.0, (S2*ra_chi + T2*rb_chi)*(S2*ra_chi + T2*rb_chi)));
-        double RT_chi = std::sqrt(std::max(0.0, (S1*ra_chi + T1*rb_chi)*(S1*ra_chi + T1*rb_chi)));
+        // Ptolemy source.mor line 16531-16532: same sqrt(1+x^2) formula
+        double RP_chi = std::sqrt(1.0 + (S2*ra_chi + T2*rb_chi)*(S2*ra_chi + T2*rb_chi));
+        double RT_chi = std::sqrt(1.0 + (S1*ra_chi + T1*rb_chi)*(S1*ra_chi + T1*rb_chi));
         double JACOB_chi = S1*S1*S1;  // S1^3 (stripping Jacobian)
         double LWIO = JACOB_chi * ra_chi * rb_chi * std::exp(-ALPHAP * RP_chi - ALPHAT * RT_chi) * DIFWT;
         double TERM = LWIO * WGT_U;
