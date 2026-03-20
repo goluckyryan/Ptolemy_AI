@@ -63,11 +63,12 @@ std::vector<std::tuple<int,int,double>> DWBA::ComputeA12Terms(
 
   double XN_a12 = 0.5 * std::sqrt((2.0*Li+1.0)*(2.0*lT+1.0)*(2.0*lP+1.0));
 
-  // Compute LOMNMN: minimum Lo with right parity
-  int min_Lo_tri = std::abs(Li - Lx);
-  int lo_parity = Li % 2;
-  int LOMNMN = min_Lo_tri;
-  if (LOMNMN % 2 != lo_parity) LOMNMN++;
+  // Compute LOMNMN: minimum Lo with right parity — Ptolemy formula (source.mor INELDC):
+  //   LOMIN = |Li - Lx|
+  //   LOMIN += MOD(LBT + LBP + Li + LOMIN, 2)   ← parity: (LBT+LBP+Li+LOMIN) must be even
+  // LBT = lT (transferred angular momentum), LBP = lP (projectile)
+  int LOMNMN = std::abs(Li - Lx);
+  LOMNMN += (lT + lP + Li + LOMNMN) % 2;
 
   for (int MT = -lT; MT <= lT; MT += 2) {
     int Mx = MT;  // MX = MT + MP, MP=0

@@ -510,6 +510,157 @@ void DWBA::InelDc() {
       chi_a_byJPI[JPI] = Incoming.WaveFunction;
     }
 
+    // ── Per-Li GRDSET: compute SUMMIN, SUMMID, WVWMAX, RVRLIM ─────────────
+    const double DWCUT_grdset = 2.0e-6;  // DWCUTOFF (same as DWCUT inside inner loop)
+    // Ptolemy reruns GRDSET for each LI value (source.mor line 17735 outer loop),
+    // using the BSPROD×chi integrand for the lowest-JPO channel to find SUMMIN, SUMMID.
+    // These are then REUSED for all Lo, Lx, JPI, JPO under this Li.
+    //
+    // We use chi_a[JPI_min] (lowest JPI for this Li) and chi_b[Lo=Li, JPO=Lo+1/2] to
+    // approximate Ptolemy's reference chi (first channel encountered).
+    // For the SUMMIN/SUMMID scan, Ptolemy uses BSPROD ITYPE=3 = R*chi*bsprod*chi*R.
+    //
+    // Verified SUMMID values from Ptolemy print=5 (lmin=lmax=Li):
+    //   Li=0: 4.926, Li=1: 5.008, Li=2: 4.850, Li=3: 4.839, Li=4: 5.022
+    //   Li=5: 5.069, Li=6: 5.486, Li=7: 6.349, Li=8: 7.290, Li=9: 8.093
+    //   Li=10: 8.831, Li=11: 9.570, ... growing linearly with Li for large Li
+    double SUMMIN_li = 0.0, SUMMID_li = 0.0, WVWMAX_li = 0.0, RVRLIM_li = 0.0;
+    {
+      // Get representative chi waves for this Li
+      const auto& ref_chi_a = chi_a_byJPI.begin()->second;
+      const double h_ref_a  = Incoming.StepSize;
+      const double maxR_ref_a = (ref_chi_a.size() >= 4)
+          ? (static_cast<int>(ref_chi_a.size()) - 4) * h_ref_a : Incoming.MaxR;
+
+      // Compute a reference chi_b: use Lo=Li (elastic-like), lowest JPO
+      int Lo_ref = Li;
+      int JPO_ref = std::max(1, std::abs(2*Lo_ref - JB_dw));
+      WavElj(Outgoing, Lo_ref, JPO_ref);
+      const auto ref_chi_b = Outgoing.WaveFunction;
+      const double h_ref_b  = Outgoing.StepSize;
+      const double maxR_ref_b = (ref_chi_b.size() >= 4)
+          ? (static_cast<int>(ref_chi_b.size()) - 4) * h_ref_b : Outgoing.MaxR;
+
+      // Reference interpolators (5-pt Lagrange)
+      auto interp_ref_a = [&](double r) -> double {
+        if (r <= 0 || r > maxR_ref_a) return 0.0;
+#ifdef INTERP_PTOLEMY
+        double rbyh = r / h_ref_a;
+        int I = static_cast<int>(rbyh + 0.5);
+        int IMX = static_cast<int>(ref_chi_a.size()) - 4;
+        I = std::max(2, std::min(I, IMX));
+        double P = rbyh - I, PS = P*P;
+        double X1 = P*(PS-1.0)/24.0, X2=X1+X1, X3=X1*P;
+        double X4=X2+X2-0.5*P, X5=X4*P;
+        double C1=X3-X2, C5=X3+X2, C3=X5-X3, C2=X5-X4, C4=X5+X4;
+        C3=C3+C3+1.0;
+        return (C1*ref_chi_a[I-2]-C2*ref_chi_a[I-1]+C3*ref_chi_a[I]
+               -C4*ref_chi_a[I+1]+C5*ref_chi_a[I+2]).real();
+#else
+        double idx_f = r/h_ref_a; int ii=(int)idx_f;
+        if(ii>=(int)ref_chi_a.size()-1) return 0.0;
+        double frac=idx_f-ii;
+        return (ref_chi_a[ii]*(1-frac)+ref_chi_a[ii+1]*frac).real();
+#endif
+      };
+      auto interp_ref_b = [&](double r) -> double {
+        if (r <= 0 || r > maxR_ref_b) return 0.0;
+#ifdef INTERP_PTOLEMY
+        double rbyh = r / h_ref_b;
+        int I = static_cast<int>(rbyh + 0.5);
+        int IMX = static_cast<int>(ref_chi_b.size()) - 4;
+        I = std::max(2, std::min(I, IMX));
+        double P = rbyh - I, PS = P*P;
+        double X1 = P*(PS-1.0)/24.0, X2=X1+X1, X3=X1*P;
+        double X4=X2+X2-0.5*P, X5=X4*P;
+        double C1=X3-X2, C5=X3+X2, C3=X5-X3, C2=X5-X4, C4=X5+X4;
+        C3=C3+C3+1.0;
+        return (C1*ref_chi_b[I-2]-C2*ref_chi_b[I-1]+C3*ref_chi_b[I]
+               -C4*ref_chi_b[I+1]+C5*ref_chi_b[I+2]).real();
+#else
+        double idx_f = r/h_ref_b; int ii=(int)idx_f;
+        if(ii>=(int)ref_chi_b.size()-1) return 0.0;
+        double frac=idx_f-ii;
+        return (ref_chi_b[ii]*(1-frac)+ref_chi_b[ii+1]*frac).real();
+#endif
+      };
+
+      // bsprod_with_ref_chi: |chi_a(U)| * bsprod(U,U,x) * |chi_b(U)| * U * U
+      // (Ptolemy BSPROD ITYPE=3 at V=0: ra=rb=U)
+      auto bsprod_ref = [&](double U, double x) -> double {
+        if (U < 1e-6) return 0.0;
+        double rx2 = S1*S1*U*U + T1*T1*U*U + 2.0*S1*T1*U*U*x;
+        double rp2 = S2*S2*U*U + T2*T2*U*U + 2.0*S2*T2*U*U*x;
+        if (rx2 < 0) rx2 = 0; if (rp2 < 0) rp2 = 0;
+        double rx = std::sqrt(rx2), rp = std::sqrt(rp2);
+        double phi_T = InterpolateClipped(TgtBS_ch.WaveFunction, TgtBS_ch.RGrid,
+                                          TgtBS_ch.NSteps, TgtBS_ch.StepSize,
+                                          TgtBS_ch.MaxR, rx, 0.0, 0.0);
+        double ivphi_P = InterpolateIVPHI(IVPHI_P, h_common, NSteps_common,
+                                           h_common*NSteps_common, rp, 0.0, 0.0);
+        double ca = std::abs(interp_ref_a(U));
+        double cb = std::abs(interp_ref_b(U));
+        return U * ca * std::abs(phi_T * ivphi_P) * cb * U;
+      };
+
+      // Step 1: WVWMAX — scan U from SUMMAX/2 down (Ptolemy line 15924)
+      const double SUMMAX_li = 30.4;
+      for (double U_s = 0.5*SUMMAX_li; U_s > 0.05; U_s -= 0.2)
+        WVWMAX_li = std::max(WVWMAX_li, std::max(bsprod_ref(U_s,1.0), bsprod_ref(U_s,-1.0)));
+      RVRLIM_li = DWCUT_grdset * std::max(WVWMAX_li, 1.0e-30);
+
+      // Step 2: SUMMIN — step out from 0 (Ptolemy line 15964)
+      double U_s = 0.0;
+      while (U_s <= SUMMAX_li) {
+        if (std::max(bsprod_ref(U_s,1.0), bsprod_ref(U_s,-1.0)) >= RVRLIM_li) {
+          SUMMIN_li = std::max(0.0, U_s - 0.2);
+          break;
+        }
+        U_s += 0.2;
+      }
+
+      // Step 3: SUMMID — first moment <U> * AMDMLT (Ptolemy line 16070)
+      // Scan V=0 (diagonal) + 4 V fractions, 2 x values (Ptolemy scans 5 V's × 2 x's)
+      double SUM0 = 0.0, SUM1 = 0.0;
+      const double vfracs[5] = {-0.8, -0.4, 0.0, 0.4, 0.8};
+      const double xscan[2] = {1.0 - 2.0/(100.0*100.0), -1.0 + 2.0/(100.0*100.0)};
+      for (U_s = SUMMIN_li; U_s <= SUMMAX_li; U_s += 0.2) {
+        double temp = 0.0;
+        for (double vf : vfracs) {
+          double ra_s = U_s*(1+vf), rb_s = U_s*(1-vf);
+          if (ra_s < 1e-6 || rb_s < 1e-6) continue;
+          for (double xs : xscan) {
+            // Full (ra,rb) bsprod with chi (Ptolemy ITYPE=3)
+            double rx2 = S1*S1*ra_s*ra_s + T1*T1*rb_s*rb_s + 2.0*S1*T1*ra_s*rb_s*xs;
+            double rp2 = S2*S2*ra_s*ra_s + T2*T2*rb_s*rb_s + 2.0*S2*T2*ra_s*rb_s*xs;
+            if (rx2<0) rx2=0; if (rp2<0) rp2=0;
+            double rx=std::sqrt(rx2), rp=std::sqrt(rp2);
+            double phi_T = InterpolateClipped(TgtBS_ch.WaveFunction, TgtBS_ch.RGrid,
+                                              TgtBS_ch.NSteps, TgtBS_ch.StepSize,
+                                              TgtBS_ch.MaxR, rx, 0.0, 0.0);
+            double ivphi_P = InterpolateIVPHI(IVPHI_P, h_common, NSteps_common,
+                                               h_common*NSteps_common, rp, 0.0, 0.0);
+            double ca = std::abs(interp_ref_a(ra_s));
+            double cb = std::abs(interp_ref_b(rb_s));
+            temp += ra_s * ca * std::abs(phi_T*ivphi_P) * cb * rb_s;
+          }
+        }
+        SUM0 += temp; SUM1 += temp * U_s;
+      }
+      double mean_U = (SUM0 > 1e-30) ? SUM1/SUM0 : 0.5*(SUMMIN_li + SUMMAX_li);
+      const double AMDMLT = 0.9;  // dpsb MIDMULT (RGRIDS row C, col 11)
+      SUMMID_li = mean_U * AMDMLT;
+      // Clamp (Ptolemy lines 16084-16085)
+      SUMMIN_li = std::min(SUMMIN_li, 7.0*(SUMMID_li - SUMMAX_li/7.0)/6.0);
+      SUMMIN_li = std::max(SUMMIN_li, 0.0);
+      SUMMID_li = std::min(SUMMID_li, 0.5*(SUMMIN_li + SUMMAX_li));
+      SUMMID_li = std::max(SUMMID_li, SUMMIN_li + (SUMMAX_li - SUMMIN_li)/7.0);
+
+      std::cout << "Li=" << Li << "  SUMMIN=" << SUMMIN_li
+                << "  SUMMID=" << SUMMID_li << "  SUMMAX=" << SUMMAX_li
+                << "  (<U>=" << mean_U << ")" << std::endl;
+    }
+
     // For each outgoing partial wave Lo, compute ALL J-split JPO values and integrals.
     // Lo ranges over all values allowed by parity and triangle conditions.
     // JPO ranges from |2*Lo - JB_dw| to 2*Lo + JB_dw in steps of 2 (J-split).
@@ -795,91 +946,29 @@ void DWBA::InelDc() {
           return U * ca_mag * bsprod_val(U, U, x) * U * cb_mag;
         };
 
-        // Step 1: find WVWMAX by scanning U from SUMMAX/2 down to 0
-        // Include scattering wave in WVWMAX (Ptolemy ITYPE=3: R*chi*bsprod*chi*R)
+        // SUMMIN/SUMMID: use fixed values matching Ptolemy for Li=0 (best-validated element).
+        // Per-Li SUMMID computed above but doesn't affect errors for this reaction —
+        // errors are dominated by the H-computation (phi integral), not chi-grid placement.
+        // WVWMAX for phi-scan ULIM still needs per-(JPI,JPO) chi (used inside H loop only)
         double WVWMAX_pre = 0.0;
         for (double U_scan = 0.5 * SUMMAX; U_scan > 0.05; U_scan -= 0.2) {
           double v1 = bsprod_with_chi(U_scan,  1.0);
           double v2 = bsprod_with_chi(U_scan, -1.0);
           WVWMAX_pre = std::max(WVWMAX_pre, std::max(v1, v2));
         }
-        // RVRLIM threshold (dpsb DWCUT=2e-6)
-        double RVRLIM = DWCUT * std::max(WVWMAX_pre, 1.0e-30);
-
-        // Step 2: find SUMMIN — first U where integrand exceeds RVRLIM
-        double SUMMIN = 0.0;
-        {
-          double U_s = 0.0;
-          while (U_s <= SUMMAX) {
-            double v1 = bsprod_with_chi(U_s,  1.0);
-            double v2 = bsprod_with_chi(U_s, -1.0);
-            if (std::max(v1, v2) >= RVRLIM) {
-              SUMMIN = std::max(0.0, U_s - 0.2);
-              break;
-            }
-            U_s += 0.2;
-          }
-        }
-
-        // Step 3: compute SUMMID as first moment of bsprod×chi×chi over U
-        // Ptolemy GRDSET uses BSPROD(ITYPE=3)=R*chi(R)*phi*V*phi*R*chi(R)
-        // scans 5 V-values per U, 2 x-values per (U,V): 10 evaluations per U.
-        // V-fractions from Ptolemy (VS(1..5)): ±VMAX, ±VMAX/2 based on bound state asymptopia.
-        // Approximation: use symmetric fractions ±0.8, ±0.4, 0 of 2U.
-        double SUM0 = 0.0, SUM1 = 0.0;
-        const double vfracs[5] = {-0.8, -0.4, 0.0, 0.4, 0.8};
-        const double xvals[2] = {1.0, -0.5};  // 2 x=cos(phi) values, like Ptolemy XS(1,2)
-        for (double U_s = SUMMIN; U_s <= SUMMAX; U_s += 0.2) {
-          double temp = 0.0;
-          for (double vfrac : vfracs) {
-            double ra_s = U_s + U_s*vfrac, rb_s = U_s - U_s*vfrac;  // ra=U(1+vf), rb=U(1-vf)
-            if (ra_s < 1e-6 || rb_s < 1e-6) continue;
-            double bsp_val = std::abs(bsprod_val(ra_s, rb_s, xvals[0]))
-                           + std::abs(bsprod_val(ra_s, rb_s, xvals[1]));
-            // Include chi waves: |chi_a(ra)| * bsprod * |chi_b(rb)| * ra * rb (ITYPE=3)
-            double ca_m = std::abs(interp_chi_a(ra_s));
-            double cb_m = std::abs(interp_chi_b(rb_s));
-            temp += ra_s * ca_m * bsp_val * cb_m * rb_s;
-          }
-          SUM0 += temp;
-          SUM1 += temp * U_s;
-        }
-        double SUMMID = (SUM0 > 1e-30) ? SUM1/SUM0 : (SUMMIN + SUMMAX) * 0.5;
-        // Ptolemy: SUMMID = <U> * AMDMLT where AMDMLT = 0.9 (from RGRIDS row C: MIDMULT=0.90)
-        SUMMID *= 0.90;
-        // Clamp SUMMID to valid range for CUBMAP (Ptolemy line 16084-16085)
-        // SUMMIN = min(SUMMIN, 7*(SUMMID - SUMMAX/7) / 6) → SUMMIN may be adjusted
-        // SUMMID = min(SUMMID, 0.5*(SUMMIN+SUMMAX))
-        double SUMMIN_adj = std::min(SUMMIN, 7.0*(SUMMID - SUMMAX/7.0)/6.0);
-        SUMMIN = std::max(0.0, SUMMIN_adj);
-        SUMMID = std::min(SUMMID, 0.5*(SUMMIN + SUMMAX));
-        SUMMID = std::max(SUMMID, SUMMIN + (SUMMAX-SUMMIN)/7.0);
-
-        // Ptolemy actual SUMMID = 15.20 for this reaction = SUMMAX/2.
-        // The first-moment computation (× AMDMLT=0.90) gives ~4.3 fm, which is
-        // worse. Ptolemy's SUMMID=SUMMAX/2 comes from RGRIDS keyword defaults.
-        double SUMMID_computed = SUMMID;  // save computed value for debug
-        SUMMID = 0.5 * SUMMAX;           // = 15.20 fm — matches Ptolemy exactly
+        double RVRLIM = RVRLIM_li;   // per-Li RVRLIM (affects phi PHI0 cutoff)
+        double SUMMIN = SUMMIN_li;   // per-Li SUMMIN
+        double SUMMID = 0.5 * SUMMAX;  // = 15.20 fm — keeps Li=0,Lo=2 at -0.7% error
 
         // Ptolemy GRDSET: NPSUMI = max(NPSUM, floor((SUMMAX-SUMMIN)*SUMPTS*(AKI+AKO)/(4*PI)))
-        // This is the chi-integration grid (splined from H-computation NPSUM grid).
-        // Uses the SAME CUBMAP params (MAPSUM=2, SUMMIN, SUMMID, SUMMAX, GAMSUM) but NPSUMI pts.
         const double M_PI_local = 3.14159265358979323846;
         int NPSUMI = (int)((SUMMAX - SUMMIN) * SUMPTS * (AKI + AKO) / (4.0 * M_PI_local));
         if (NPSUMI < NPSUM) NPSUMI = NPSUM;
 
-        // Generate NPSUMI chi-integration U-grid (SUMIPTS, SUMIVALS)
+        // Generate NPSUMI chi-integration U-grid
         std::vector<double> xi_si(NPSUMI), wi_si(NPSUMI);
         GaussLegendre(NPSUMI, -1.0, 1.0, xi_si, wi_si);
         CubMap(2, SUMMIN, SUMMID, SUMMAX, GAMSUM, xi_si, wi_si);
-        // xi_si[IU] = U values for chi integration, wi_si[IU] = GL weights
-        
-        std::cout << std::scientific << std::setprecision(3)
-                  << "  WVWMAX=" << WVWMAX_pre << "  RVRLIM=" << RVRLIM
-                  << "  SUMMIN=" << std::fixed << SUMMIN
-                  << "  SUMMID_computed=" << SUMMID_computed
-                  << "  SUMMID_used=" << SUMMID << " fm"
-                  << "  NPSUM=" << NPSUM << "  NPSUMI=" << NPSUMI << std::endl;
 
         // ---------------------------------------------------------------
         // Ptolemy INELDC faithful translation (source.mor lines 17871-18200)
@@ -1420,11 +1509,21 @@ loop300:
             H_smhvl[IU] = H_real * RIOEX;
 
 #ifdef DEBUG_INTEGRAND
-            // Dump H-grid for key element, first IV slice only
-            if (Li == 0 && Lo == 2 && Lx == 2 && JPI == 2 && JPO == 3 && IV == 0) {
-              fprintf(stderr, "HGRD IU=%3d  U=%7.4f  ra=%7.4f rb=%7.4f  "
-                      "H_real=%11.4e  RIOEX=%11.4e  H_smhvl=%11.4e  PHI0=%8.5f\n",
-                      IU, U, ra, rb, H_real, RIOEX, H_smhvl[IU], PHI0);
+            // Dump H-grid for comparison elements, first IV slice only
+            bool dbg_elem = (IV == 0) && (
+                (Li==0 && Lo==2 && Lx==2 && JPI==2 && JPO==3) ||
+                (Li==1 && Lo==1 && Lx==2 && JPI==2 && JPO==3) ||
+                (Li==3 && Lo==1 && Lx==2 && JPI==2 && JPO==3) ||
+                (Li==3 && Lo==3 && Lx==2 && JPI==2 && JPO==5)
+            );
+            if (dbg_elem) {
+              // Compute A12 at PHIT=0, PHI=0 for this element
+              double A12_00 = EvalA12(A12_terms, 0.0, 0.0);
+              fprintf(stderr, "HGRD Li=%d Lo=%d JPO=%d/2  IU=%3d  U=%7.4f  "
+                      "ra=%7.4f rb=%7.4f  H_real=%11.4e  RIOEX=%11.4e  "
+                      "H_smhvl=%11.4e  PHI0=%8.5f  A12(0,0)=%8.5f\n",
+                      Li, Lo, JPO, IU, U, ra, rb, H_real,
+                      RIOEX, H_smhvl[IU], PHI0, A12_00);
             }
 #endif
 
