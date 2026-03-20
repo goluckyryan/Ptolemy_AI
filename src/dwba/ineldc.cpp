@@ -818,6 +818,61 @@ void DWBA::InelDc() {
     std::vector<double> gl_dif_base(NPDIF), gl_dif_wts_base(NPDIF);
     GaussLegendre(NPDIF, -1.0, 1.0, gl_dif_base, gl_dif_wts_base);
 
+    // ── GRDSET Stage 1: warm-start V-range scan → VRNGMX (Ptolemy ~16190-16490) ──
+    // For IRECT=1: scan per IU (warm start from previous IU) to find VMAXMX.
+    // Then VRNGMX = 2*VMAXMX; flat range ±VRNGMX/2 used for ALL IU in H and chi loops.
+    double VRNGMX_li = 0.0;
+    {
+      const int LOOKST_v = 250;
+      const double DV_frac = 1.0 / LOOKST_v;
+      double VMAX_frac = 1.0, VMIN_frac = 1.0;  // warm start
+      double VMAXMX = 0.0;
+
+      for (int IU = 0; IU < NPSUM; ++IU) {
+        double U = xi_s[IU];
+        double VLEN = 2.0 * U;
+        if (U < 1.0) {
+          VMAXMX = std::max(VMAXMX, VLEN);  // full range for small U
+          continue;
+        }
+        // Positive-V scan (RI > RO side): start at previous VMAX_frac + 3 steps
+        double vv = std::min(1.0, VMAX_frac + 3.0*DV_frac);
+        while (vv > 0.5*DV_frac) {
+          double RI = U + vv * 0.5*VLEN;
+          double RO = U - vv * 0.5*VLEN;
+          double ULIM = RVRLIM_li / std::max(1e-2, RI*RO);
+          bool hit = false;
+          for (double xs : {0.7071, 0.0}) {
+            if (std::abs(bsprod_val(RI, RO, xs)) > ULIM) { hit = true; break; }
+          }
+          if (hit) break;
+          vv -= DV_frac;
+        }
+        VMAX_frac = std::min(1.0, vv + DV_frac);
+        VMAXMX = std::max(VMAXMX, VMAX_frac * VLEN);
+
+        // Negative-V scan (RO > RI side)
+        vv = std::min(1.0, VMIN_frac + 3.0*DV_frac);
+        while (vv > 0.5*DV_frac) {
+          double RI = U - vv * 0.5*VLEN;
+          double RO = U + vv * 0.5*VLEN;
+          if (RI < 0) { vv = 0; break; }
+          double ULIM = RVRLIM_li / std::max(1e-2, RI*RO);
+          bool hit = false;
+          for (double xs : {0.7071, 0.0}) {
+            if (std::abs(bsprod_val(RI, RO, xs)) > ULIM) { hit = true; break; }
+          }
+          if (hit) break;
+          vv -= DV_frac;
+        }
+        VMIN_frac = std::min(1.0, vv + DV_frac);
+        VMAXMX = std::max(VMAXMX, VMIN_frac * VLEN);
+      }
+      VRNGMX_li = 2.0 * VMAXMX;  // Ptolemy: IF(IRECT.EQ.1) VRNGMX=2*VMAXMX
+    }
+    const double VHALF_li = 0.5 * VRNGMX_li;  // H and chi loops use ±VHALF_li
+    fprintf(stderr, "Li=%d  VRNGMX=%.4f fm  VHALF=%.4f fm\n", Li, VRNGMX_li, VHALF_li);
+
     // Chi_a interpolation helper
     const double h_chi_a = Incoming.StepSize;
 
@@ -843,10 +898,10 @@ void DWBA::InelDc() {
         double U = xi_s[IU];
         if (U < 1e-6) { continue; }
 
-        // V range: flat ±2U (symmetric, Ptolemy IRECT=1 before LSQPOL trim)
-        double VLEN = 2.0 * U;
-        double V    = gl_v_frac * VLEN;
-        double DIFWT = gl_v_wt * VLEN;
+        // V range: flat ±VHALF_li for ALL IU (Ptolemy IRECT=1: VMAX=VRNGMX/2=VHALF_li)
+        // VRNGMX = 2*VMAXMX from warm-start scan; same VHALF_li for every IU
+        double V    = gl_v_frac * VHALF_li;
+        double DIFWT = gl_v_wt * VHALF_li;
 
         double ra = U + V * 0.5;
         double rb = U - V * 0.5;
@@ -973,10 +1028,9 @@ void DWBA::InelDc() {
         double WGT_U  = wi_si[IU];
         if (U_chi < 1e-6) continue;
 
-        // V at this chi-grid U: same IV fraction, recomputed at U_chi
-        double VLEN_chi = 2.0 * U_chi;
-        double V_chi    = gl_v_frac * VLEN_chi;
-        double DIFWT    = gl_v_wt * VLEN_chi;
+        // V at this chi-grid U: same VHALF_li (IRECT=1 flat range, same for ALL IU)
+        double V_chi    = gl_v_frac * VHALF_li;
+        double DIFWT    = gl_v_wt  * VHALF_li;
 
         double ra_chi = U_chi + V_chi * 0.5;
         double rb_chi = U_chi - V_chi * 0.5;
