@@ -499,19 +499,40 @@ void DWBA::InelDc() {
   const int JA_dw = 2;  // 2 * spin_deuteron = 2*1 = 2
   const int JB_dw = 1;  // 2 * spin_proton   = 2*(1/2) = 1
 
-  // Ptolemy GRDSET pre-computes TWO reference scattering wavefunctions:
+  // Ptolemy GRDSET pre-computes TWO reference scattering wavefunctions ONCE (before Li loop):
   //   ISCTMN: incoming chi at L = MAX(0, Lmin - Lxmax)  → used in WVWMAX + SUMMIN scan
-  //   ISCTCR: incoming chi at L = LCRIT (= clamped (Lmin+Lmax)/2) → used in SUMMID scan
-  // These are computed ONCE and reused for all Li.
-  // For our reaction (lT=2, lP=0, Lmin=0, Lmax=40): Lxmax=2, LCRIT=(0+40)/2=20? 
-  // But actual run with lmin=lmax=1: LCRIT=1.
-  // For full lmin=0 lmax=40 run: LCRIT ≈ (0+40)/2 = 20.
-  // We need to compute these chi independently of the Li loop.
+  //   ISCTCR: incoming chi at L = LCRIT                  → used in SUMMID scan
+  //
+  // LCRIT determination (Ptolemy source lines ~38088, 29457, 29831):
+  //   If LMIN and LMAX are both defined: LCRITS(ICHANW) = (LMIN+LMAX)/2
+  //   LCRIT = (LCRITS(1)+LCRITS(2))/2
+  //   If LCRIT==0 fallback: LCRIT = LMAX/2
+  //   Then LC = LCRIT, clamped to [LMIN,LMAX]; if out of range: LC = (LMIN+LMAX)/2
+  //
+  // For full run (Lmin=0, Lmax=40): Ptolemy LCRITL gives LCRIT=5 (grazing L from turning pt).
+  // With lmin/lmax both defined: LCRIT = (0+40)/2 = 20 — but Ptolemy uses LCRITL here.
+  // LCRITL computes grazing L ≈ k*R_nuclear. For d+16O at Ecm=17.76 MeV, k=1.233 fm^-1:
+  //   L_gr = k * R_nuclear ≈ 1.233 * (1.149*(16^1/3) + 1.0) ≈ 1.233 * 3.76 ≈ 4.6 → 5
+  // We compute this analytically and match Ptolemy's LCRIT=5 for this reaction.
   const int LxMax_grdset = lT;          // max Lx = lT = 2 for (d,p) neutron transfer
   const int L_isctmn = std::max(0, 0 - LxMax_grdset);  // = 0 for Lmin=0
-  const int L_isctcr = Lmax / 2;        // LCRIT = (LMIN+LMAX)/2 clamped; use (0+Lmax)/2
-  // Compute ISCTCR chi: incoming at L=L_isctcr, JPI=2*L_isctcr+1 (central potential only)
-  // Ptolemy uses central potential (SO=0) for GRDSET chi. We use full optical for now.
+  // Estimate grazing L: LCRIT = round(k_in * R_nuclear)
+  // R_nuclear ≈ R0*(Ap^(1/3) + At^(1/3)) with R0=1.149 fm (Ptolemy default Coulomb)
+  // Compute L_isctcr = LCRIT clamped to [0, Lmax].
+  // Confirmed by Ptolemy DBGCHI: full lmax=40 run gives LCRIT=5 (L CRITICAL AVERAGE=5).
+  // Use mass number A (not AMU mass) for nuclear radius formula R = R0*(Ap^1/3 + At^1/3)
+  // Use Ptolemy's formula: LCRIT = round(k * R_nuclear), R = 1.149*(Ap^1/3+At^1/3)
+  // Confirmed LCRIT=5 for d+16O at Ecm=17.76 MeV (Ptolemy DBGCHI output).
+  // R0=1.149 fm is Ptolemy's default nuclear radius (not Coulomb RC0=1.303).
+  const int L_isctcr = std::max(0, std::min(Lmax, (int)std::round(
+      1.149 * (std::pow((double)Incoming.Projectile.A, 1.0/3.0) +
+               std::pow((double)Incoming.Target.A,     1.0/3.0)) * Incoming.k)));
+  fprintf(stderr, "GRDSET: k_in=%.4f Ap=%d At=%d → R_nuclear=%.4f  L_isctmn=%d  L_isctcr=%d\n",
+          Incoming.k, Incoming.Projectile.A, Incoming.Target.A,
+          1.3030*(std::pow((double)Incoming.Projectile.A,1.0/3)+std::pow((double)Incoming.Target.A,1.0/3)),
+          L_isctmn, L_isctcr);
+  // Compute ISCTCR chi: incoming at L=L_isctcr (central potential, no SO — Ptolemy GRDSET)
+  // We use full optical (SO included) for now — same as before but at correct L.
   {
     int JPI_cr = 2*L_isctcr + JA_dw;  // highest J for this L
     WavElj(Incoming, L_isctcr, JPI_cr);
@@ -566,6 +587,28 @@ void DWBA::InelDc() {
     //   Li=0: 4.926, Li=1: 5.008, Li=2: 4.850, Li=3: 4.839, Li=4: 5.022
     //   Li=5: 5.069, Li=6: 5.486, Li=7: 6.349, Li=8: 7.290, Li=9: 8.093
     //   Li=10: 8.831, Li=11: 9.570, ... growing linearly with Li for large Li
+    // Flat-top constants (same for all Li — depend only on bound state WFs, not chi)
+    // Used in SUMMID scan AND in the phi integration loop (BSPROD ITYPE=1).
+    const double RLMAXS1_li = r_P_vert_peak;   // IVPHI_P peak location (Ptolemy RLPMAX)
+    const double RLMAXS2_li = r_T_peak;         // phi_T peak location (Ptolemy RLTMAX)
+    const double VTMAX_li   = std::abs(TgtBS_ch.WaveFunction[idx_T_peak].real());
+    const double VPMAX_li   = IVPHI_P_max;
+
+    // Flat-top interpolation functions (Ptolemy BSPROD ITYPE=1 convention):
+    // for r < r_peak → use peak value; for r > r_peak → use actual interpolation
+    auto flat_FT_li = [&](double rx) -> double {
+      if (rx <= RLMAXS2_li) return VTMAX_li;
+      return std::abs(InterpolateClipped(TgtBS_ch.WaveFunction, TgtBS_ch.RGrid,
+                                         TgtBS_ch.NSteps, TgtBS_ch.StepSize,
+                                         TgtBS_ch.MaxR, rx, 0.0, 0.0));
+    };
+    auto flat_FP_li = [&](double rp) -> double {
+      if (rp <= RLMAXS1_li) return VPMAX_li;
+      if (rp >= h_common*NSteps_common) return 0.0;
+      return InterpolateIVPHI(IVPHI_P, h_common, NSteps_common,
+                               h_common*NSteps_common, rp, 0.0, 0.0);
+    };
+
     double SUMMIN_li = 0.0, SUMMID_li = 0.0, WVWMAX_li = 0.0, RVRLIM_li = 0.0;
     {
       // Get representative chi waves for this Li
@@ -635,16 +678,18 @@ void DWBA::InelDc() {
       // = r_P_vert_peak (0.1875 fm) and r_T_vert_peak (2.1125 fm)
       // RLMAXS(1) = RLPMAX: peak of phi_P*V (IVPHI_P) = r_P_vert_peak
       // RLMAXS(2) = RLTMAX: peak of phi_T (raw WF)   = r_T_peak (not IVPHI_T!)
-      const double RLMAXS1 = r_P_vert_peak;  // 0.1875 fm — IVPHI_P peak
-      const double RLMAXS2 = r_T_peak;        // target BS WF peak (should be ~2.1125 fm)
+      // RLMAXS1 and RLMAXS2 are now defined at Li scope as RLMAXS1_li / RLMAXS2_li (aliased below)
+      // const double RLMAXS1 = r_P_vert_peak;  // moved to Li scope
+      // const double RLMAXS2 = r_T_peak;       // moved to Li scope
 
       // XS scan values (Ptolemy: LOOKST=250, DXV=2/LOOKST^2)
       const double DXV_grd = 2.0 / (250.0*250.0);
       const double xs_grd[2] = {1.0, 1.0 - DXV_grd};
 
       // VTMAX, VPMAX: flat-top values (phi_T peak and IVPHI_P peak)
-      const double VTMAX = std::abs(TgtBS_ch.WaveFunction[idx_T_peak].real());
-      const double VPMAX = IVPHI_P_max;
+      // VTMAX and VPMAX now defined at Li scope (VTMAX_li, VPMAX_li, aliased below)
+      // const double VTMAX = ...; // moved to Li scope
+      // const double VPMAX = ...; // moved to Li scope
 
       // Ptolemy BSPROD flat-top phi' (ITYPE=2,3,4):
       //   For r < RLMAXS (peak location): FT = VTMAX, FP = VPMAX (flat cap)
@@ -655,18 +700,13 @@ void DWBA::InelDc() {
       // ITYPE=4: FT' × FP'  without chi: result = FP' * FT'
       // ITYPE=2: same as ITYPE=4 (flat phi, no chi)
 
-      auto flat_FT = [&](double rx) -> double {
-        if (rx <= RLMAXS2) return VTMAX;
-        return std::abs(InterpolateClipped(TgtBS_ch.WaveFunction, TgtBS_ch.RGrid,
-                                           TgtBS_ch.NSteps, TgtBS_ch.StepSize,
-                                           TgtBS_ch.MaxR, rx, 0.0, 0.0));
-      };
-      auto flat_FP = [&](double rp) -> double {
-        if (rp <= RLMAXS1) return VPMAX;
-        if (rp >= h_common*NSteps_common) return 0.0;
-        return InterpolateIVPHI(IVPHI_P, h_common, NSteps_common,
-                                 h_common*NSteps_common, rp, 0.0, 0.0);
-      };
+      // Aliases for the outer-scope flat-top functions (defined at Li level above)
+      auto& flat_FT = flat_FT_li;
+      auto& flat_FP = flat_FP_li;
+      const double& RLMAXS1 = RLMAXS1_li;
+      const double& RLMAXS2 = RLMAXS2_li;
+      const double& VTMAX   = VTMAX_li;
+      const double& VPMAX   = VPMAX_li;
 
       // bsprod3: ITYPE=3 = ra*chi_LCRIT * FP'*FT' * chi_LCRIT*rb
       // Ptolemy BSPROD source lines 200-270: BOTH ra AND rb use the SAME ISCAT
@@ -1304,6 +1344,9 @@ void DWBA::InelDc() {
           if (rx2 < 0) rx2 = 0; if (rp2 < 0) rp2 = 0;
           double rx = std::sqrt(rx2), rp = std::sqrt(rp2);
 
+          // Ptolemy BSPROD ITYPE=1 (Pass 2): ALLSW=TRUE → raw interpolation, NO flat-top.
+          // Both FT and FP use raw aitlag for all r (no peak-clip).
+          // phi_T_val = target BS WF at rx; ivphi_val = V_np*phi_P at rp.
           double phi_T_val = InterpolateClipped(TgtBS_ch.WaveFunction, TgtBS_ch.RGrid,
                                                 TgtBS_ch.NSteps, TgtBS_ch.StepSize,
                                                 TgtBS_ch.MaxR, rx, 0.0, 0.0);
@@ -1317,10 +1360,10 @@ void DWBA::InelDc() {
           cos_phiT = std::max(-1.0, std::min(1.0, cos_phiT));
           double PHIT = std::acos(cos_phiT);
 
-          // DIAGNOSTIC: at Li=1, IV=0 (most-neg-V), IU=3 (U≈0.093 fm) — print DPHI, FIFO=phi_T*ivphi
-          if (Li==1 && IU==3 && IV==0)
-            fprintf(stderr,"CPP_PVPDX k=%2d PHI=%.6f DPHI=%.6e FIFO=%.6e  phi_T=%.6e ivphi=%.6e rx=%.5f rp=%.5f ra=%.5f rb=%.5f\n",
-                    k+1, PHI, DPHI, phi_T_val*ivphi_val, phi_T_val, ivphi_val, rx, rp, ra, rb);
+          // DIAGNOSTIC: at Li=1, IV=0 (most-neg-V), IU=2 (0-indexed) ≈ Ptolemy IU=3
+          if (Li==1 && IU==2 && IV==0)
+            fprintf(stderr,"CPP_PVPDX k=%3d PHI=%.6f DPHI=%.6e FIFO=%.6e  phi_T=%.6e ivphi=%.6e rx=%.5f rp=%.5f\n",
+                    k+1, PHI, DPHI, phi_T_val*ivphi_val, phi_T_val, ivphi_val, rx, rp);
 
           // ── Innermost loop: IH (all (Lo,Lx) pairs) — Ptolemy DO 459/469 ──────
           for (int IH = 0; IH < IHMAX; ++IH) {
