@@ -508,6 +508,19 @@ void DWBA::InelDc() {
     for (int JPI = JPI_min; JPI <= JPI_max; JPI += 2) {
       WavElj(Incoming, Li, JPI);
       chi_a_byJPI[JPI] = Incoming.WaveFunction;
+      if (Li == 1) {
+        double h = Incoming.StepSize;
+        fprintf(stderr, "chi_a Li=%d JPI=%d/2: size=%d h=%.5f\n",
+                Li, JPI, (int)Incoming.WaveFunction.size(), h);
+        for (double r : {1.0, 2.0, 4.0, 6.0, 8.0}) {
+          int idx = (int)(r/h + 0.5);
+          if (idx < (int)Incoming.WaveFunction.size()) {
+            auto v = Incoming.WaveFunction[idx];
+            fprintf(stderr, "  r=%.1f: re=%.6f im=%.6f |chi|=%.6f\n",
+                    r, v.real(), v.imag(), std::abs(v));
+          }
+        }
+      }
     }
 
     // ── Per-Li GRDSET: compute SUMMIN, SUMMID, WVWMAX, RVRLIM ─────────────
@@ -527,7 +540,8 @@ void DWBA::InelDc() {
     double SUMMIN_li = 0.0, SUMMID_li = 0.0, WVWMAX_li = 0.0, RVRLIM_li = 0.0;
     {
       // Get representative chi waves for this Li
-      const auto& ref_chi_a = chi_a_byJPI.begin()->second;
+      // Use JPI_max (highest J) as the reference: matches Ptolemy's ISCTCR which maximizes bsprod
+      const auto& ref_chi_a = chi_a_byJPI.rbegin()->second;
       const double h_ref_a  = Incoming.StepSize;
       const double maxR_ref_a = (ref_chi_a.size() >= 4)
           ? (static_cast<int>(ref_chi_a.size()) - 4) * h_ref_a : Incoming.MaxR;
@@ -662,6 +676,8 @@ void DWBA::InelDc() {
       // (Ptolemy source.f line ~18588: U=.5*ROFMAX, N=1.5*ROFMAX/.20+1)
       const double SUMMAX_li = 30.4;
       const double ROFMAX_grd = maxR_ref_a;  // Ptolemy ROFMAX = chi_a extent
+      if (Li <= 1) fprintf(stderr,"ROFMAX Li=%d JPI_max=%d maxR=%.2f h=%.4f npts=%d\n",
+                            Li, JPI_max, ROFMAX_grd, h_ref_a, (int)ref_chi_a.size());
       double U_s = 0.5 * ROFMAX_grd;
       int N_wv = (int)(1.5*ROFMAX_grd/0.2 + 1.5);
       for (int iu = 0; iu < N_wv; ++iu, U_s += 0.2) {
@@ -711,6 +727,10 @@ void DWBA::InelDc() {
         }
         if (zerosw) continue;
 
+        if (Li==0 && (U_s < 3.01 || (U_s > 4.8 && U_s < 7.01)))
+          fprintf(stderr,"SUMMID_SCAN Li=0 U=%.2f TEMP=%.6e VS=[%.3f,%.3f,%.3f,%.3f,%.3f]\n",
+                  U_s, temp, VS5[0],VS5[1],VS5[2],VS5[3],VS5[4]);
+
         SUM0 += temp;
         SUM1 += temp * U_s;
         SUM2 += temp * U_s * U_s;
@@ -740,6 +760,23 @@ void DWBA::InelDc() {
       std::cout << "Li=" << Li << "  SUMMIN=" << SUMMIN_li
                 << "  SUMMID=" << SUMMID_li << "  SUMMAX=" << SUMMAX_li
                 << "  (<U>=" << mean_U << ")" << std::endl;
+
+#ifdef USE_PTO_SUMMID_TABLE
+      // Override with known-correct Ptolemy SUMMID/SUMMIN/SUMMAX values (from print=5)
+      // Used to isolate whether SUMMID error drives the off-diagonal outliers.
+      static const double pto_summid[] = {
+        4.93, 5.01, 4.85, 4.84, 5.02, 5.07, 5.49, 6.35, 7.29, 8.09,
+        8.83, 9.57,10.33,11.09,11.90,12.79,13.53,14.21,14.93,15.74,
+       16.42,17.03,17.65,18.31,18.98,19.64,20.29,20.93,21.55,22.16,22.74};
+      static const double pto_summin[] = {
+        0.0, 0.0, 0.0, 0.0, 0.2, 0.2, 0.4, 0.6, 1.0, 1.4,
+        2.0, 2.4, 3.2, 3.8, 4.6, 5.8, 6.2, 6.8, 7.2, 7.8,
+        8.6, 9.2, 9.8,10.6,11.2,12.0,12.8,13.4,14.2,15.0,15.8};
+      int li_idx = std::min(Li, 30);
+      SUMMID_li = pto_summid[li_idx];
+      SUMMIN_li = pto_summin[li_idx];
+      fprintf(stderr, "PTO_TABLE Li=%d SUMMIN=%.2f SUMMID=%.2f\n", Li, SUMMIN_li, SUMMID_li);
+#endif
     }
 
     // ── Per-Li constants needed in the inner loops ───────────────────────────
@@ -1022,13 +1059,13 @@ void DWBA::InelDc() {
       }
     }
 
-    // Diagnostic: print vmax_frac for Li=0
-    if (Li == 0) {
-      fprintf(stderr, "=== vmax_frac/vmin_frac for Li=0 ===\n");
+    // Diagnostic: print vmax_frac for Li=1
+    if (Li == 1) {
+      fprintf(stderr, "=== vmax_frac/vmin_frac for Li=1 ===\n");
       for (int IU = 0; IU < NPSUM; ++IU) {
         double U = xi_s[IU];
-        fprintf(stderr, "IU=%2d U=%7.4f vmax_frac=%7.4f vmin_frac=%7.4f VABSMAX=%7.4f VABSMIN=%7.4f\n",
-                IU+1, U, vmax_frac[IU], vmin_frac[IU], vmax_frac[IU]*2*U, vmin_frac[IU]*2*U);
+        fprintf(stderr, "CPP_VR IU=%2d U=%7.4f vmax_frac=%7.4f vmin_frac=%7.4f VABSMAX=%7.4f VABSMIN=%7.4f\n",
+                IU+1, U, vmax_frac[IU], vmin_frac[IU], vmax_frac[IU]*2*U, -vmin_frac[IU]*2*U);
       }
     }
 
@@ -1099,8 +1136,11 @@ void DWBA::InelDc() {
         dif_pts_h[IU][IV_store] = VVAL;
         dif_wts_h[IU][IV_store] = WT;
         // RIOEX = exp(+ALPHAP*RP + ALPHAT*RT) at (ra,rb)
-        double RP0 = std::sqrt(1.0 + (S2*ra+T2*rb)*(S2*ra+T2*rb));
-        double RT0 = std::sqrt(1.0 + (S1*ra+T1*rb)*(S1*ra+T1*rb));
+        // Ptolemy GRDSET: RP = SQRT(1+(S1*RI+T1*RO)^2), RT = SQRT(1+(S2*RI+T2*RO)^2)
+        // Note: S1/T1 → target coord (rx), S2/T2 → proj coord (rp)
+        // Ptolemy's variable naming is inverted vs physics but we must match it exactly.
+        double RP0 = std::sqrt(1.0 + (S1*ra+T1*rb)*(S1*ra+T1*rb));  // S1,T1 = target
+        double RT0 = std::sqrt(1.0 + (S2*ra+T2*rb)*(S2*ra+T2*rb));  // S2,T2 = proj
         RIOEX_h[IV_store*NPSUM + IU] = std::exp(ALPHAP*RP0 + ALPHAT*RT0);
       }
     }
@@ -1158,8 +1198,9 @@ void DWBA::InelDc() {
         dif_pts_chi[IU][IV_store] = VVAL;
         dif_wts_chi[IU][IV_store] = WT;
         // LWIO = JACOB * RI * RO * WOW * DIFWT * exp(-ALPHAP*RP - ALPHAT*RT)
-        double RP_c = std::sqrt(1.0 + (S2*ra+T2*rb)*(S2*ra+T2*rb));
-        double RT_c = std::sqrt(1.0 + (S1*ra+T1*rb)*(S1*ra+T1*rb));
+        // Ptolemy: RP uses S1/T1, RT uses S2/T2 (same convention as RIOEX)
+        double RP_c = std::sqrt(1.0 + (S1*ra+T1*rb)*(S1*ra+T1*rb));
+        double RT_c = std::sqrt(1.0 + (S2*ra+T2*rb)*(S2*ra+T2*rb));
         double JACOB_chi = S1*S1*S1;
         LWIO_chi[IV_store*NPSUMI + IU] =
             JACOB_chi * ra * rb * WOW * WT * std::exp(-ALPHAP*RP_c - ALPHAT*RT_c);
@@ -1242,9 +1283,17 @@ void DWBA::InelDc() {
           cos_phiT = std::max(-1.0, std::min(1.0, cos_phiT));
           double PHIT = std::acos(cos_phiT);
 
+          // DIAGNOSTIC: at Li=1, IV=0 (most-neg-V), IU=3 (U≈0.093 fm) — print DPHI, FIFO=phi_T*ivphi
+          if (Li==1 && IU==3 && IV==0)
+            fprintf(stderr,"CPP_PVPDX k=%2d PHI=%.6f DPHI=%.6e FIFO=%.6e  phi_T=%.6e ivphi=%.6e rx=%.5f rp=%.5f ra=%.5f rb=%.5f\n",
+                    k+1, PHI, DPHI, phi_T_val*ivphi_val, phi_T_val, ivphi_val, rx, rp, ra, rb);
+
           // ── Innermost loop: IH (all (Lo,Lx) pairs) — Ptolemy DO 459/469 ──────
           for (int IH = 0; IH < IHMAX; ++IH) {
             double A12_val = EvalA12(A12_all[IH], PHIT, PHI);
+            if (Li==1 && IV==0 && IU==1 && k<3)
+              fprintf(stderr,"A12_DETAIL IH=%d IU=%d k=%d PHI=%.5f PHIT=%.5f A12=%.6e PVPDX=%.6e term=%.6e\n",
+                      IH, IU+1, k+1, PHI, PHIT, A12_val, PVPDX, PVPDX*A12_val);
             HINT[IH] += PVPDX * A12_val;
           }
         }
@@ -1254,10 +1303,13 @@ void DWBA::InelDc() {
         for (int IH = 0; IH < IHMAX; ++IH)
           SMHVL[IH][IU] = HINT[IH] * RIOEX;
 
-        // DIAGNOSTIC: print first 10 H values for Li=0, IV=0
-        if (Li==0 && IV==0 && IU < 10 && IHMAX>0)
-          fprintf(stderr,"DIAG_H IU=%2d U=%.4f ra=%.4f rb=%.4f  HINT[0]=%.4e RIOEX=%.4e SMHVL[0]=%.4e\n",
-                  IU, U, ra, rb, HINT[0], RIOEX, SMHVL[0][IU]);
+        // DIAGNOSTIC: print H values for Li=1, IV=0 (most-negative V side), all IU
+        // Ptolemy HGRD_LI1 prints at IV=1 (most-negative V) on the NPSUM grid
+        // Our IV=0 is the most-negative-V end (SYNE positive)
+        if (Li==1 && IV==0 && IU < NPSUM && IHMAX>=2) {
+          fprintf(stderr,"CPP_H IU=%2d U=%.7f V=%.7f ra=%.6f rb=%.6f  H[0]=%.6e H[1]=%.6e RIOEX=%.4e PHI0=%.5f IEND=%d\n",
+                  IU+1, U, V, ra, rb, HINT[0], HINT[1], RIOEX, PHI0, IEND);
+        }
 
       }  // End H-computation IU loop (Ptolemy DO 549)
 
