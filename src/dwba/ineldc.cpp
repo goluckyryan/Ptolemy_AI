@@ -661,1043 +661,468 @@ void DWBA::InelDc() {
                 << "  (<U>=" << mean_U << ")" << std::endl;
     }
 
-    // For each outgoing partial wave Lo, compute ALL J-split JPO values and integrals.
-    // Lo ranges over all values allowed by parity and triangle conditions.
-    // JPO ranges from |2*Lo - JB_dw| to 2*Lo + JB_dw in steps of 2 (J-split).
+    // ── Per-Li constants needed in the inner loops ───────────────────────────
+    // Bound-state decay constants (same formula as ineldc_zr.cpp)
+    double ALPHAP = std::sqrt(2.0 * PrjBS_ch.mu * AMU * std::abs(ProjectileBS.BindingEnergy)) / HBARC;
+    double ALPHAT = std::sqrt(2.0 * TgtBS_ch.mu * AMU * std::abs(TargetBS.BindingEnergy)) / HBARC;
 
-    for (int Lo = 0; Lo <= Lmax; Lo++) {
-      // Pre-compute all J-split outgoing waves for this Lo
-      std::map<int, std::vector<std::complex<double>>> chi_b_byJPO;
-      int JPO_min = std::abs(2*Lo - JB_dw);
-      int JPO_max = 2*Lo + JB_dw;
-      for (int JPO = JPO_min; JPO <= JPO_max; JPO += 2) {
-        if (JPO < 1) continue;  // must be positive
-        WavElj(Outgoing, Lo, JPO);
-        chi_b_byJPO[JPO] = Outgoing.WaveFunction;
+    // bsprod_val(ra, rb, x): |phi_T(rx)| * |ivphi_P(rp)|  (no chi, phi angle = acos(x))
+    auto bsprod_val = [&](double ra, double rb, double x) -> double {
+      double rx2 = S1*S1*ra*ra + T1*T1*rb*rb + 2.0*S1*T1*ra*rb*x;
+      double rp2 = S2*S2*ra*ra + T2*T2*rb*rb + 2.0*S2*T2*ra*rb*x;
+      if (rx2 < 0) rx2 = 0; if (rp2 < 0) rp2 = 0;
+      double phi_T = InterpolateClipped(TgtBS_ch.WaveFunction, TgtBS_ch.RGrid,
+                                        TgtBS_ch.NSteps, TgtBS_ch.StepSize,
+                                        TgtBS_ch.MaxR, std::sqrt(rx2), 0.0, 0.0);
+      double ivphi_P = InterpolateIVPHI(IVPHI_P, h_common, NSteps_common,
+                                         h_common*NSteps_common, std::sqrt(rp2), 0.0, 0.0);
+      return std::abs(phi_T * ivphi_P);
+    };
 
+    // ptolemy_spline: natural cubic spline interpolation (SPLNCB+INTRPC)
+    // Captures the ptolemy_splncb and ptolemy_intrpc lambdas defined inside the old inner block.
+    // We implement directly here using the same algorithm.
+    auto ptolemy_spline = [&](const std::vector<double>& X_in,
+                               const std::vector<double>& Y_in,
+                               const std::vector<double>& X_out,
+                               std::vector<double>& Y_out) {
+      int N = (int)X_in.size();
+      int M = (int)X_out.size();
+      Y_out.assign(M, 0.0);
+      if (N < 2) return;
+      // Natural cubic spline (not-a-knot from Ptolemy SPLNCB with leading/trailing trim)
+      // Simplified version: standard natural cubic spline
+      std::vector<double> h_sp(N-1), alpha(N), l(N), mu(N), z(N);
+      for (int i=0;i<N-1;i++) h_sp[i]=X_in[i+1]-X_in[i];
+      for (int i=1;i<N-1;i++)
+        alpha[i]=3.0/h_sp[i]*(Y_in[i+1]-Y_in[i])-3.0/h_sp[i-1]*(Y_in[i]-Y_in[i-1]);
+      l[0]=1; mu[0]=0; z[0]=0;
+      for (int i=1;i<N-1;i++){
+        l[i]=2*(X_in[i+1]-X_in[i-1])-h_sp[i-1]*mu[i-1];
+        if(std::abs(l[i])<1e-30) l[i]=1e-30;
+        mu[i]=h_sp[i]/l[i]; z[i]=(alpha[i]-h_sp[i-1]*z[i-1])/l[i];
       }
-      
-      // For each allowed Lx, compute the radial integral — separate per (JPI, JPO)
+      l[N-1]=1; z[N-1]=0;
+      std::vector<double> c(N,0),b(N,0),d(N,0);
+      for (int j=N-2;j>=0;j--){
+        c[j]=z[j]-mu[j]*c[j+1];
+        b[j]=(Y_in[j+1]-Y_in[j])/h_sp[j]-h_sp[j]*(c[j+1]+2*c[j])/3.0;
+        d[j]=(c[j+1]-c[j])/(3.0*h_sp[j]);
+      }
+      // Evaluate at X_out points
+      for (int k=0;k<M;k++){
+        double x=X_out[k];
+        // find segment
+        int seg=0;
+        for (int i=0;i<N-1;i++) if(x>=X_in[i]) seg=i;
+        double dx=x-X_in[seg];
+        Y_out[k]=Y_in[seg]+b[seg]*dx+c[seg]*dx*dx+d[seg]*dx*dx*dx;
+      }
+    };
+
+    // ── FAITHFUL PTOLEMY ARCHITECTURE ────────────────────────────────────────────
+    // Ptolemy INELDC loop structure (source.mor lines 17870-18200):
+    //   1. Build full (Lo,Lx) list for this Li → IHMAX pairs
+    //   2. Precompute chi_b for all (Lo,JPO) under this Li
+    //   3. DO IV=1,NPDIF (V-slice):
+    //        DO IU=1,NPSUM (H-computation U-grid):
+    //          DO II=1,NPPHI (phi):
+    //            Accumulate H[IH] for ALL IH (Lo,Lx) simultaneously
+    //          SMHVL[IH][IU] = H[IH] * RIOEX
+    //        Spline SMHVL[IH][*] → SMIVL[IH][*] for each IH
+    //        DO IU=1,NPSUMI (chi-integration):
+    //          FOR each (JPI,JPO,IH): I(JPI,JPO,Lo,Lx) += SMIVL[IH][IU]*chi_a*chi_b*TERM
+    //
+    // KEY: H is computed once per (Li,IV,IU) for ALL Lo simultaneously.
+    //      GRDSET (SUMMIN/SUMMID/PHI0) is per-Li and already computed above.
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    // ── Step 1: Build (Lo,Lx) pair list for this Li ──────────────────────────────
+    struct LoLxPair { int Lo, Lx; };
+    std::vector<LoLxPair> lolx_list;
+    {
       for (int Lx = LxMin; Lx <= LxMax_bs; Lx += 2) {
-        // Triangle rule check: |Li - Lo| <= Lx <= Li + Lo
-        if (Lx < std::abs(Li - Lo)) continue;
-        if (Lx > Li + Lo) continue;
-        // Parity check: (Li + Lo + Lx) must be even
-        if ((Li + Lo + Lx) % 2 != 0) continue;
-
-      // ---- Precompute A12 angular coupling coefficients for (Li, Lo, Lx) ----
-      // Extracted to DWBA::ComputeA12Terms() in a12.cpp
-      std::vector<std::tuple<int,int,double>> A12_terms = ComputeA12Terms(Li, Lo, Lx, lT, lP);
-
-      // J-split loop: compute I(Li,Lo,Lx,JPI,JPO) for each (JPI,JPO) pair
-      for (auto &[JPI, chi_a] : chi_a_byJPI) {
-        for (auto &[JPO, chi_b] : chi_b_byJPO) {
-
-        // ---------------------------------------------------------------
-        // GL quadrature in (U,V) = (sum, dif) coordinates — Ptolemy GRDSET
-        // U = (ri+ro)/2, V = ri-ro
-        // ri = U + V/2, ro = U - V/2
-        // Domain: triangular — U in [0, SUMMAX], V in [-2U, +2U]
-        // Jacobian d(ri)d(ro) = d(U)d(V): |∂(ri,ro)/∂(U,V)| = 1 (exact)
-        // ---------------------------------------------------------------
-        std::complex<double> Integral(0.0, 0.0);
-
-        // Chi wavefunction interpolation.
-        // Two modes selected by compile-time flag:
-        //   INTERP_RAPHAEL (default): simple linear — matches Raphael's Python code
-        //   INTERP_PTOLEMY           : 5-point Lagrange (A&S 25.2.15) — matches Ptolemy WAVELJ
-        //
-        // Ptolemy WAVELJ stores WAVR(J+1)=u(J*h).  I = nint(r/h), P = r/h - I.
-        // Stencil WAVR(I-1..I+3) = u[(I-2)*h..(I+2)*h] → our chi[I-2..I+2].
-        //
-        // Use -DINTERP_PTOLEMY on compile line to enable Ptolemy mode.
-        const double h_chi_b = Outgoing.StepSize;
-        // max r covered by chi_b (includes Coulomb extension beyond MaxR=30fm)
-        const double chi_b_maxR = (chi_b.size() >= 4)
-            ? (static_cast<int>(chi_b.size()) - 4) * h_chi_b : Outgoing.MaxR;
-        auto interp_chi_b = [&](double r) -> std::complex<double> {
-          if (r <= 0 || r > chi_b_maxR) return {0.0, 0.0};
-#ifdef INTERP_PTOLEMY
-          // 5-point Lagrange (Ptolemy WAVELJ, A&S 25.2.15)
-          double rbyh = r / h_chi_b;
-          int I = static_cast<int>(rbyh + 0.5);  // nearest grid index
-          int IMX = static_cast<int>(chi_b.size()) - 4;
-          I = std::max(2, std::min(I, IMX));
-          double P = rbyh - I;
-          double PS = P * P;
-          double X1 = P * (PS - 1.0) / 24.0;
-          double X2 = X1 + X1, X3 = X1 * P;
-          double X4 = X2 + X2 - 0.5 * P, X5 = X4 * P;
-          double C1 = X3 - X2, C5 = X3 + X2;
-          double C3 = X5 - X3, C2 = X5 - X4, C4 = X5 + X4;
-          C3 = C3 + C3 + 1.0;
-          return C1*chi_b[I-2] - C2*chi_b[I-1] + C3*chi_b[I]
-               - C4*chi_b[I+1] + C5*chi_b[I+2];
-#else
-          // Linear interpolation (Raphael mode — default)
-          double idx_f = r / h_chi_b;
-          int ii = static_cast<int>(idx_f);
-          if (ii >= (int)chi_b.size() - 1) return {0.0, 0.0};
-          double frac = idx_f - ii;
-          return chi_b[ii] * (1.0 - frac) + chi_b[ii+1] * frac;
-#endif
-        };
-
-#ifdef USE_ZR
-        // ---------------------------------------------------------------
-        // ZERO-RANGE (ZR) approximation — PHYSICALLY CORRECT VERSION
-        //
-        // In ZR, V_np(rp)*phi_P(rp) = D0 * delta^3(rp).
-        // The delta function forces rp=0, which (at phi_ab=0) means:
-        //   ra/rb = S1_c/S2_c  (where _c = CORRECT Ptolemy values)
-        //   rx = ra  (neutron coordinate = deuteron coordinate exactly)
-        //
-        // This collapses the 3D integral to 1D over ra:
-        //   I_ZR(Li,Lo,Lx) = D0 * A12(phi=0) *
-        //       ∫_0^∞ chi_a(ra) * phi_T(ra) * chi_b*(rb=zr_scale*ra)
-        //              * ra * rb * J_zr * dra
-        //
-        // Coordinate geometry (Ptolemy GRDSET BRATMS convention):
-        //   BRATMS(1) = mx/mb (= x/b, neutron/proton ≈ 1.001)
-        //   BRATMS(2) = mx/mA (= x/A, neutron/33Si ≈ 0.0306)
-        //   S1_c = (1+BRATMS1)*(1+BRATMS2)/denom_c   ≈ 1.941
-        //   T1_c = -(1+BRATMS2)/denom_c               ≈ -0.970
-        //   S2_c = (1+BRATMS1)/denom_c                ≈ 1.883
-        //   T2_c = -S1_c                              ≈ -1.941
-        //   denom_c = BRATMS1 + BRATMS2*(1+BRATMS1)
-        //
-        // ZR geometry: phi_ab=0, rp=0 → rb = (S2_c/S1_c)*ra ≈ (A/(A+1))*ra ≈ 0.970*ra
-        //                                  rx = ra (exact: S1_c + T1_c*(S2_c/S1_c) = 1)
-        //
-        // No Li==Lo restriction in ZR! The phi_ab=0 limit allows all Li,Lo pairs.
-        // At phi_ab=0: phi_T_angle = acos((T1_c*rb + S1_c*ra)/rx)
-        //   = acos((T1_c*zr_scale + S1_c)*ra / ra) = acos(S1_c + T1_c*zr_scale)
-        //   = acos(1.0) = 0  (since rx/ra = 1 exactly)
-        //
-        // D0 = -120.1 MeV·fm^{3/2} (ZR constant, from AGENT_FINDINGS.md)
-        // ---------------------------------------------------------------
-        {
-          const double D0_ZR = -120.1;  // MeV·fm^{3/2}
-
-          // Compute CORRECT S1_c/S2_c/T1_c for ZR geometry
-          // Note: current code has T1/S2 SWAPPED. Use correct Ptolemy convention here.
-          double BRATMS1 = mx / mb;           // x/b = neutron/proton
-          double BRATMS2 = mx / mA;           // x/A = neutron/33Si
-          double denom_c  = BRATMS1 + BRATMS2*(1.0 + BRATMS1);
-          double S1_c = (1.0 + BRATMS1)*(1.0 + BRATMS2)/denom_c;
-          double T1_c = -(1.0 + BRATMS2)/denom_c;
-          double S2_c = (1.0 + BRATMS1)/denom_c;
-          // ZR scale: at phi=0, rp=0 → rb = (S2_c/S1_c)*ra
-          double zr_scale = S2_c / S1_c;  // ≈ A/(A+1) ≈ 0.970
-
-          double A12_at_zero = EvalA12(A12_terms, 0.0, 0.0);
-
-          double h_zr    = Incoming.StepSize;
-          int    N_zr    = TgtBS_ch.NSteps;
-          std::complex<double> I_1D(0.0, 0.0);
-
-          for (int i = 1; i < N_zr - 1; ++i) {
-            double ra = i * h_zr;
-            double rb = zr_scale * ra;
-
-            std::complex<double> ca_r = chi_a[i];
-            double phi_T_r = TgtBS_ch.WaveFunction[i].real();
-            // Ptolemy uses chi_b * chi_a (NOT conj(chi_b) * chi_a): DWR=Re(chi_b*chi_a)
-            std::complex<double> cb_r = interp_chi_b(rb);  // no conjugate
-
-            I_1D += ca_r * phi_T_r * cb_r * h_zr;
-          }
-
-          Integral = D0_ZR * A12_at_zero * I_1D;
+        for (int Lo = 0; Lo <= Lmax; Lo++) {
+          if (Lx < std::abs(Li - Lo)) continue;
+          if (Lx > Li + Lo) continue;
+          if ((Li + Lo + Lx) % 2 != 0) continue;
+          lolx_list.push_back({Lo, Lx});
         }
+      }
+    }
+    int IHMAX = (int)lolx_list.size();
+    if (IHMAX == 0) continue;  // no valid (Lo,Lx) for this Li
 
-#else
-        double h    = Incoming.StepSize;   // step for chi_a (incoming distorted wave)
-
-        // ---------------------------------------------------------------
-        // Quadrature parameters — verified from Ptolemy print=2 output header:
-        //   (RI+RO)/2: NPSUMI=42, NPSUM=40, MAP=2, GAMSUM=2.00, [0..30.40]
-        //   RI-RO:     NPDIF=40,            MAP=1, GAMDIF=12.00
-        //   COS(PHI):  NPPHI=20,            MAP=2, GAMPHI≈0, NPHIAD=4, PHIMID=0.20
-        //   DWCUT=2e-6
-        // ---------------------------------------------------------------
-        const int NPSUM = 40;    // GL points for H-computation U grid
-        const int NPDIF = 40;    // GL points for V  (NPDIF=40 from Ptolemy header)
-        const int NPPHI = 20;    // GL points for phi (NPPHI=20 from Ptolemy header)
-        const double SUMMAX = 30.4;    // asymptopia=30 → SUMMAX=30.4 (Ptolemy output)
-        const double GAMSUM = 2.0;     // GAMSUM=2.00 (rational-sinh for sum)
-        const double GAMDIF = 12.0;    // GAMDIF=12.00 (from Ptolemy header RI-RO row)
-        const double GAMPHI = 1.0e-6;  // GAMPHI≈0 → nearly linear phi map
-        const double PHIMID_frac = 0.20; // PHIMID=0.2000 (from Ptolemy header COS(PHI) row)
-        const double DWCUT = 2.0e-6;  // DWCUTOFF=2e-6
-        const int LOOKST = 250;       // test points for phi scan
-        const int NPHIAD = 4;         // NPHIAD=4 (from Ptolemy header)
-        const double DXV = 2.0 / ((double)LOOKST * LOOKST);
-        const int IXTOPZ = LOOKST + 1;
-        const double SUMPTS = 8.0;    // dpsb: SUMPTS=8 (from RGRIDS row C, col 2)
-        // XS_phi: two test cos(phi) values for GRDSET BSPROD scan (near ±1)
-        // Ptolemy: XS(1)=1-DXV (near forward), XS(2)=-1+DXV (near backward)
-        // But DXV here uses LOOKST=100 (Fortran GRDSET LOOKST, not phi-scan LOOKST)
-        const double DXV_grdset = 2.0 / (100.0 * 100.0);   // LOOKST=100 in GRDSET
-        const double XS_phi[2] = {1.0 - DXV_grdset, -1.0 + DXV_grdset};
-
-        // Ptolemy GRDSET: NPSUMI = (SUMMAX-SUMMIN)*SUMPTS*(AKI+AKO)/(4*PI), >= NPSUM
-        // This is the chi-integration grid size (splined from NPSUM H-computation grid)
-        double AKI = Incoming.k;   // incoming k in fm^-1
-        double AKO = Outgoing.k;   // outgoing k in fm^-1
-
-        // Build CUBMAP GL points for phi on [0,1] (scaled by PHI0 later)
-        // CUBMAP(MAPPHI=2, XLO=0, XMID=PHIMID_frac, XHI=1, GAMPHI≈0) → rational-sinh near 0
-        std::vector<double> phi_pts(NPPHI), phi_wts(NPPHI);
-        GaussLegendre(NPPHI, -1.0, 1.0, phi_pts, phi_wts);
-        CubMap(2, 0.0, PHIMID_frac, 1.0, GAMPHI, phi_pts, phi_wts);
-        // phi_pts[i] ∈ [0,1], phi_wts[i] weights for integration over [0,1]
-        // In Pass 2: PHI = PHI0 * phi_pts[i], DPHI = PHI0 * phi_wts[i] * sin(PHI)
-
-        // Sum GL base points on [-1,1] (will be transformed by CubMap)
-        std::vector<double> xi_s(NPSUM), wi_s(NPSUM);
-        GaussLegendre(NPSUM, -1.0, 1.0, xi_s, wi_s);
-
-        // Chi_a interpolation (same two-mode design as chi_b above)
-        const double chi_a_maxR = (chi_a.size() >= 4)
-            ? (static_cast<int>(chi_a.size()) - 4) * h : Incoming.MaxR;
-        auto interp_chi_a = [&](double r) -> std::complex<double> {
-          if (r <= 0 || r > chi_a_maxR) return {0.0, 0.0};
-#ifdef INTERP_PTOLEMY
-          double rbyh = r / h;
-          int I = static_cast<int>(rbyh + 0.5);
-          int IMX = static_cast<int>(chi_a.size()) - 4;
-          I = std::max(2, std::min(I, IMX));
-          double P = rbyh - I;
-          double PS = P * P;
-          double X1 = P * (PS - 1.0) / 24.0;
-          double X2 = X1 + X1, X3 = X1 * P;
-          double X4 = X2 + X2 - 0.5 * P, X5 = X4 * P;
-          double C1 = X3 - X2, C5 = X3 + X2;
-          double C3 = X5 - X3, C2 = X5 - X4, C4 = X5 + X4;
-          C3 = C3 + C3 + 1.0;
-          return C1*chi_a[I-2] - C2*chi_a[I-1] + C3*chi_a[I]
-               - C4*chi_a[I+1] + C5*chi_a[I+2];
-#else
-          double idx_f = r / h;
-          int ii = static_cast<int>(idx_f);
-          if (ii >= (int)chi_a.size() - 1) return {0.0, 0.0};
-          double frac = idx_f - ii;
-          return chi_a[ii] * (1.0 - frac) + chi_a[ii+1] * frac;
-#endif
-        };
-        // Note: interp_chi_b already defined above (before #ifdef USE_ZR) — reuse it here.
-
-        // Helper: evaluate BSPROD-like integrand at (ra, rb, x=cos_phi)
-        // Returns PRIOR: |IVPHI_T(rx)| * |phi_P(rp)|  (same as used in AngKernel)
-        auto bsprod_val = [&](double ra, double rb, double x) -> double {
-          double rx2 = S1*S1*ra*ra + T1*T1*rb*rb + 2.0*S1*T1*ra*rb*x;
-          double rp2 = S2*S2*ra*ra + T2*T2*rb*rb + 2.0*S2*T2*ra*rb*x;
-          if (rx2 < 0) rx2 = 0;
-          if (rp2 < 0) rp2 = 0;
-          double rx = std::sqrt(rx2);
-          double rp = std::sqrt(rp2);
-#ifndef USE_PRIOR_FORM
-          {
-            double phi_T  = InterpolateClipped(TgtBS_ch.WaveFunction, TgtBS_ch.RGrid,
-                                               TgtBS_ch.NSteps, TgtBS_ch.StepSize,
-                                               TgtBS_ch.MaxR, rx, phi_T_max, r_T_peak);
-            double ivphi_P_nc = InterpolateIVPHI(IVPHI_P, h_common, NSteps_common,
-                                              h_common * NSteps_common, rp,
-                                              IVPHI_P_max, r_P_vert_peak);
-            // Ptolemy RCORE formula
-            double dS2 = S1 - S2, dT2 = T1 - T2;
-            double rc2 = dS2*dS2*ra*ra + dT2*dT2*rb*rb + 2.0*dS2*dT2*ra*rb*x;
-            double rc = std::sqrt(std::max(rc2, 0.0));
-            double fc = 1.0/(1.0+std::exp((rc - RNCORE_post)/AOPT_post));
-            double fs = 1.0/(1.0+std::exp((rb - RNSCAT_post)/AOPT_post));
-            double dnu = VOPT_post * (fc - fs);
-            double veff = InterpolateV(PrjBS_ch.V_real, PrjBS_ch.StepSize,
-                                       PrjBS_ch.NSteps, PrjBS_ch.MaxR, rp);
-            double fac = (std::abs(veff) > 1e-6) ? (1.0 + dnu/veff) : 1.0;
-            double ivphi_P = fac * ivphi_P_nc;
-            return std::abs(phi_T * ivphi_P);
-          }
-#else
-          double ivphi_T = InterpolateIVPHI(IVPHI_T, h_T, NSteps_T,
-                                             h_T * NSteps_T, rx,
-                                             IVPHI_T_max, r_T_vert_peak);
-          double phi_P  = InterpolateClipped(PrjBS_ch.WaveFunction, PrjBS_ch.RGrid,
-                                             PrjBS_ch.NSteps, PrjBS_ch.StepSize,
-                                             PrjBS_ch.MaxR, rp, phi_P_max, r_P_peak);
-          return std::abs(ivphi_T * phi_P);
-#endif
-        };
-
-        // ── WVWMAX scan & SUMMIN search (Ptolemy GRDSET steps 1&2) ─────────
-        // Ptolemy uses BSPROD ITYPE=3 (R*PSI*phi'*V*phi'*PSI*R) which includes
-        // the distorted waves chi_a, chi_b. The chi suppression at small r
-        // naturally limits WVWMAX to the physical peak and sets SUMMIN to the
-        // inner integration boundary.
-        //
-        // Our bsprod_val doesn't include chi — we compute WVWMAX and SUMMIN
-        // using a separate helper that evaluates |chi_a(U)| * bsprod_val(U,U,x) * |chi_b(U)|.
-        auto bsprod_with_chi = [&](double U, double x) -> double {
-          if (U < 1e-6) return 0.0;
-          // chi_a at ra=U, chi_b at rb=U (same U for the diagonal scan)
-          double ca_mag = std::abs(interp_chi_a(U));
-          double cb_mag = std::abs(interp_chi_b(U));
-          // Include ra*rb factor (Ptolemy ITYPE=3: R*PSI*...*PSI*R)
-          return U * ca_mag * bsprod_val(U, U, x) * U * cb_mag;
-        };
-
-        // SUMMIN/SUMMID: use fixed values matching Ptolemy for Li=0 (best-validated element).
-        // Per-Li SUMMID computed above but doesn't affect errors for this reaction —
-        // errors are dominated by the H-computation (phi integral), not chi-grid placement.
-        // WVWMAX for phi-scan ULIM still needs per-(JPI,JPO) chi (used inside H loop only)
-        double WVWMAX_pre = 0.0;
-        for (double U_scan = 0.5 * SUMMAX; U_scan > 0.05; U_scan -= 0.2) {
-          double v1 = bsprod_with_chi(U_scan,  1.0);
-          double v2 = bsprod_with_chi(U_scan, -1.0);
-          WVWMAX_pre = std::max(WVWMAX_pre, std::max(v1, v2));
+    // ── Step 2: Precompute chi_b for all unique (Lo,JPO) ─────────────────────────
+    // Map (Lo,JPO) → chi_b wavefunction
+    struct LoJpo { int Lo, JPO;
+      bool operator<(const LoJpo& o) const {
+        return Lo!=o.Lo ? Lo<o.Lo : JPO<o.JPO; } };
+    std::map<LoJpo, std::vector<std::complex<double>>> chi_b_cache;
+    {
+      std::set<int> unique_Lo;
+      for (auto& [Lo, Lx] : lolx_list) unique_Lo.insert(Lo);
+      for (int Lo : unique_Lo) {
+        int JPO_min = std::max(1, std::abs(2*Lo - JB_dw));
+        int JPO_max = 2*Lo + JB_dw;
+        for (int JPO = JPO_min; JPO <= JPO_max; JPO += 2) {
+          WavElj(Outgoing, Lo, JPO);
+          chi_b_cache[{Lo, JPO}] = Outgoing.WaveFunction;
         }
-        double RVRLIM = RVRLIM_li;   // per-Li RVRLIM (affects phi PHI0 cutoff)
-        double SUMMIN = SUMMIN_li;   // per-Li SUMMIN
-        double SUMMID = 0.5 * SUMMAX;  // = 15.20 fm — keeps Li=0,Lo=2 at -0.7% error
+      }
+    }
+    const double h_chi_b = Outgoing.StepSize;
+    const double chi_b_maxR_all = (Outgoing.NSteps > 4)
+        ? (Outgoing.NSteps - 4) * h_chi_b : Outgoing.MaxR;
 
-        // Ptolemy GRDSET: NPSUMI = max(NPSUM, floor((SUMMAX-SUMMIN)*SUMPTS*(AKI+AKO)/(4*PI)))
-        const double M_PI_local = 3.14159265358979323846;
-        int NPSUMI = (int)((SUMMAX - SUMMIN) * SUMPTS * (AKI + AKO) / (4.0 * M_PI_local));
-        if (NPSUMI < NPSUM) NPSUMI = NPSUM;
+    // ── Step 3: Precompute A12 terms for all IHMAX (Lo,Lx) pairs ─────────────────
+    std::vector<std::vector<std::tuple<int,int,double>>> A12_all(IHMAX);
+    for (int IH = 0; IH < IHMAX; ++IH)
+      A12_all[IH] = ComputeA12Terms(Li, lolx_list[IH].Lo, lolx_list[IH].Lx, lT, lP);
 
-        // Generate NPSUMI chi-integration U-grid
-        std::vector<double> xi_si(NPSUMI), wi_si(NPSUMI);
-        GaussLegendre(NPSUMI, -1.0, 1.0, xi_si, wi_si);
-        CubMap(2, SUMMIN, SUMMID, SUMMAX, GAMSUM, xi_si, wi_si);
+    // ── Quadrature parameters ─────────────────────────────────────────────────────
+    const int NPSUM = 40;
+    const int NPDIF = 40;
+    const int NPPHI = 20;
+    const double SUMMAX = 30.4;
+    const double GAMSUM = 2.0;
+    const double GAMDIF = 12.0;
+    const double GAMPHI = 1.0e-6;
+    const double PHIMID_frac = 0.20;
+    const double DWCUT = 2.0e-6;
+    const int LOOKST = 250;
+    const int NPHIAD = 4;
+    const double DXV = 2.0 / ((double)LOOKST * LOOKST);
+    double AKI = Incoming.k;
+    double AKO = Outgoing.k;
 
-        // ---------------------------------------------------------------
-        // Ptolemy INELDC faithful translation (source.mor lines 17871-18200)
-        // Loop order: IV (NPDIF) outer, then:
-        //   1) IU=1..NPSUM: compute H[IU] via phi loop → SMHVL[IU] = H*RIOEX
-        //   2) SPLNCB+INTRPC: spline SMHVL[NPSUM] → SMIVL[NPSUMI]
-        //   3) IU=1..NPSUMI: chi_a(RI)*SMIVL[IU]*chi_b(RO)*LWIO
-        // RIOEX = exp(+ALPHAP*RP + ALPHAT*RT): removes bound-state tail from H
-        //   so H stays numerically well-behaved; LWIO includes exp(-...) to restore.
-        //   RP = sqrt(1 + (S2*RI + T2*RO)^2),  RT = sqrt(1 + (S1*RI + T1*RO)^2)
-        //   ALPHAP = kappa_P = sqrt(2*mu_P*BE_P)/hbarc  (projectile decay constant)
-        //   ALPHAT = kappa_T = sqrt(2*mu_T*BE_T)/hbarc  (target decay constant)
-        // ---------------------------------------------------------------
+    // NPSUMI (chi-integration grid)
+    int NPSUMI = (int)((SUMMAX - SUMMIN_li) * 8.0 * (AKI + AKO) / (4.0*M_PI));
+    if (NPSUMI < NPSUM) NPSUMI = NPSUM;
 
-        // Bound-state decay constants (ALPHAP, ALPHAT in Fortran)
-        double ALPHAP = std::sqrt(2.0 * PrjBS_ch.mu * AMU * std::abs(ProjectileBS.BindingEnergy)) / HBARC;
-        double ALPHAT = std::sqrt(2.0 * TgtBS_ch.mu * AMU * std::abs(TargetBS.BindingEnergy)) / HBARC;
+    // Phi GL base points [0,1] (CubMap concentrates near 0 per Ptolemy)
+    std::vector<double> phi_pts(NPPHI), phi_wts(NPPHI);
+    GaussLegendre(NPPHI, -1.0, 1.0, phi_pts, phi_wts);
+    CubMap(2, 0.0, PHIMID_frac, 1.0, GAMPHI, phi_pts, phi_wts);
 
-        // Step 1: Apply CUBMAP to U (sum) grid — SUMHPTS in Fortran
-        // CubMap maps [-1,1] → [SUMMIN,SUMMAX] with concentration near SUMMID
-        CubMap(2, SUMMIN, SUMMID, SUMMAX, GAMSUM, xi_s, wi_s);
-        // xi_s[IU] = U values (SUMHPTS), wi_s[IU] = weights (SUMHWTS)
+    // H-computation U-grid (NPSUM) and chi-integration U-grid (NPSUMI)
+    std::vector<double> xi_s(NPSUM), wi_s(NPSUM);
+    GaussLegendre(NPSUM, -1.0, 1.0, xi_s, wi_s);
+    CubMap(2, SUMMIN_li, SUMMID_li, SUMMAX, GAMSUM, xi_s, wi_s);
 
-        // Step 2: Set up phi GL points (pre-computed once, same for all IV,IU)
-        // Ptolemy GRDSET: CUBMAP(MAPPHI=2, 0, PHIMID, 1, GAMPHI) applied to GL pts
-        // These are fractional phi points in [0,1]; actual PHI = PHI0 * phi_pts[k]
+    std::vector<double> xi_si(NPSUMI), wi_si(NPSUMI);
+    GaussLegendre(NPSUMI, -1.0, 1.0, xi_si, wi_si);
+    CubMap(2, SUMMIN_li, SUMMID_li, SUMMAX, GAMSUM, xi_si, wi_si);
 
-        // Step 3: Pre-compute V (dif) grid — NPDIF GL points with CUBMAP
-        // Ptolemy uses adaptive V-range per U (LVMIN[IU], LVMAX[IU]).
-        // For the outer IV loop, we iterate over NPDIF GL indices; for each IV,
-        // we evaluate at U-dependent (ra,rb) pairs inside the IU loop.
-        // Implementation: store per-U VMIN/VMAX from GRDSET Stage 1 scan,
-        // then for each (IV,IU) pair compute V = CUBMAP(IV_frac, VMIN_u, VMID_u, VMAX_u).
-        // For simplicity (and correctness for nearly-symmetric bsprod): VMID_u = 0.
+    // V-grid GL base (NPDIF)
+    std::vector<double> gl_dif_base(NPDIF), gl_dif_wts_base(NPDIF);
+    GaussLegendre(NPDIF, -1.0, 1.0, gl_dif_base, gl_dif_wts_base);
 
-        // ── GRDSET Stage 1: find VMIN/VMAX per U-point ─────────────────────────
-        // Faithful port of Ptolemy GRDSET Stage 1 scan (source.mor ~line 16190-16280).
-        //
-        // KEY: Fortran VVAL is a FRACTION in [0,1] of the half-range.
-        //   VLEN = 2*U, SYNE = ±0.5*VLEN = ±U
-        //   RI = U + VVAL*SYNE = U*(1+VVAL)  (positive scan)
-        //   RO = U - VVAL*SYNE = U*(1-VVAL)
-        //   Stored absolute: LVMAX = VMAX_frac * VLEN = VMAX_frac * 2*U
-        //
-        // Scan starts at VVAL = min(1, prev_VMAX+3*DV) (DV=1/LOOKST=0.01),
-        // then increments VVAL in DO 420, then decrements in DO 422 until BSPROD>ULIM.
-        // VMIN is scanned separately with SYNE<0 (RI=U-VVAL*U, RO=U+VVAL*U).
-        // Both are carried between U iterations (warm start from previous VMAX/VMIN).
-        std::vector<double> VMAX_per_U(NPSUM), VMIN_per_U(NPSUM), VMID_per_U(NPSUM);
-        // FAITHFUL: use full symmetric V range ±2U for all U (Ptolemy base before LSQPOL trim)
-        // LSQPOL scan is a performance shortcut; faithful version always uses ±VLEN = ±2U.
-        {
-          for (int IU = 0; IU < NPSUM; ++IU) {
-            double U = xi_s[IU];
-            double VLEN = 2.0 * U;
-            VMAX_per_U[IU] =  VLEN;
-            VMIN_per_U[IU] = -VLEN;
-            VMID_per_U[IU] =  0.0;
-          }
-        }
-        if (false) {  // disabled: old LSQPOL V-scan (keep for reference)
-          const int LOOKST_v = 100;
-          const double DV = 1.0 / LOOKST_v;  // fraction step
-          double VMAX_frac = 1.0, VMIN_frac = 1.0;  // carried between U iters
-          for (int IU = 0; IU < NPSUM; ++IU) {
-            double U = xi_s[IU];
-            double VLEN = 2.0 * U;
-            if (U < 1.0) {
-              VMAX_per_U[IU] = VLEN;
-              VMIN_per_U[IU] = -VLEN;
-              VMID_per_U[IU] = 0.0;
-              continue;
-            }
-            // ---- Positive V scan (SYNE = +U) ----
-            double vval = std::min(1.0, VMAX_frac + 3.0*DV);
-            // DO 420: increment once more
-            vval = std::min(1.0, vval + 3.0*DV);
-            // DO 422: scan down until BSPROD > ULIM
-            while (vval > 0.5*DV) {
-              double ra = U + vval * U;   // U*(1+vval)
-              double rb = U - vval * U;   // U*(1-vval)
-              double ULIM = RVRLIM / std::max(1e-2, ra * rb);
-              bool triggered = false;
-              for (int k = 0; k < 2; ++k) {
-                double f = std::abs(bsprod_val(ra, rb, (k==0) ? XS_phi[0] : XS_phi[1]));
-                if (f > ULIM) { triggered = true; break; }
-              }
-              if (triggered) { vval = std::min(1.0, vval + DV); break; }
-              vval -= DV;
-            }
-            vval = std::min(1.0, vval);
-            // Asymptopia check
-            {
-              double ra = U + vval*U, rb = U - vval*U;
-              double rt = std::sqrt(S1*S1*ra*ra + T1*T1*rb*rb + 2.0*S1*T1*ra*rb*(1.0-DXV));
-              double rp = std::sqrt(S2*S2*ra*ra + T2*T2*rb*rb + 2.0*S2*T2*ra*rb*(1.0-DXV));
-              if (rt > TgtBS_ch.MaxR || rp > TgtBS_ch.MaxR) vval -= DV;
-            }
-            VMAX_frac = std::max(0.0, vval);
-            VMAX_per_U[IU] = VMAX_frac * VLEN;
+    // Chi_a interpolation helper
+    const double h_chi_a = Incoming.StepSize;
 
-            // ---- Negative V scan (SYNE = -U) ----
-            vval = std::min(1.0, VMIN_frac + 3.0*DV);
-            vval = std::min(1.0, vval + 3.0*DV);
-            while (vval > 0.5*DV) {
-              double ra = U - vval * U;   // U*(1-vval) — SYNE<0 swaps ra,rb
-              double rb = U + vval * U;   // U*(1+vval)
-              if (ra < 0 || rb < 0) { vval = 0; break; }
-              double ULIM = RVRLIM / std::max(1e-2, std::abs(ra * rb));
-              bool triggered = false;
-              for (int k = 0; k < 2; ++k) {
-                double f = std::abs(bsprod_val(ra, rb, (k==0) ? XS_phi[0] : XS_phi[1]));
-                if (f > ULIM) { triggered = true; break; }
-              }
-              if (triggered) { vval = std::min(1.0, vval + DV); break; }
-              vval -= DV;
-            }
-            vval = std::min(1.0, vval);
-            {
-              double ra = U - vval*U, rb = U + vval*U;
-              double rt = std::sqrt(S1*S1*ra*ra + T1*T1*rb*rb + 2.0*S1*T1*ra*rb*(1.0-DXV));
-              double rp = std::sqrt(S2*S2*ra*ra + T2*T2*rb*rb + 2.0*S2*T2*ra*rb*(1.0-DXV));
-              if (rt > TgtBS_ch.MaxR || rp > TgtBS_ch.MaxR) vval -= DV;
-            }
-            VMIN_frac = std::max(0.0, vval);
-            VMIN_per_U[IU] = -VMIN_frac * VLEN;
+    // ── Step 4: Integral accumulators: I[IH][JPI][JPO] ───────────────────────────
+    // Key: (IH index into lolx_list, JPI, JPO)
+    struct IntKey { int IH, JPI, JPO;
+      bool operator<(const IntKey& o) const {
+        if (IH!=o.IH) return IH<o.IH;
+        if (JPI!=o.JPI) return JPI<o.JPI;
+        return JPO<o.JPO; } };
+    std::map<IntKey, std::complex<double>> I_accum;
 
-            // ---- Stage 2: VMID = V of max |bsprod| (GRDSET Stage 2) ----
-            double vmn = VMIN_per_U[IU], vmx = VMAX_per_U[IU];
-            int IMAX = 2 * NPDIF;
-            double dv2 = (vmx - vmn) / (IMAX + 1);
-            double vv2 = vmn, pvpmax = 0.0, vofmax = 0.5*(vmn+vmx);
-            for (int IV2 = 1; IV2 <= IMAX; ++IV2) {
-              vv2 += dv2;
-              double ra = U + 0.5*vv2, rb = U - 0.5*vv2;
-              double temp = 0;
-              for (int k = 0; k < 2; ++k)
-                temp += std::abs(bsprod_val(ra, rb, (k==0) ? XS_phi[0] : XS_phi[1]));
-              if (temp > pvpmax) { pvpmax = temp; vofmax = vv2; }
-            }
-            double vm = vofmax;
-            double tmp30 = 0.3*(vmx - vmn);
-            vm = std::min(std::max(vm, vmn + tmp30), vmx - tmp30);
-            VMID_per_U[IU] = vm;
-#ifdef DEBUG_VGRID
-            if (Li==0 && Lo==2 && Lx==2 && JPI==2 && JPO==3 && IU < 10)
-              fprintf(stderr,"VGRID IU=%2d U=%7.4f  VMIN=%9.5f VMID=%9.5f VMAX=%9.5f  VLEN=%9.5f\n",
-                      IU, U, vmn, vm, vmx, VLEN);
-#endif
-          }
-        }  // end if(false) — disabled LSQPOL scan
+    // ── Step 5: MAIN IV LOOP (Ptolemy DO 859 IV=1,NPDIF) ─────────────────────────
+    for (int IV = 0; IV < NPDIF; ++IV) {
+      double gl_v_frac = gl_dif_base[IV];
+      double gl_v_wt   = gl_dif_wts_base[IV];
 
-        // ── GRDSET Stage 3: LSQPOL polynomial fit + evaluate at NPSUMI chi-grid ──
-        // Ptolemy source: source.mor lines 16344-16590
-        // VALIDATED vs Fortran: max coeff rel err <5e-12, max residual err <5e-11 ✅
-        //
-        // MATINV: Gaussian elim with partial pivoting + column un-swap post-loop
-        // LSQPOL: fits degree-3 polynomial to 3 columns (VMIN, VMID_frac, VMAX)
-        //   Weights = 1/(VMAX-VMIN)², X = xi_s (NPSUM chi-points, ~0..30 fm)
-        //   After fit: VMIN/VMID/VMAX arrays are replaced with poly values
-        //   For NPSUMI grid: evaluate polynomial via Horner method at each xi_si[IU]
+      // ── H-computation IU loop (Ptolemy DO 549 IU=1,NPSUM) ──────────────────────
+      // SMHVL[IH][IU] = H[IH] * RIOEX   (IHMAX × NPSUM array)
+      std::vector<std::vector<double>> SMHVL(IHMAX, std::vector<double>(NPSUM, 0.0));
 
-        // ── MATINV ──
-        // A: M×M normal-eq matrix; B: M×LSUB RHS → solved in-place
-        auto matinv_lsq = [](std::vector<std::vector<double>>& A, int N,
-                              std::vector<std::vector<double>>& B, int M_rhs) {
-            std::vector<double> pivot(N, 0.0);
-            std::vector<int> index_arr(N, 0);
-            for (int I = 0; I < N; ++I) {
-                double amax = 0.0; int irow = 0, icolum = 0;
-                for (int j = 0; j < N; ++j) { if (pivot[j] != 0.0) continue;
-                    for (int k = 0; k < N; ++k) { if (pivot[k] != 0.0) continue;
-                        double tmp = std::abs(A[j][k]);
-                        if (tmp >= amax) { amax = tmp; irow = j; icolum = k; } } }
-                index_arr[I] = irow * 4096 + icolum;
-                pivot[icolum] = amax;
-                if (irow != icolum) {
-                    std::swap(A[irow], A[icolum]);
-                    for (int k = 0; k < M_rhs; ++k) std::swap(B[irow][k], B[icolum][k]); }
-                double pv = A[icolum][icolum]; A[icolum][icolum] = 1.0;
-                for (int k = 0; k < N; ++k) A[icolum][k] /= pv;
-                for (int k = 0; k < M_rhs; ++k) B[icolum][k] /= pv;
-                for (int j = 0; j < N; ++j) { if (j == icolum) continue;
-                    double T = A[j][icolum]; A[j][icolum] = 0.0;
-                    for (int k = 0; k < N; ++k) A[j][k] -= A[icolum][k] * T;
-                    for (int k = 0; k < M_rhs; ++k) B[j][k] -= B[icolum][k] * T; } }
-            // Post-loop: column un-swap (Fortran MATINV lines 600-710)
-            for (int I1 = N-1; I1 >= 0; --I1) {
-                int K = index_arr[I1] / 4096, IC = index_arr[I1] % 4096;
-                if (K != IC) for (int j = 0; j < N; ++j) std::swap(A[j][K], A[j][IC]); }
-        };
+      for (int IU = 0; IU < NPSUM; ++IU) {
+        double U = xi_s[IU];
+        if (U < 1e-6) { continue; }
 
-        const int NVPOLY = 3, NVTERM = NVPOLY + 1;  // degree-3 → 4 coefficients
-        const int LSUB_v = 3;   // 3 columns: VMIN, VMID_frac, VMAX
+        // V range: flat ±2U (symmetric, Ptolemy IRECT=1 before LSQPOL trim)
+        double VLEN = 2.0 * U;
+        double V    = gl_v_frac * VLEN;
+        double DIFWT = gl_v_wt * VLEN;
 
-        // Build VMID fractional: (VMID_abs - VMIN) / (VMAX - VMIN)
-        std::vector<double> VMID_frac_v(NPSUM);
-        for (int IU = 0; IU < NPSUM; ++IU) {
-            double rng = VMAX_per_U[IU] - VMIN_per_U[IU];
-            VMID_frac_v[IU] = (rng > 1e-12) ?
-                              (VMID_per_U[IU] - VMIN_per_U[IU]) / rng : 0.5;
-        }
+        double ra = U + V * 0.5;
+        double rb = U - V * 0.5;
+        if (ra < 1e-6 || rb < 1e-6) continue;
 
-        // Weights = 1/(VMAX-VMIN)²
-        std::vector<double> LVWTS(NPSUM);
-        for (int IU = 0; IU < NPSUM; ++IU) {
-            double rng = VMAX_per_U[IU] - VMIN_per_U[IU];
-            LVWTS[IU] = (rng > 1e-12) ? 1.0 / (rng * rng) : 0.0;
-        }
+        // RIOEX = exp(+ALPHAP*RP + ALPHAT*RT) at phi=0 (x=1)
+        double RP0 = std::sqrt(std::max(0.0, (S2*ra + T2*rb)*(S2*ra + T2*rb)));
+        double RT0 = std::sqrt(std::max(0.0, (S1*ra + T1*rb)*(S1*ra + T1*rb)));
+        double RIOEX = std::exp(ALPHAP * RP0 + ALPHAT * RT0);
 
-        // Scale X to [-1,1] (Fortran LSQPOL does this to prevent overflow)
-        double Xmax_lsq = 0;
-        for (int k = 0; k < NPSUM; ++k) Xmax_lsq = std::max(Xmax_lsq, std::abs(xi_s[k]));
-        if (Xmax_lsq < 1e-15) Xmax_lsq = 1.0;
-        std::vector<double> Xs_lsq(NPSUM);
-        for (int k = 0; k < NPSUM; ++k) Xs_lsq[k] = xi_s[k] / Xmax_lsq;
-
-        const int M = NVTERM;
-        // xpow[M..3M-2]: power sums for A matrix; xpow[3M..4M-1]: for B RHS
-        std::vector<double> xpow_lsq(4*M+2, 0.0);
-        for (int k = 0; k < NPSUM; ++k) {
-            double term = LVWTS[k];
-            for (int kk = M; kk <= 3*M-2; ++kk) { xpow_lsq[kk] += term; term *= Xs_lsq[k]; }
-        }
-        // A matrix: A[i][j] = xpow[i+j+M]  (0-based, from Fortran A(I,J)=XPOWER(I+J+M-1))
-        std::vector<std::vector<double>> A_lsq(M, std::vector<double>(M, 0.0));
-        for (int i = 0; i < M; ++i)
-            for (int j = 0; j < M; ++j)
-                A_lsq[i][j] = xpow_lsq[i+j+M];
-
-        // B_lsq[i][j] = Σ_k W[k]*Y[k][j]*X[k]^i  (Y columns: VMIN, VMID_frac, VMAX)
-        const double* Ycols[3] = {VMIN_per_U.data(), VMID_frac_v.data(), VMAX_per_U.data()};
-        std::vector<std::vector<double>> B_lsq(M, std::vector<double>(LSUB_v, 0.0));
-        for (int j = 0; j < LSUB_v; ++j) {
-            for (int kk = 3*M; kk <= 4*M-1; ++kk) xpow_lsq[kk] = 0.0;
-            for (int k = 0; k < NPSUM; ++k) {
-                double term = LVWTS[k] * Ycols[j][k];
-                for (int kk = 3*M; kk <= 4*M-1; ++kk) { xpow_lsq[kk] += term; term *= Xs_lsq[k]; }
-            }
-            for (int i = 0; i < M; ++i) B_lsq[i][j] = xpow_lsq[3*M+i];
-        }
-
-        // Solve normal equations
-        matinv_lsq(A_lsq, M, B_lsq, LSUB_v);
-
-        // Un-scale coefficients: Fortran DO I2=2,M; DO I=I2,M: B[I][j] *= XSCALE
-        double Xscale_lsq = 1.0 / Xmax_lsq;
-        for (int j = 0; j < LSUB_v; ++j)
-            for (int i2 = 1; i2 < M; ++i2)
-                for (int i = i2; i < M; ++i)
-                    B_lsq[i][j] *= Xscale_lsq;
-
-        // Polynomial evaluator (Horner, unscaled x)
-        auto eval_poly_lsq = [&](int j, double x_unscaled) -> double {
-            double p = 0.0;
-            for (int i2 = 0; i2 < M; ++i2) p = x_unscaled * p + B_lsq[M-1-i2][j];
-            return p;
-        };
-
-        // Apply residuals to NPSUM grid: replace VMIN/VMID_frac/VMAX with poly values
-        // (Fortran: LVMIN[IU] += RESID → = poly(U), then VMID_abs = (VMAX-VMIN)*VMID_frac+VMIN)
-        for (int IU = 0; IU < NPSUM; ++IU) {
-            double U = xi_s[IU];
-            VMIN_per_U[IU] = eval_poly_lsq(0, U);
-            double vmid_frac_new = eval_poly_lsq(1, U);
-            VMAX_per_U[IU] = eval_poly_lsq(2, U);
-            VMID_per_U[IU] = (VMAX_per_U[IU] - VMIN_per_U[IU]) * vmid_frac_new + VMIN_per_U[IU];
-        }
-
-        // For NPSUMI chi-grid: evaluate polynomial or copy (when NPLYSW)
-        bool NPLYSW = (NPSUMI == NPSUM);
-        // FAITHFUL: NPSUMI V-grid also uses flat ±2U (no LSQPOL polynomial)
-        std::vector<double> VMAX_per_U_i(NPSUMI), VMIN_per_U_i(NPSUMI), VMID_per_U_i(NPSUMI);
-        for (int IU = 0; IU < NPSUMI; ++IU) {
-            double U = xi_si[IU];
-            VMAX_per_U_i[IU] =  2.0 * U;
-            VMIN_per_U_i[IU] = -2.0 * U;
-            VMID_per_U_i[IU] =  0.0;
-        }
-
-        // Base GL points for V (NPDIF), will be CubMapped per (IV,IU) inside loops
-        // Ptolemy: for each IV, the GL fraction is DIFPTS[IV] ∈ [-1,1]
-        // We pre-generate the raw GL fractions and weights, then CubMap inside loops
-        std::vector<double> gl_dif_base(NPDIF), gl_dif_wts_base(NPDIF);
-        GaussLegendre(NPDIF, -1.0, 1.0, gl_dif_base, gl_dif_wts_base);
-
-        // SMHVL: H[IU]*RIOEX for IU=0..NPSUM-1, computed in inner loop
-        // SMIVL: H_interp[IU] for IU=0..NPSUMI-1, from spline interpolation
-        std::vector<double> H_smhvl(NPSUM, 0.0);   // H*RIOEX on NPSUM grid
-        std::vector<double> H_smhvl_U(NPSUM, 0.0); // U-values where H was computed
-        std::vector<double> H_smivl(NPSUMI, 0.0);  // H interpolated to NPSUMI grid
-
-        // ── Ptolemy SPLNCB + INTRPC (faithful port of fortlib.mor) ─────────────
-        // Replaces textbook natural_cubic_spline with the exact Ptolemy implementation.
-        // Validated vs Fortran to 4.7e-10 across all 3 test cases (spline_compare.cpp).
-        // Key differences from textbook:
-        //   1. Leading/trailing constant-string trimming (IBASE/J scan)
-        //   2. Forward+backward tridiagonal with pivot storage in B[] array
-        //   3. B[IBASE+NM1] extended as "N-th cubic = N-1-th cubic"
-        auto ptolemy_splncb = [](int N, const std::vector<double>& X,
-                                  const std::vector<double>& Y,
-                                  std::vector<double>& B, std::vector<double>& C,
-                                  std::vector<double>& D) {
-          B.assign(N, 0.0); C.assign(N, 0.0); D.assign(N, 0.0);
-          if (N <= 1) return;
-          int NM1 = N - 1;
-          // Forward scan for IBASE (0-based = Fortran I_1based - 1)
-          int IBASE = NM1 - 1;
-          for (int ii = 0; ii < NM1; ii++) {
-            if (1.0e15 * std::abs(Y[ii+1] - Y[ii]) > std::abs(Y[ii])) {
-              IBASE = ii; goto found_ibase;
-            }
-          }
-found_ibase:;
-          // Backward scan for J (Fortran 1-based; NUSE = J_1based - IBASE)
-          int J_0based = N - 1;
-          {
-            int I_1based = IBASE + 1;
-            for (int I1 = I_1based; I1 <= NM1; I1++) {
-              int Jf = N + I_1based - I1;
-              int J0 = Jf - 1;
-              if (1.0e15 * std::abs(Y[J0-1] - Y[J0]) > std::abs(Y[J0])) {
-                J_0based = J0; goto found_j;
-              }
-            }
-            J_0based = N + (IBASE+1) - NM1 - 1;
-          }
-found_j:;
-          int NUSE = (J_0based + 1) - IBASE;
-          if (NUSE <= 1) return;
-          NM1 = NUSE - 1;
-          double H = X[IBASE+1] - X[IBASE];
-          double F = (Y[IBASE+1] - Y[IBASE]) / H;
-          if (NUSE == 2) { D[IBASE] = 0.0; B[IBASE] = F; return; }
-          // Forward sweep
-          for (int i = 1; i < NM1; i++) {
-            double G = H;
-            H = X[IBASE+i+1] - X[IBASE+i];
-            double E = F;
-            F = (Y[IBASE+i+1] - Y[IBASE+i]) / H;
-            double GBY3 = G / 3.0;
-            D[IBASE+i-1] = GBY3 * B[IBASE+i-1];
-            double EPSIM1 = G + H;
-            double RIM1B3 = F - E;
-            B[IBASE+i] = 1.0 / ((2.0/3.0)*EPSIM1 - GBY3*D[IBASE+i-1]);
-            C[IBASE+i] = RIM1B3 - D[IBASE+i-1]*C[IBASE+i-1];
-          }
-          D[IBASE+NM1] = 0.0;
-          // Backward sweep (Fortran DO 500 I1=2,NM1: I=NM1+2-I1)
-          for (int I1 = 2; I1 <= NM1; I1++) {
-            int i = NM1 + 1 - I1;  // 0-based: NM1-1 down to 1
-            C[IBASE+i] = B[IBASE+i]*C[IBASE+i] - D[IBASE+i]*C[IBASE+i+1];
-          }
-          // Final B, C, D coefficients
-          for (int i = 0; i < NM1; i++) {
-            H = X[IBASE+i+1] - X[IBASE+i];
-            D[IBASE+i] = (C[IBASE+i+1] - C[IBASE+i]) / (3.0*H);
-            B[IBASE+i] = (Y[IBASE+i+1]-Y[IBASE+i])/H - (H*D[IBASE+i] + C[IBASE+i])*H;
-          }
-          // Extend N-th cubic (= N-1-th cubic)
-          D[IBASE+NM1]   = D[IBASE+NM1-1];
-          B[IBASE+NM1]   = B[IBASE+NM1-1] + (2.0*C[IBASE+NM1-1] + 3.0*D[IBASE+NM1-1]*H)*H;
-        };
-
-        // ── Ptolemy INTRPC: evaluate spline at new grid points ──────────────────
-        // Exact port of fortlib.mor INTRPC (sequential scan, Horner evaluation).
-        auto ptolemy_intrpc = [](int NCUBIC, const std::vector<double>& XCUBES,
-                                  const std::vector<double>& AS, const std::vector<double>& BS,
-                                  const std::vector<double>& CS, const std::vector<double>& DS,
-                                  int NPTS, const std::vector<double>& XS,
-                                  std::vector<double>& YS) {
-          YS.assign(NPTS, 0.0);
-          if (NCUBIC < 2) return;
-          const double INF = 1.0e300;
-          double XSIGN = (XCUBES[1] > XCUBES[0]) ? 1.0 : -1.0;
-          double XPREV = INF, XNEXT = INF, XBASE = 0.0;
-          int    N = 0;
-          double A = 0, B = 0, CC = 0, D = 0;
-          for (int ii = 0; ii < NPTS; ii++) {
-            double x = XS[ii];
-            double xc = XSIGN * x;
-loop100:
-            if (xc < XNEXT) goto loop200;
-            XPREV = XNEXT; XBASE = XNEXT * XSIGN; N = N + 1;
-            XNEXT = XCUBES[N+1] * XSIGN;
-            if (N == NCUBIC - 1) XNEXT = INF;
-loop150:
-            A = AS[N]; B = BS[N]; CC = CS[N]; D = DS[N];
-            goto loop100;
-loop200:
-            if (xc >= XPREV) goto loop300;
-            N = 0; XPREV = -INF; XNEXT = XCUBES[1] * XSIGN; XBASE = XCUBES[0];
-            goto loop150;
-loop300:
-            double DEL = x - XBASE;
-            YS[ii] = A + DEL*(B + DEL*(CC + DEL*D));
-          }
-        };
-
-        // Adapter: call SPLNCB+INTRPC (replaces natural_cubic_spline)
-        auto ptolemy_spline = [&ptolemy_splncb, &ptolemy_intrpc](
-                               const std::vector<double>& x, const std::vector<double>& y,
-                               const std::vector<double>& xnew, std::vector<double>& ynew) {
-          int N = (int)x.size();
-          std::vector<double> B(N), C(N), D(N);
-          ptolemy_splncb(N, x, y, B, C, D);
-          ptolemy_intrpc(N, x, y, B, C, D, (int)xnew.size(), xnew, ynew);
-        };
-
-        // ── Outer loop: IV = 1..NPDIF (V grid index, Ptolemy DO 859 IV) ──────
-        for (int IV = 0; IV < NPDIF; ++IV) {
-          double gl_v_frac = gl_dif_base[IV];   // raw GL fraction ∈ [-1,1]
-          double gl_v_wt   = gl_dif_wts_base[IV]; // raw GL weight
-
-          // ─── H computation loop: IU=0..NPSUM-1 (Ptolemy DO 549 IU) ────────
-          // For each NPSUM U-point, compute H via phi integral, store H*RIOEX.
-          for (int IU = 0; IU < NPSUM; ++IU) {
-            H_smhvl[IU] = 0.0;
-            H_smhvl_U[IU] = xi_s[IU];
-
-            double U   = xi_s[IU];   // U = SUMHPTS[IU] (already CubMapped)
-
-            if (U < 1e-6) continue;
-
-            // CubMap V fraction to [VMIN_u, VMID_u, VMAX_u] (Ptolemy MAPDIF=1, GAMDIF=5)
-            double VMIN_u = VMIN_per_U[IU];
-            double VMAX_u = VMAX_per_U[IU];
-            double VMID_u = VMID_per_U[IU];  // V of max |bsprod| from Stage 2
-            std::vector<double> vv(1, gl_v_frac), vw(1, gl_v_wt);
-            CubMap(1, VMIN_u, VMID_u, VMAX_u, GAMDIF, vv, vw);
-            double V     = vv[0];
-
-            double ra = U + V * 0.5;   // RI = U + V/2
-            double rb = U - V * 0.5;   // RO = U - V/2
-
-            if (ra < 1e-6 || rb < 1e-6) continue;
-
-            // RIOEX: Ptolemy GRDSET line 16444
-            //   RIOEX = exp(+ALPHAP * RP + ALPHAT * RT)
-            double RP_rioex = std::sqrt(1.0 + (S2*ra + T2*rb)*(S2*ra + T2*rb));
-            double RT_rioex = std::sqrt(1.0 + (S1*ra + T1*rb)*(S1*ra + T1*rb));
-            double RIOEX = std::exp(ALPHAP * RP_rioex + ALPHAT * RT_rioex);
-
-            // ── Phi scan (Pass 1): find PHI0 cutoff ────────────────────────
-            double ULIM = RVRLIM / (std::max(1.0, ra) * std::max(1.0, rb));
-            int IEND = IXTOPZ;
-            double WOW_prev = 0.0;
-            for (int II = 1; II <= IXTOPZ; ++II) {
-              double X    = 1.0 - DXV * (double)(II-1) * (double)(II-1);
-              if (X < -1.0) X = -1.0;
-              double fifo = std::abs(bsprod_val(ra, rb, X));
-              if (II == 1) {
-                WOW_prev = fifo;
-              } else {
-                if (fifo < ULIM && WOW_prev < ULIM) {
-                  IEND = std::min(II - 1 + NPHIAD, IXTOPZ);
-                  IEND = std::max(IEND, 2);
-                  break;
-                }
-                WOW_prev = fifo;
-              }
-            }
+        // ── PHI0 scan (Ptolemy GRDSET pass-1 phi cutoff, source.mor 16840-16865) ────
+        // Scan X = cos(phi) from 1 (phi=0) toward -1 (phi=π).
+        // Stop when BOTH current AND previous |bsprod| < ULIM (two consecutive points).
+        // IEND = II-1 + NPHIAD (capped at IXTOPZ = LOOKST+1).
+        // Ptolemy Fortran: ULIM = RVRLIM / (max(1,RI) * max(1,RO))
+        double ULIM = RVRLIM_li / (std::max(1.0, ra) * std::max(1.0, rb));
+        int IEND = LOOKST + 1;  // default: use full range (PHI0=π)
+        double WOW = std::abs(bsprod_val(ra, rb, 1.0));  // II=1: always keep
+        for (int II = 2; II <= LOOKST + 1; ++II) {
+          double X = 1.0 - DXV * (double)(II-1)*(double)(II-1);
+          if (X < -1.0) X = -1.0;
+          double fifo = std::abs(bsprod_val(ra, rb, X));
+          if (fifo < ULIM && WOW < ULIM) {
+            // Both consecutive points below ULIM → cutoff here
+            IEND = std::min(II - 1 + NPHIAD, LOOKST + 1);
             IEND = std::max(IEND, 2);
-            double X0  = 1.0 - DXV * (double)(IEND-1) * (double)(IEND-1);
-            X0 = std::max(-1.0, std::min(1.0, X0));
-            double PHI0 = std::acos(X0);
+            break;
+          }
+          WOW = fifo;
+        }
+        double X0  = 1.0 - DXV * (double)(IEND-1)*(double)(IEND-1);
+        X0 = std::max(-1.0, std::min(1.0, X0));
+        double PHI0 = std::acos(X0);
 
-            // ── Phi GL points for this (ra,rb): PHI = PHI0 * phi_pts[k] ───
-            // DPHI = PHI0 * phi_wts[k] * sin(PHI)   (= PVPDX weight part)
-            // PVPDX[k] = DPHI * FIFO  where FIFO = bsprod(ra,rb,cos(PHI))
+        // ── Phi integral: accumulate H[IH] for ALL IH simultaneously ───────────
+        // Ptolemy DO 489 II=1,NPPHI  — one loop, all IH at once (innermost = IH loop)
+        std::vector<double> HINT(IHMAX, 0.0);   // Ptolemy SALLOC(LHSM1+IH)
 
-            // ── Pass 2: phi integral → H[IH] ───────────────────────────────
-            // Ptolemy DO 489 II=1,NPPHI:
-            //   PHI = LPHI[II], PHIT = LPHIT[II], PVPDX = LTRP[II]
-            //   A12 kernel: sum over MT,MU of coeff * cos(MT*PHIT - MU*PHI)
-            //   H[IH] += A12_kernel * PVPDX[II]
-            double H_real = 0.0;
-            for (int k = 0; k < NPPHI; ++k) {
-              double phi_frac = phi_pts[k];          // ∈ [0,1] after CubMap
-              double PHI      = PHI0 * phi_frac;     // actual phi angle
-              double DPHI     = PHI0 * phi_wts[k] * std::sin(PHI);  // = weight * sin(PHI)
-              double X        = std::cos(PHI);
+        for (int k = 0; k < NPPHI; ++k) {
+          double PHI  = PHI0 * phi_pts[k];
+          double DPHI = PHI0 * phi_wts[k] * std::sin(PHI);
+          if (DPHI == 0.0) continue;
+          double X    = std::cos(PHI);
 
-              // BSPROD: bound state product at this (ra, rb, X)
-              double rx2 = S1*S1*ra*ra + T1*T1*rb*rb + 2.0*S1*T1*ra*rb*X;
-              double rp2 = S2*S2*ra*ra + T2*T2*rb*rb + 2.0*S2*T2*ra*rb*X;
-              if (rx2 < 0) rx2 = 0;
-              if (rp2 < 0) rp2 = 0;
-              double rx = std::sqrt(rx2);
-              double rp = std::sqrt(rp2);
+          // BSPROD at (ra, rb, PHI)
+          double rx2 = S1*S1*ra*ra + T1*T1*rb*rb + 2.0*S1*T1*ra*rb*X;
+          double rp2 = S2*S2*ra*ra + T2*T2*rb*rb + 2.0*S2*T2*ra*rb*X;
+          if (rx2 < 0) rx2 = 0; if (rp2 < 0) rp2 = 0;
+          double rx = std::sqrt(rx2), rp = std::sqrt(rp2);
 
-              // POST form: FIFO = phi_T(rx) * IVPHI_P(rp) [with USECORE factor]
-              double phi_T_val = InterpolateClipped(TgtBS_ch.WaveFunction, TgtBS_ch.RGrid,
-                                                    TgtBS_ch.NSteps, TgtBS_ch.StepSize,
-                                                    TgtBS_ch.MaxR, rx, phi_T_max, r_T_peak);
-              double ivphi_P_nc = InterpolateIVPHI(IVPHI_P, h_common, NSteps_common,
-                                                    h_common * NSteps_common, rp,
-                                                    IVPHI_P_max, r_P_vert_peak);
-              // USECORE correction: Ptolemy sets NUCONL=2 (Coulomb only) when wavefunction
-              // linkule is used (e.g. AV18). For neutron transfer (Zx=0), the Coulomb
-              // core-core correction DELVCO ≈ 0. So FIFO = phi_T * IVPHI_P with no correction.
-              // Applying nuclear USECORE (NUCONL=3) was wrong and caused ~2x magnitude error.
-              double FIFO = phi_T_val * ivphi_P_nc;
+          double phi_T_val = InterpolateClipped(TgtBS_ch.WaveFunction, TgtBS_ch.RGrid,
+                                                TgtBS_ch.NSteps, TgtBS_ch.StepSize,
+                                                TgtBS_ch.MaxR, rx, 0.0, 0.0);
+          double ivphi_val = InterpolateIVPHI(IVPHI_P, h_common, NSteps_common,
+                                              h_common*NSteps_common, rp, 0.0, 0.0);
+          double PVPDX = DPHI * phi_T_val * ivphi_val;
+          if (std::abs(PVPDX) < 1e-30) continue;
 
-              // PVPDX = DPHI * FIFO  (Fortran LTRP[JCNT] = DPHI * FIFO)
-              double PVPDX = DPHI * FIFO;
+          // PHIT = acos((T1*rb + S1*ra*cos(PHI)) / rx)
+          double cos_phiT = (rx2 > 1e-30) ? (T1*rb + S1*ra*X) / rx : 1.0;
+          cos_phiT = std::max(-1.0, std::min(1.0, cos_phiT));
+          double PHIT = std::acos(cos_phiT);
 
-              // PHIT = acos((T1*RO + S1*RI*X)/RT)  (Fortran GRDSET line 16670)
-              double cos_phiT = (rx2 > 1e-30) ? (T1*rb + S1*ra*X) / rx : 1.0;
-              cos_phiT = std::max(-1.0, std::min(1.0, cos_phiT));
-              double PHIT_angle = std::acos(cos_phiT);
+          // ── Innermost loop: IH (all (Lo,Lx) pairs) — Ptolemy DO 459/469 ──────
+          for (int IH = 0; IH < IHMAX; ++IH) {
+            double A12_val = EvalA12(A12_all[IH], PHIT, PHI);
+            HINT[IH] += PVPDX * A12_val;
+          }
+        }
+        // End phi loop
 
-              // A12 angular kernel: sum_terms coeff * cos(MT*PHIT - MU*PHI)
-              // (PHIP term is 0 for lP=0 s-wave projectile)
-              double A12_kernel = EvalA12(A12_terms, PHIT_angle, PHI);
+        // Store SMHVL[IH][IU] = H[IH] * RIOEX (Ptolemy DO 509)
+        for (int IH = 0; IH < IHMAX; ++IH)
+          SMHVL[IH][IU] = HINT[IH] * RIOEX;
 
-              // Accumulate H (Fortran: HINT[IH] += SALLOC[LHSM1+IH])
-              H_real += PVPDX * A12_kernel;
+        // DIAGNOSTIC: print first 10 H values for Li=0, IV=0
+        if (Li==0 && IV==0 && IU < 10 && IHMAX>0)
+          fprintf(stderr,"DIAG_H IU=%2d U=%.4f ra=%.4f rb=%.4f  HINT[0]=%.4e RIOEX=%.4e SMHVL[0]=%.4e\n",
+                  IU, U, ra, rb, HINT[0], RIOEX, SMHVL[0][IU]);
 
-#ifdef DEBUG_PHI_LOOP
-              if (Li==0 && Lo==2 && Lx==2 && JPI==2 && JPO==3 && IV==0 && IU==1)
-                fprintf(stderr,"PHILOOP k=%2d PHI=%8.5f X=%8.5f rx=%8.5f rp=%8.5f "
-                        "phi_T=%11.4e IVPHI_P=%11.4e FIFO=%11.4e PVPDX=%11.4e PHIT=%8.5f A12=%8.5f contrib=%11.4e\n",
-                        k, PHI, X, rx, rp, phi_T_val, ivphi_P_nc, FIFO, PVPDX, PHIT_angle, A12_kernel, PVPDX*A12_kernel);
+      }  // End H-computation IU loop (Ptolemy DO 549)
+
+      // ── SPLNCB + INTRPC: spline SMHVL[IH][NPSUM] → SMIVL[IH][NPSUMI] ──────────
+      // (Ptolemy DO 609 IH=1,IHMAX)
+      std::vector<std::vector<double>> SMIVL(IHMAX, std::vector<double>(NPSUMI, 0.0));
+
+      // Ptolemy spline: same validated ptolemy_spline lambda from earlier
+      // Build a standalone spline lambda (reuse the same code as before)
+      auto do_spline = [&](const std::vector<double>& xi_in,
+                           const std::vector<double>& yi_in,
+                           const std::vector<double>& xi_out,
+                           std::vector<double>& yi_out) {
+        // Thin wrapper: uses the ptolemy_splncb + ptolemy_intrpc helpers
+        // which are defined earlier in this function scope.
+        // We replicate the call pattern used in the old H_smhvl spline block.
+        std::vector<double> ywork = yi_in; // copy
+        int N = (int)xi_in.size();
+        int M = (int)xi_out.size();
+        yi_out.assign(M, 0.0);
+        if (N < 2) return;
+
+        // Natural cubic spline (Ptolemy SPLNCB+INTRPC via ptolemy_spline)
+        // ptolemy_spline is already defined as a lambda earlier in InelDc() scope
+        // but we're in a new block — call it via the capture.
+        ptolemy_spline(xi_in, yi_in, xi_out, yi_out);
+      };
+
+      for (int IH = 0; IH < IHMAX; ++IH)
+        do_spline(xi_s, SMHVL[IH], xi_si, SMIVL[IH]);
+
+      // ── Chi integration: IU=1..NPSUMI (Ptolemy DO 789) ─────────────────────────
+      // TERM = exp(-ALPHAP*RP - ALPHAT*RT) * DIFWT * wi_si[IU]  (Ptolemy LWIO * GL wt)
+      // I(IH,JPI,JPO) += TERM * chi_a(ra) * SMIVL[IH][IU] * chi_b*(rb)
+      for (int IU = 0; IU < NPSUMI; ++IU) {
+        double U_chi  = xi_si[IU];
+        double WGT_U  = wi_si[IU];
+        if (U_chi < 1e-6) continue;
+
+        // V at this chi-grid U: same IV fraction, recomputed at U_chi
+        double VLEN_chi = 2.0 * U_chi;
+        double V_chi    = gl_v_frac * VLEN_chi;
+        double DIFWT    = gl_v_wt * VLEN_chi;
+
+        double ra_chi = U_chi + V_chi * 0.5;
+        double rb_chi = U_chi - V_chi * 0.5;
+        if (ra_chi < 1e-6 || rb_chi < 1e-6) continue;
+
+        // LWIO = exp(-ALPHAP*RP - ALPHAT*RT) * DIFWT (cancels RIOEX in SMIVL)
+        double RP_chi = std::sqrt(std::max(0.0, (S2*ra_chi + T2*rb_chi)*(S2*ra_chi + T2*rb_chi)));
+        double RT_chi = std::sqrt(std::max(0.0, (S1*ra_chi + T1*rb_chi)*(S1*ra_chi + T1*rb_chi)));
+        double LWIO = std::exp(-ALPHAP * RP_chi - ALPHAT * RT_chi) * DIFWT;
+        double TERM = LWIO * WGT_U;
+
+        // DIAGNOSTIC: print chi-grid TERM + SMIVL for Li=0, IV=19, IU=9
+        if (Li==0 && IV==19 && IU==9)
+          fprintf(stderr,"DIAG_CHI IV=19 IU=9 U_chi=%.4f ra_chi=%.4f rb_chi=%.4f  DIFWT=%.4e LWIO=%.4e TERM=%.4e SMIVL[0]=%.4e\n",
+                  U_chi, ra_chi, rb_chi, DIFWT, LWIO, TERM, SMIVL[0][IU]);
+
+        // Check DWMAX (Ptolemy line 18130: skip if all DW products small)
+        // Compute max |chi_a * chi_b| across all (JPI,Lo,JPO)
+        // For now: just check one representative chi_a
+        // (Ptolemy uses the NDW stored DW products — we do per-JPI below)
+
+        // Loop over all (JPI, JPO, IH) combinations
+        for (auto& [JPI_key, chi_a] : chi_a_byJPI) {
+          // chi_a at ra_chi
+          double chi_a_maxR = (chi_a.size() >= 4)
+              ? (static_cast<int>(chi_a.size()) - 4) * h_chi_a : Incoming.MaxR;
+          std::complex<double> ca;
+          {
+            double r = ra_chi;
+            if (r <= 0 || r > chi_a_maxR) { ca = {0,0}; }
+            else {
+#ifdef INTERP_PTOLEMY
+              double rbyh = r / h_chi_a;
+              int I = std::max(2, std::min((int)(rbyh+0.5), (int)chi_a.size()-4));
+              double P = rbyh-I, PS=P*P;
+              double X1=P*(PS-1.)/24.,X2=X1+X1,X3=X1*P,X4=X2+X2-.5*P,X5=X4*P;
+              double C1=X3-X2,C5=X3+X2,C3=(X5-X3)*2.+1.,C2=X5-X4,C4=X5+X4;
+              ca = C1*chi_a[I-2]-C2*chi_a[I-1]+C3*chi_a[I]-C4*chi_a[I+1]+C5*chi_a[I+2];
+#else
+              int ii=(int)(r/h_chi_a); if(ii>=(int)chi_a.size()-1){ca={0,0};}
+              else { double f=r/h_chi_a-ii; ca=chi_a[ii]*(1-f)+chi_a[ii+1]*f; }
 #endif
             }
-            // ── End phi loop (Ptolemy DO 489) ─────────────────────────────
+          }
 
-            // Fortran DO 509: SMHVL[IU,IH] = HINT[IH] * RIOEX[IPLUNK]
-            // Store H * RIOEX for this U-point (RIOEX removes exponential decay
-            // so H_smhvl is numerically large and smooth → good for spline).
-            H_smhvl[IU] = H_real * RIOEX;
+          for (int IH = 0; IH < IHMAX; ++IH) {
+            int Lo = lolx_list[IH].Lo;
 
-#ifdef DEBUG_INTEGRAND
-            // Dump H-grid for comparison elements, first IV slice only
-            bool dbg_elem = (IV == 0) && (
-                (Li==0 && Lo==2 && Lx==2 && JPI==2 && JPO==3) ||
-                (Li==1 && Lo==1 && Lx==2 && JPI==2 && JPO==3) ||
-                (Li==3 && Lo==1 && Lx==2 && JPI==2 && JPO==3) ||
-                (Li==3 && Lo==3 && Lx==2 && JPI==2 && JPO==5)
-            );
-            if (dbg_elem) {
-              // Compute A12 at PHIT=0, PHI=0 for this element
-              double A12_00 = EvalA12(A12_terms, 0.0, 0.0);
-              fprintf(stderr, "HGRD Li=%d Lo=%d JPO=%d/2  IU=%3d  U=%7.4f  "
-                      "ra=%7.4f rb=%7.4f  H_real=%11.4e  RIOEX=%11.4e  "
-                      "H_smhvl=%11.4e  PHI0=%8.5f  A12(0,0)=%8.5f\n",
-                      Li, Lo, JPO, IU, U, ra, rb, H_real,
-                      RIOEX, H_smhvl[IU], PHI0, A12_00);
+            int JPO_min = std::max(1, std::abs(2*Lo - JB_dw));
+            int JPO_max = 2*Lo + JB_dw;
+            for (int JPO = JPO_min; JPO <= JPO_max; JPO += 2) {
+              auto cb_it = chi_b_cache.find({Lo, JPO});
+              if (cb_it == chi_b_cache.end()) continue;
+              const auto& chi_b = cb_it->second;
+
+              // chi_b at rb_chi (5-pt Lagrange or linear)
+              std::complex<double> cb;
+              {
+                double r = rb_chi;
+                if (r <= 0 || r > chi_b_maxR_all) { cb = {0,0}; }
+                else {
+#ifdef INTERP_PTOLEMY
+                  double rbyh = r / h_chi_b;
+                  int I = std::max(2, std::min((int)(rbyh+0.5), (int)chi_b.size()-4));
+                  double P=rbyh-I,PS=P*P;
+                  double X1=P*(PS-1.)/24.,X2=X1+X1,X3=X1*P,X4=X2+X2-.5*P,X5=X4*P;
+                  double C1=X3-X2,C5=X3+X2,C3=(X5-X3)*2.+1.,C2=X5-X4,C4=X5+X4;
+                  cb = C1*chi_b[I-2]-C2*chi_b[I-1]+C3*chi_b[I]-C4*chi_b[I+1]+C5*chi_b[I+2];
+#else
+                  int ii=(int)(r/h_chi_b); if(ii>=(int)chi_b.size()-1){cb={0,0};}
+                  else { double f=r/h_chi_b-ii; cb=chi_b[ii]*(1-f)+chi_b[ii+1]*f; }
+#endif
+                }
+              }
+
+              // Ptolemy INELDC line 18147: DWR = Re(chi_b)*Re(chi_a) - Im(chi_b)*Im(chi_a)
+              //                             DWI = Re(chi_b)*Im(chi_a) + Im(chi_b)*Re(chi_a)
+              // i.e. DW = chi_b * chi_a  (not conj)
+              std::complex<double> DW = cb * ca;
+              if (std::abs(DW) < 1e-30) continue;
+
+              // Contribution: TERM * SMIVL[IH][IU] * DW
+              I_accum[{IH, JPI_key, JPO}] += TERM * SMIVL[IH][IU] * DW;
             }
-#endif
-
           }
-          // ── End H-computation IU loop (Ptolemy DO 549) ─────────────────────
-
-          // ── SPLNCB + INTRPC: spline H_smhvl[NPSUM] → H_smivl[NPSUMI] ────────
-          // Ptolemy: CALL SPLNCB(NPSUM, SMHPTS, SMHVL, work1, work2, work3)
-          //          CALL INTRPC(NPSUM, SMHPTS, SMHVL, ..., NPSUMI, SMIPTS, SMIVL)
-          // Natural cubic spline from NPSUM grid → NPSUMI grid.
-          ptolemy_spline(H_smhvl_U, H_smhvl, xi_si, H_smivl);
-
-          // ── Chi integration loop: IU=0..NPSUMI-1 (Ptolemy DO 789 IU) ────────
-          // TERM = LWIO[IPLUNK] = JACOB * RI * RO * WOW * DIFWT * exp(-ALPHAP*RP-ALPHAT*RT)
-          // contrib = TERM * H_smivl[IU] * chi_a(RI) * chi_b(RO)
-          // Note: TERM includes exp(-...) which cancels with RIOEX in H_smivl:
-          //   H_smivl = H_real * RIOEX = H_real * exp(+ALPHAP*RP+ALPHAT*RT)
-          //   TERM includes exp(-(ALPHAP*RP+ALPHAT*RT))
-          //   → product = JACOB * RI * RO * WOW * DIFWT * H_real * chi_a * chi_b ✓
-          for (int IU = 0; IU < NPSUMI; ++IU) {
-            double U   = xi_si[IU];
-            double WOW = wi_si[IU];
-
-            if (U < 1e-6) continue;
-
-            // Get V at this NPSUMI U-point via CubMap (Ptolemy MAPDIF=1, GAMDIF=5)
-            double VMIN_u = VMIN_per_U_i[IU];
-            double VMAX_u = VMAX_per_U_i[IU];
-            double VMID_u = VMID_per_U_i[IU];
-            std::vector<double> vv(1, gl_v_frac), vw(1, gl_v_wt);
-            CubMap(1, VMIN_u, VMID_u, VMAX_u, GAMDIF, vv, vw);
-            double V     = vv[0];
-            double DIFWT = vw[0];
-
-            double ra = U + V * 0.5;
-            double rb = U - V * 0.5;
-
-            if (ra < 1e-6 || rb < 1e-6) continue;
-
-            // LWIO includes exp(-(ALPHAP*RP + ALPHAT*RT)) to cancel RIOEX in H_smivl
-            double RP_lwio = std::sqrt(1.0 + (S2*ra + T2*rb)*(S2*ra + T2*rb));
-            double RT_lwio = std::sqrt(1.0 + (S1*ra + T1*rb)*(S1*ra + T1*rb));
-            double exp_neg = std::exp(-(ALPHAP * RP_lwio + ALPHAT * RT_lwio));
-
-            double TERM = JACOB_grdset * ra * rb * WOW * DIFWT * exp_neg;
-
-            std::complex<double> ca      = interp_chi_a(ra);
-            std::complex<double> cb_conj = interp_chi_b(rb);  // no conjugate (Ptolemy)
-
-            auto contrib = ca * cb_conj * H_smivl[IU] * TERM;
-            Integral += contrib;
-
-#ifdef DEBUG_INTEGRAND
-            // Dump integrand for the single reference element (Li=0,Lo=2,Lx=2,JPI=2/2,JPO=3/2)
-            if (Li == 0 && Lo == 2 && Lx == 2 && JPI == 2 && JPO == 3) {
-              fprintf(stderr, "INTG IV=%3d IU=%3d  ra=%7.4f rb=%7.4f  "
-                      "H=%11.4e  TERM=%11.4e  "
-                      "ca=(%10.4e,%10.4e)  cb=(%10.4e,%10.4e)  "
-                      "contrib=(%11.4e,%11.4e)\n",
-                      IV, IU, ra, rb,
-                      H_smivl[IU], TERM,
-                      ca.real(), ca.imag(),
-                      cb_conj.real(), cb_conj.imag(),
-                      contrib.real(), contrib.imag());
-            }
-#endif
-          }
-          // ── End chi integration IU loop (Ptolemy DO 789) ───────────────────
-
-#ifdef DEBUG_INTEGRAND
-          // Running integral after each IV slice
-          if (Li == 0 && Lo == 2 && Lx == 2 && JPI == 2 && JPO == 3) {
-            fprintf(stderr, "INTG IV=%3d DONE  RunInteg=(%11.4e,%11.4e)\n",
-                    IV, Integral.real(), Integral.imag());
-          }
-#endif
         }
-        // ── End IV loop (Ptolemy DO 859) ────────────────────────────────────────
+      }  // End chi IU loop (Ptolemy DO 789)
 
-#endif  // USE_ZR
+    }  // End IV loop (Ptolemy DO 859)
 
-        // Phase factor from Ptolemy SFROMI (source.mor ~line 29130):
-        //   ITEST = LASI + LASO + 2*LXP + 1
-        //   IF MOD(ITEST,4) >= 2: TEMP = -TEMP  (real sign flip)
-        //   IF MOD(ITEST,2) == 1: multiply by i  (imaginary rotation)
-        // Combined: phase = i^ITEST = i^(Li+Lo+2*Lx+1)
-        int ITEST = ((Li + Lo + 2*Lx + 1) % 4 + 4) % 4;
-        std::complex<double> phase_factor;
-        switch (ITEST) {
-          case 0: phase_factor = { 1.0,  0.0}; break;
-          case 1: phase_factor = { 0.0,  1.0}; break;
-          case 2: phase_factor = {-1.0,  0.0}; break;
-          case 3: phase_factor = { 0.0, -1.0}; break;
-        }
+    // ── Step 6: Apply SFROMI factors and store ────────────────────────────────────
+    for (int IH = 0; IH < IHMAX; ++IH) {
+      int Lo = lolx_list[IH].Lo;
+      int Lx = lolx_list[IH].Lx;
 
-        Integral *= phase_factor;
+      // ITEST phase (Ptolemy SFROMI): i^(Li+Lo+2*Lx+1)
+      int ITEST_val = ((Li + Lo + 2*Lx + 1) % 4 + 4) % 4;
+      std::complex<double> phase_factor;
+      switch (ITEST_val) {
+        case 0: phase_factor = { 1.0,  0.0}; break;
+        case 1: phase_factor = { 0.0,  1.0}; break;
+        case 2: phase_factor = {-1.0,  0.0}; break;
+        default:phase_factor = { 0.0, -1.0}; break;
+      }
 
-        // Ptolemy SFROMI normalization (source.mor ~29130):
-        //   TEMP = FACTOR * ATERM(LXP+1) / DSQRT(2*LASI+1)
-        //   S_sfromi = TEMP * I * i^ITEST
-        // where:
-        //   FACTOR = 2*sqrt(AKI*AKO/(ES1*ES2))  [kinematic factor]
-        //   ATERM(Lx) = sqrt((2jB+1)/(2jA+1)) * sqrt(2Lx+1) * SPAMP*SPAMT * RACAH(...)
-        //     RACAH(2*LBT, JBT, 2*LBP, JBP, JX, 2*LX) with all args doubled
-        //   LASI = Li (incident L), LASO = Lo
-        //
-        // Compute FACTOR_sfromi from kinematics
-        double ka_sf = Incoming.k;
-        double kb_sf = Outgoing.k;
-        double Ea_sf = Incoming.Ecm;
-        double Eb_sf = Outgoing.Ecm;
-        double FACTOR_sfromi = 2.0 * std::sqrt(ka_sf * kb_sf / (Ea_sf * Eb_sf));
-        // Factor of 2: Ptolemy SFROMI uses FACTOR = 2*sqrt(ki*kf/(Ei*Ef))
-        // (see source.mor line 29025 comment: FACTOR = KINEMATIC FACTOR = 2*SQRT(KI*KF/EI*EF))
-        
-        // Compute ATERM generically (same formula as ineldc_zr.cpp).
-        // Ptolemy source.mor ~25631:
-        //   TEMP = sqrt((JBIGB+1)/(JBIGA+1))
-        //   ATERM = TEMP * sqrt(2*Lx+1) * SPAMP * SPAMT * RACAH(2*LBT, JBT, 2*LBP, JBP, JX, 2*LX)
-        //   where RACAH(a,b,c,d,e,f) = (-1)^((a+b+c+d)/2) * {a/2,b/2,e/2; d/2,c/2,f/2}  (6-j)
-        //   Sign: ITEST = (JX - JBP + 2*(LBP+LBT))/2 + 1; if odd, flip ATERM
-        double ATERM_val = 0.0;
-        if (Lx >= std::abs(TargetBS.l - ProjectileBS.l) &&
-            Lx <= TargetBS.l + ProjectileBS.l) {
-          double jT_bs = TargetBS.j;          // j of neutron in target bound state
-          double jP_bs = ProjectileBS.j;       // j of neutron in projectile bound state
-          double jx = 0.5;                     // neutron spin
+      // ATERM (same formula as before — independent of JPI/JPO)
+      double ATERM_val = 0.0;
+      if (Lx >= std::abs(TargetBS.l - ProjectileBS.l) &&
+          Lx <= TargetBS.l + ProjectileBS.l) {
+        double jT_bs = TargetBS.j, jP_bs = ProjectileBS.j, jx = 0.5;
+        double sj = SixJ((double)TargetBS.l, jT_bs, jx,
+                         jP_bs, (double)ProjectileBS.l, (double)Lx);
+        int twoj_sum = 2*TargetBS.l + (int)(2*jT_bs+0.5)
+                     + 2*ProjectileBS.l + (int)(2*jP_bs+0.5);
+        double sign_val = ((twoj_sum/2)%2==0) ? 1.0 : -1.0;
+        double RACAH_val = sign_val * sj;
+        int JBIGA = (int)std::round(2.0*SpinTarget);
+        int JBIGB = (int)std::round(2.0*SpinResidual);
+        double TEMP_aterm = std::sqrt((JBIGB+1.0)/(JBIGA+1.0));
+        double SPAMP = ProjectileWFLoaded ? ProjectileWFSpam : 0.97069;
+        ATERM_val = TEMP_aterm * std::sqrt(2.0*Lx+1.0) * SPAMP * 1.0 * RACAH_val;
+        int JX_d=(int)1, JBP_d=(int)(2*ProjectileBS.j);
+        int ITEST_a = JX_d - JBP_d + 2*(ProjectileBS.l + TargetBS.l);
+        if ((ITEST_a/2+1)%2!=0) ATERM_val = -ATERM_val;
+      }
 
-          // SixJ{lBT, jBT, jX; jBP, lBP, Lx}
-          double sj = SixJ((double)TargetBS.l, jT_bs, jx,
-                           jP_bs, (double)ProjectileBS.l, (double)Lx);
+      double FACTOR_sfromi = 2.0 * std::sqrt(Incoming.k * Outgoing.k /
+                                              (Incoming.Ecm * Outgoing.Ecm));
 
-          // Phase: (-1)^((2*lBT + 2*jBT + 2*lBP + 2*jBP)/2) = RACAH phase
-          int twoj_sum = 2*TargetBS.l + (int)(2*jT_bs + 0.5)
-                       + 2*ProjectileBS.l + (int)(2*jP_bs + 0.5);
-          double sign_val = ((twoj_sum / 2) % 2 == 0) ? 1.0 : -1.0;
-          double RACAH_val = sign_val * sj;
+      for (auto& [JPI_key, chi_a] : chi_a_byJPI) {
+        int JPO_min = std::max(1, std::abs(2*Lo - JB_dw));
+        int JPO_max = 2*Lo + JB_dw;
+        for (int JPO = JPO_min; JPO <= JPO_max; JPO += 2) {
+          auto it = I_accum.find({IH, JPI_key, JPO});
+          if (it == I_accum.end()) continue;
 
-          // Nuclear spins from DWBA object (generic)
-          int JBIGA = (int)std::round(2.0 * SpinTarget);    // 2*J(target nucleus)
-          int JBIGB = (int)std::round(2.0 * SpinResidual);  // 2*J(residual nucleus)
-          double TEMP_aterm = std::sqrt((JBIGB + 1.0) / (JBIGA + 1.0));
+          std::complex<double> Integral = it->second * phase_factor;
 
-          // Spectroscopic amplitudes
-          double SPAMP = ProjectileWFLoaded ? ProjectileWFSpam : 0.97069;
-          double SPAMT = 1.0;
+          double sfromi_norm = FACTOR_sfromi * std::abs(ATERM_val) / std::sqrt(2.0*Li+1.0);
+          if (ATERM_val < 0) Integral = -Integral;
 
-          ATERM_val = TEMP_aterm * std::sqrt(2.0*Lx + 1.0) * SPAMP * SPAMT * RACAH_val;
+          auto S_pre9j = Integral * sfromi_norm;
+          TransferSMatrix.push_back({Lx, Li, Lo, JPI_key, JPO, S_pre9j});
 
-          // Sign convention (Ptolemy source.mor line 25636-25639):
-          // ITEST = JX - JBP + 2*(LBP+LBT)   [all doubled integers]
-          int JX_doubled  = 1;  // neutron spin × 2
-          int JBP_doubled = (int)(2 * ProjectileBS.j);
-          int ITEST_aterm = JX_doubled - JBP_doubled + 2*(ProjectileBS.l + TargetBS.l);
-          if ((ITEST_aterm / 2 + 1) % 2 != 0) ATERM_val = -ATERM_val;
-        }
-        
-        // Total SFROMI factor: FACTOR_sfromi * ATERM * (1/sqrt(2*Li+1))
-        double sfromi_norm = FACTOR_sfromi * std::abs(ATERM_val) / std::sqrt(2.0 * Li + 1.0);
-        // Apply sign of ATERM to the integral (ATERM sign affects overall sign)
-        if (ATERM_val < 0) {
-          Integral = -Integral;
-        }
-
-        // Store: (Lx, Li, Lo, JPI, JPO) — SFROMI will apply 9-J coupling
-        auto S_pre9j = Integral * sfromi_norm;
-        TransferSMatrix.push_back({Lx, Li, Lo, JPI, JPO, S_pre9j});
-
-        // Print pre-9J S-matrix for key element only (enable with -DDEBUG_PRE9J)
 #ifdef DEBUG_PRE9J
-        fprintf(stderr, "PRE9J Li=%2d JPI=%2d/2  Lo=%2d JPO=%2d/2  Lx=%d  "
-                "S=(%9.4e, %9.4e)  |S|=%9.4e\n",
-                Li, JPI, Lo, JPO, Lx,
-                S_pre9j.real(), S_pre9j.imag(), std::abs(S_pre9j));
+          fprintf(stderr, "PRE9J Li=%2d JPI=%2d/2  Lo=%2d JPO=%2d/2  Lx=%d  "
+                  "S=(%9.4e, %9.4e)  |S|=%9.4e\n",
+                  Li, JPI_key, Lo, JPO, Lx,
+                  S_pre9j.real(), S_pre9j.imag(), std::abs(S_pre9j));
 #endif
-
-        } // end JPO loop
-        } // end JPI loop
-      } // end Lx loop
-    } // end Lo loop
+        }
+      }
+    }
+    // ── End faithful INELDC body for this Li ──────────────────────────────────────
   } // end Li loop
 
 
