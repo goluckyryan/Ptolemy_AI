@@ -558,15 +558,19 @@ void DWBA::InelDc() {
     for (int JPI = JPI_min; JPI <= JPI_max; JPI += 2) {
       WavElj(Incoming, Li, JPI);
       chi_a_byJPI[JPI] = Incoming.WaveFunction;
-      if (Li == 1) {
+      // Print chi_a at key radii for Li=3 (to diagnose JPI=8/2 error)
+      if (Li == 3) {
         double h = Incoming.StepSize;
-        fprintf(stderr, "chi_a Li=%d JPI=%d/2: size=%d h=%.5f\n",
-                Li, JPI, (int)Incoming.WaveFunction.size(), h);
-        for (double r : {1.0, 2.0, 4.0, 6.0, 8.0}) {
+        double peak = 0; int peak_idx = 0;
+        for (int ii=0; ii<(int)Incoming.WaveFunction.size(); ii++)
+          if (std::abs(Incoming.WaveFunction[ii]) > peak) { peak=std::abs(Incoming.WaveFunction[ii]); peak_idx=ii; }
+        fprintf(stderr, "chi_a Li=%d JPI=%d/2: size=%d h=%.5f peak=%.6f at r=%.4f\n",
+                Li, JPI, (int)Incoming.WaveFunction.size(), h, peak, peak_idx*h);
+        for (double r : {2.0, 4.0, 6.0, 8.0, 10.0}) {
           int idx = (int)(r/h + 0.5);
           if (idx < (int)Incoming.WaveFunction.size()) {
             auto v = Incoming.WaveFunction[idx];
-            fprintf(stderr, "  r=%.1f: re=%.6f im=%.6f |chi|=%.6f\n",
+            fprintf(stderr, "  r=%.1f: re=%+.6f im=%+.6f |chi|=%.6f\n",
                     r, v.real(), v.imag(), std::abs(v));
           }
         }
@@ -1285,9 +1289,22 @@ void DWBA::InelDc() {
             Li, SUMMIN_li, SUMMID_li, SUMMAX_eff, NPSUMI);
 
     // ── Step 5: MAIN DOUBLE LOOP: outer IV (DO 859), inner IU (DO 549) ──────────
+    // Ptolemy structure:
+    //   DO 859 IV = 1, NPDIF:           ← outer V loop
+    //     DO 549 IU = 1, NPSUM:         ← H-integral accumulation on H-grid
+    //       SMHVL[IH][IU] += phi_loop contributions
+    //   DO 609 IH: spline SMHVL → SMIVL  ← ONCE after IV loop
+    //   DO 789 IU = 1, NPSUMI:           ← chi integral (ONCE, not per IV)
+    //     I[IH,JPI,JPO] += TERM * SMIVL[IH][IU] * chi_b * chi_a
+    //
+    // Our previous code incorrectly placed DO 609+789 INSIDE the DO 859 loop.
+    // Fixed: accumulate SMHVL across all IV, then spline+chi-integrate once.
+
+    std::vector<std::vector<double>> SMHVL(IHMAX, std::vector<double>(NPSUM, 0.0));
+
     for (int IV = 0; IV < NPDIF; ++IV) {
       // ── H-computation IU loop ──────────────────────────────────────────────────
-      std::vector<std::vector<double>> SMHVL(IHMAX, std::vector<double>(NPSUM, 0.0));
+      // SMHVL is accumulated across all IV (reset before IV loop, not inside)
 
       for (int IU = 0; IU < NPSUM; ++IU) {
         double U = xi_s[IU];
@@ -1376,9 +1393,10 @@ void DWBA::InelDc() {
         }
         // End phi loop
 
-        // Store SMHVL[IH][IU] = H[IH] * RIOEX (Ptolemy DO 509)
+        // Accumulate SMHVL[IH][IU] += H[IH] * RIOEX (Ptolemy DO 509)
+        // Note: SMHVL is accumulated across all IV (outer loop)
         for (int IH = 0; IH < IHMAX; ++IH)
-          SMHVL[IH][IU] = HINT[IH] * RIOEX;
+          SMHVL[IH][IU] += HINT[IH] * RIOEX;
 
         // DIAGNOSTIC: print H values for Li=1, IV=0 (most-negative V side), all IU
         // Ptolemy HGRD_LI1 prints at IV=1 (most-negative V) on the NPSUM grid
@@ -1389,6 +1407,8 @@ void DWBA::InelDc() {
         }
 
       }  // End H-computation IU loop (Ptolemy DO 549)
+
+    }  // End IV loop (Ptolemy DO 859) — SMHVL is now fully accumulated
 
       // ── SPLNCB + INTRPC: spline SMHVL[IH][NPSUM] → SMIVL[IH][NPSUMI] ──────────
       // (Ptolemy DO 609 IH=1,IHMAX)
@@ -1506,7 +1526,7 @@ void DWBA::InelDc() {
         }
       }  // End chi IU loop (Ptolemy DO 789)
 
-    }  // End IV loop (Ptolemy DO 859)
+    // (IV loop already closed above — spline+chi are outside IV loop)
 
     // ── Step 6: Apply SFROMI factors and store ────────────────────────────────────
     for (int IH = 0; IH < IHMAX; ++IH) {
