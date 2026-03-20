@@ -499,6 +499,35 @@ void DWBA::InelDc() {
   const int JA_dw = 2;  // 2 * spin_deuteron = 2*1 = 2
   const int JB_dw = 1;  // 2 * spin_proton   = 2*(1/2) = 1
 
+  // Ptolemy GRDSET pre-computes TWO reference scattering wavefunctions:
+  //   ISCTMN: incoming chi at L = MAX(0, Lmin - Lxmax)  → used in WVWMAX + SUMMIN scan
+  //   ISCTCR: incoming chi at L = LCRIT (= clamped (Lmin+Lmax)/2) → used in SUMMID scan
+  // These are computed ONCE and reused for all Li.
+  // For our reaction (lT=2, lP=0, Lmin=0, Lmax=40): Lxmax=2, LCRIT=(0+40)/2=20? 
+  // But actual run with lmin=lmax=1: LCRIT=1.
+  // For full lmin=0 lmax=40 run: LCRIT ≈ (0+40)/2 = 20.
+  // We need to compute these chi independently of the Li loop.
+  const int LxMax_grdset = lT;          // max Lx = lT = 2 for (d,p) neutron transfer
+  const int L_isctmn = std::max(0, 0 - LxMax_grdset);  // = 0 for Lmin=0
+  const int L_isctcr = Lmax / 2;        // LCRIT = (LMIN+LMAX)/2 clamped; use (0+Lmax)/2
+  // Compute ISCTCR chi: incoming at L=L_isctcr, JPI=2*L_isctcr+1 (central potential only)
+  // Ptolemy uses central potential (SO=0) for GRDSET chi. We use full optical for now.
+  {
+    int JPI_cr = 2*L_isctcr + JA_dw;  // highest J for this L
+    WavElj(Incoming, L_isctcr, JPI_cr);
+  }
+  const std::vector<std::complex<double>> chi_isctcr = Incoming.WaveFunction;
+  const double h_isctcr = Incoming.StepSize;
+  auto interp_isctcr = [&](double r) -> double {
+    int idx = (int)(r / h_isctcr);
+    if (idx < 0) return 0.0;
+    if (idx >= (int)chi_isctcr.size() - 1) return 0.0;
+    double frac = r/h_isctcr - idx;
+    return (chi_isctcr[idx]*(1.0-frac) + chi_isctcr[idx+1]*frac).real();
+  };
+  fprintf(stderr, "GRDSET: L_isctmn=%d  L_isctcr=%d (Lmax=%d)\n",
+          L_isctmn, L_isctcr, Lmax);
+
   for (int Li = 0; Li <= Lmax; ++Li) {
     // --- J-split incoming distorted waves for all JPI ---
     // JPI ranges from |2*Li - JA_dw| to 2*Li + JA_dw in steps of 2
@@ -639,7 +668,11 @@ void DWBA::InelDc() {
                                  h_common*NSteps_common, rp, 0.0, 0.0);
       };
 
-      // bsprod3: ITYPE=3 = ra*chi_a * FP'*FT' * chi_b*rb
+      // bsprod3: ITYPE=3 = ra*chi_LCRIT * FP'*FT' * chi_LCRIT*rb
+      // Ptolemy BSPROD source lines 200-270: BOTH ra AND rb use the SAME ISCAT
+      // (the LCRIT incoming channel chi). NOT chi_in(ra)*chi_out(rb)!
+      // Reference: ISCTCR = incoming chi at L=LCRIT stored during grid setup.
+      // Our ref_chi_a IS chi_in at JPI_max which corresponds to LC (LCRIT).
       auto bsprod3 = [&](double ra, double rb, double x) -> double {
         if (ra < 1e-6 || rb < 1e-6) return 0.0;
         double rx2 = S1*S1*ra*ra + T1*T1*rb*rb + 2.0*S1*T1*ra*rb*x;
@@ -648,8 +681,9 @@ void DWBA::InelDc() {
         double rx=std::sqrt(rx2), rp=std::sqrt(rp2);
         double FT = flat_FT(rx);
         double FP = flat_FP(rp);
-        double ca = std::abs(interp_ref_a(ra));
-        double cb = std::abs(interp_ref_b(rb));
+        // Both ra and rb use ISCTCR chi (pre-computed at L=LCRIT, once for all Li)
+        double ca = std::abs(interp_isctcr(ra));
+        double cb = std::abs(interp_isctcr(rb));
         return ra * ca * FP * FT * cb * rb;
       };
 
