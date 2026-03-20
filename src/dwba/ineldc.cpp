@@ -585,69 +585,150 @@ void DWBA::InelDc() {
 #endif
       };
 
-      // bsprod_with_ref_chi: |chi_a(U)| * bsprod(U,U,x) * |chi_b(U)| * U * U
-      // (Ptolemy BSPROD ITYPE=3 at V=0: ra=rb=U)
-      auto bsprod_ref = [&](double U, double x) -> double {
+      // RLMAXS(1) = projectile form-factor peak radius (RLPMAX in Ptolemy BSSET)
+      // RLMAXS(2) = target form-factor peak radius    (RLTMAX in Ptolemy BSSET)
+      // "LOCATION OF PROJECTILE AND TARGET FORM-FACTOR MAXIMA" from print=5
+      // These are the r at which r*|phi_P*V| and r*|phi_T| peak.
+      // = r_P_vert_peak (0.1875 fm) and r_T_vert_peak (2.1125 fm)
+      // RLMAXS(1) = RLPMAX: peak of phi_P*V (IVPHI_P) = r_P_vert_peak
+      // RLMAXS(2) = RLTMAX: peak of phi_T (raw WF)   = r_T_peak (not IVPHI_T!)
+      const double RLMAXS1 = r_P_vert_peak;  // 0.1875 fm — IVPHI_P peak
+      const double RLMAXS2 = r_T_peak;        // target BS WF peak (should be ~2.1125 fm)
+
+      // XS scan values (Ptolemy: LOOKST=250, DXV=2/LOOKST^2)
+      const double DXV_grd = 2.0 / (250.0*250.0);
+      const double xs_grd[2] = {1.0, 1.0 - DXV_grd};
+
+      // VTMAX, VPMAX: flat-top values (phi_T peak and IVPHI_P peak)
+      const double VTMAX = std::abs(TgtBS_ch.WaveFunction[idx_T_peak].real());
+      const double VPMAX = IVPHI_P_max;
+
+      // Ptolemy BSPROD flat-top phi' (ITYPE=2,3,4):
+      //   For r < RLMAXS (peak location): FT = VTMAX, FP = VPMAX (flat cap)
+      //   For r > RLMAXS: FT = phi_T(r), FP = IVPHI_P(r) (actual interpolation)
+      //   Alternate return (*) fires only if RP > BNDMXP OR RT > BNDMXT (grid bounds, ~30fm)
+      //   — i.e., basically never during these scans.
+      // ITYPE=3: FT' × FP'  with chi factors: result = ra*chi_a(ra)*FP'*FT'*chi_b(rb)*rb
+      // ITYPE=4: FT' × FP'  without chi: result = FP' * FT'
+      // ITYPE=2: same as ITYPE=4 (flat phi, no chi)
+
+      auto flat_FT = [&](double rx) -> double {
+        if (rx <= RLMAXS2) return VTMAX;
+        return std::abs(InterpolateClipped(TgtBS_ch.WaveFunction, TgtBS_ch.RGrid,
+                                           TgtBS_ch.NSteps, TgtBS_ch.StepSize,
+                                           TgtBS_ch.MaxR, rx, 0.0, 0.0));
+      };
+      auto flat_FP = [&](double rp) -> double {
+        if (rp <= RLMAXS1) return VPMAX;
+        if (rp >= h_common*NSteps_common) return 0.0;
+        return InterpolateIVPHI(IVPHI_P, h_common, NSteps_common,
+                                 h_common*NSteps_common, rp, 0.0, 0.0);
+      };
+
+      // bsprod3: ITYPE=3 = ra*chi_a * FP'*FT' * chi_b*rb
+      auto bsprod3 = [&](double ra, double rb, double x) -> double {
+        if (ra < 1e-6 || rb < 1e-6) return 0.0;
+        double rx2 = S1*S1*ra*ra + T1*T1*rb*rb + 2.0*S1*T1*ra*rb*x;
+        double rp2 = S2*S2*ra*ra + T2*T2*rb*rb + 2.0*S2*T2*ra*rb*x;
+        if (rx2<0) rx2=0; if (rp2<0) rp2=0;
+        double rx=std::sqrt(rx2), rp=std::sqrt(rp2);
+        double FT = flat_FT(rx);
+        double FP = flat_FP(rp);
+        double ca = std::abs(interp_ref_a(ra));
+        double cb = std::abs(interp_ref_b(rb));
+        return ra * ca * FP * FT * cb * rb;
+      };
+
+      // bsprod4: ITYPE=4 = FP'*FT' (no chi, no r factors)
+      auto bsprod4 = [&](double U, double x) -> double {
         if (U < 1e-6) return 0.0;
         double rx2 = S1*S1*U*U + T1*T1*U*U + 2.0*S1*T1*U*U*x;
         double rp2 = S2*S2*U*U + T2*T2*U*U + 2.0*S2*T2*U*U*x;
-        if (rx2 < 0) rx2 = 0; if (rp2 < 0) rp2 = 0;
-        double rx = std::sqrt(rx2), rp = std::sqrt(rp2);
-        double phi_T = InterpolateClipped(TgtBS_ch.WaveFunction, TgtBS_ch.RGrid,
-                                          TgtBS_ch.NSteps, TgtBS_ch.StepSize,
-                                          TgtBS_ch.MaxR, rx, 0.0, 0.0);
-        double ivphi_P = InterpolateIVPHI(IVPHI_P, h_common, NSteps_common,
-                                           h_common*NSteps_common, rp, 0.0, 0.0);
-        double ca = std::abs(interp_ref_a(U));
-        double cb = std::abs(interp_ref_b(U));
-        return U * ca * std::abs(phi_T * ivphi_P) * cb * U;
+        if (rx2<0) rx2=0; if (rp2<0) rp2=0;
+        return flat_FT(std::sqrt(rx2)) * flat_FP(std::sqrt(rp2));
       };
 
-      // Step 1: WVWMAX — scan U from SUMMAX/2 down (Ptolemy line 15924)
+      // Helper: compute Ptolemy's 5 adaptive VS at a given U
+      auto compute_VS = [&](double U, double VS[5]) {
+        double D = 2.0*(RLMAXS2 - (S1+T1)*U) / (S1-T1);
+        if (std::abs(D) > 2.0*U) D = std::copysign(2.0*U, D);
+        VS[0] = D; VS[1] = 0.5*D; VS[2] = 0.0;
+        D = 2.0*(RLMAXS1 - (S2+T2)*U) / (S2-T2);
+        if (std::abs(D) > 2.0*U) D = std::copysign(2.0*U, D);
+        VS[3] = 0.5*D; VS[4] = D;
+      };
+
+      // Step 1: WVWMAX — scan UP from U=0.5*ROFMAX for N=1.5*ROFMAX/0.2+1 steps
+      // (Ptolemy source.f line ~18588: U=.5*ROFMAX, N=1.5*ROFMAX/.20+1)
       const double SUMMAX_li = 30.4;
-      for (double U_s = 0.5*SUMMAX_li; U_s > 0.05; U_s -= 0.2)
-        WVWMAX_li = std::max(WVWMAX_li, std::max(bsprod_ref(U_s,1.0), bsprod_ref(U_s,-1.0)));
+      const double ROFMAX_grd = maxR_ref_a;  // Ptolemy ROFMAX = chi_a extent
+      double U_s = 0.5 * ROFMAX_grd;
+      int N_wv = (int)(1.5*ROFMAX_grd/0.2 + 1.5);
+      for (int iu = 0; iu < N_wv; ++iu, U_s += 0.2) {
+        double VS5[5]; compute_VS(U_s, VS5);
+        for (int iv5 = 0; iv5 < 5; ++iv5) {
+          double ra = U_s + 0.5*VS5[iv5], rb = U_s - 0.5*VS5[iv5];
+          for (int ix = 0; ix < 2; ++ix)
+            WVWMAX_li = std::max(WVWMAX_li, std::abs(bsprod3(ra, rb, xs_grd[ix])));
+        }
+      }
       RVRLIM_li = DWCUT_grdset * std::max(WVWMAX_li, 1.0e-30);
 
-      // Step 2: SUMMIN — step out from 0 (Ptolemy line 15964)
-      double U_s = 0.0;
+      // Step 2: SUMMIN — step out from U=0, BSPROD ITYPE=4 at V=0 (Ptolemy line 15964)
+      U_s = 0.0;
       while (U_s <= SUMMAX_li) {
-        if (std::max(bsprod_ref(U_s,1.0), bsprod_ref(U_s,-1.0)) >= RVRLIM_li) {
+        double f = 0.0;
+        for (int ix = 0; ix < 2; ++ix) f = std::max(f, std::abs(bsprod4(U_s, xs_grd[ix])));
+        if (f >= RVRLIM_li) {
           SUMMIN_li = std::max(0.0, U_s - 0.2);
           break;
         }
         U_s += 0.2;
       }
 
-      // Step 3: SUMMID — first moment <U> * AMDMLT (Ptolemy line 16070)
-      // Scan V=0 (diagonal) + 4 V fractions, 2 x values (Ptolemy scans 5 V's × 2 x's)
-      double SUM0 = 0.0, SUM1 = 0.0;
-      const double vfracs[5] = {-0.8, -0.4, 0.0, 0.4, 0.8};
-      const double xscan[2] = {1.0 - 2.0/(100.0*100.0), -1.0 + 2.0/(100.0*100.0)};
+      // Step 3: SUMMID — first moment <U> * AMDMLT (Ptolemy GRDSET lines 15994–16085)
+      // Ptolemy scans 5 ADAPTIVE V values at each U (not fixed fractions of 2U).
+      // VS(1,2) from target asymptopia: V where RT hits RLMAXS(2)
+      // VS(4,5) from projectile asymptopia: V where RP hits RLMAXS(1)
+      // VS(3) = 0 (center); BSPROD ITYPE=3 with adaptive VS per U.
+      // (RLMAXS1, RLMAXS2, xs_grd, bsprod3, compute_VS defined above)
+
+      double SUM0 = 0.0, SUM1 = 0.0, SUM2 = 0.0;
+
       for (U_s = SUMMIN_li; U_s <= SUMMAX_li; U_s += 0.2) {
+        double VS5[5]; compute_VS(U_s, VS5);
+
         double temp = 0.0;
-        for (double vf : vfracs) {
-          double ra_s = U_s*(1+vf), rb_s = U_s*(1-vf);
-          if (ra_s < 1e-6 || rb_s < 1e-6) continue;
-          for (double xs : xscan) {
-            // Full (ra,rb) bsprod with chi (Ptolemy ITYPE=3)
-            double rx2 = S1*S1*ra_s*ra_s + T1*T1*rb_s*rb_s + 2.0*S1*T1*ra_s*rb_s*xs;
-            double rp2 = S2*S2*ra_s*ra_s + T2*T2*rb_s*rb_s + 2.0*S2*T2*ra_s*rb_s*xs;
-            if (rx2<0) rx2=0; if (rp2<0) rp2=0;
-            double rx=std::sqrt(rx2), rp=std::sqrt(rp2);
-            double phi_T = InterpolateClipped(TgtBS_ch.WaveFunction, TgtBS_ch.RGrid,
-                                              TgtBS_ch.NSteps, TgtBS_ch.StepSize,
-                                              TgtBS_ch.MaxR, rx, 0.0, 0.0);
-            double ivphi_P = InterpolateIVPHI(IVPHI_P, h_common, NSteps_common,
-                                               h_common*NSteps_common, rp, 0.0, 0.0);
-            double ca = std::abs(interp_ref_a(ra_s));
-            double cb = std::abs(interp_ref_b(rb_s));
-            temp += ra_s * ca * std::abs(phi_T*ivphi_P) * cb * rb_s;
+        bool zerosw = true;
+        for (int iv5 = 0; iv5 < 5; ++iv5) {
+          double ra_s = U_s + 0.5*VS5[iv5];
+          double rb_s = U_s - 0.5*VS5[iv5];
+          for (int ix = 0; ix < 2; ++ix) {
+            double f = bsprod3(ra_s, rb_s, xs_grd[ix]);
+            if (f != 0.0) zerosw = false;
+            temp += std::abs(f);
           }
         }
-        SUM0 += temp; SUM1 += temp * U_s;
+        if (zerosw) continue;
+
+        SUM0 += temp;
+        SUM1 += temp * U_s;
+        SUM2 += temp * U_s * U_s;
       }
+
       double mean_U = (SUM0 > 1e-30) ? SUM1/SUM0 : 0.5*(SUMMIN_li + SUMMAX_li);
+      if (Li == 0) {
+        fprintf(stderr, "DIAG SUMMID scan: RLMAXS1=%.4f  RLMAXS2=%.4f\n", RLMAXS1, RLMAXS2);
+        fprintf(stderr, "DIAG SUMMID: SUM0=%.4e  SUM1=%.4e  mean_U=%.4f\n", SUM0, SUM1, mean_U);
+        // Print VS at U=5
+        double VS_test[5]; compute_VS(5.0, VS_test);
+        fprintf(stderr, "DIAG VS@U=5: %.4f  %.4f  %.4f  %.4f  %.4f\n",
+                VS_test[0], VS_test[1], VS_test[2], VS_test[3], VS_test[4]);
+        double b3_test = bsprod3(5.0+0.5*VS_test[2], 5.0-0.5*VS_test[2], xs_grd[0]);
+        fprintf(stderr, "DIAG bsprod3@U=5,V=0: %.6e\n", b3_test);
+        double b3_test2 = bsprod3(5.2, 4.8, xs_grd[0]);
+        fprintf(stderr, "DIAG bsprod3@ra=5.2,rb=4.8: %.6e\n", b3_test2);
+      }
       const double AMDMLT = 0.9;  // dpsb MIDMULT (RGRIDS row C, col 11)
       SUMMID_li = mean_U * AMDMLT;
       // Clamp (Ptolemy lines 16084-16085)
@@ -876,60 +957,59 @@ void DWBA::InelDc() {
     std::vector<double> vmin_frac(NPSUM, 1.0), vmax_frac(NPSUM, 1.0);
 
     {
+      // Faithful Ptolemy GRDSET DO 489 V-range scan (source.f lines 18855-18948)
+      // Ptolemy scans downward from VVAL=min(1, old_VMAX+3*DV).
+      // STOP condition: |BSPROD| > ULIM (found the integrand above threshold)
+      // i.e. accept VVAL as cutoff when integrand is ABOVE threshold.
+      // ULIM = RVRLIM / max(1e-2, RI*RO)  — per-point, not per-IU
       const double DV_scan = 1.0 / (double)LOOKST;
-      double vmax_prev = 1.0, vmin_prev = 1.0;  // warm-start from previous IU
+      double vmax_prev = 1.0, vmin_prev = 1.0;
 
       for (int IU = 0; IU < NPSUM; ++IU) {
         double U = xi_s[IU];
         if (U < 1.0) {
-          // U < 1 fm: skip scan, use full range ±2U (VMIN=VMAX=1)
+          // U < 1 fm: skip BSPROD scan, use full range (Ptolemy GO TO 465)
           vmax_frac[IU] = 1.0;
           vmin_frac[IU] = 1.0;
           continue;
         }
         double VLEN = 2.0 * U;
-        double ULIM = RVRLIM_li / std::max(1.0e-2, U * U);  // RI≈RO≈U at small V
 
-        // Scan VMAX (positive side): start from vmax_prev, step down
+        // SYNE = +0.5*VLEN: scan VMAX (positive V side)
+        // RI = U + VVAL*(+0.5*VLEN) = U + VVAL*U
+        // RO = U - VVAL*(+0.5*VLEN) = U - VVAL*U
         double VVAL = std::min(1.0, vmax_prev + 3.0*DV_scan);
-        double vmax_out = 1.0;
-        // Forward scan downward until BSPROD < ULIM at two consecutive points
+        double vmax_out = DV_scan;  // default: smallest step
         while (true) {
           if (VVAL <= 0.5*DV_scan) { vmax_out = DV_scan; break; }
-          double ra = U + VVAL * U;   // SYNE=+0.5*VLEN => RI=U+VVAL*0.5*VLEN=U+VVAL*U
-          double rb = U - VVAL * U;
-          if (rb < 0) rb = 0;
-          double f1 = bsprod2(ra, rb, XS1);
-          double f2 = bsprod2(ra, rb, XS2);
-          if (f1 < ULIM && f2 < ULIM) {
-            // Both below — step back up one
-            VVAL = std::min(1.0, VVAL + DV_scan);
-            // Check asymptopia: compute RP, RT
-            ra = U + VVAL * U; rb = std::max(0.0, U - VVAL * U);
-            double RP_c = std::sqrt((S2*ra+T2*rb)*(S2*ra+T2*rb) + 1.0);
-            double RT_c = std::sqrt((S1*ra+T1*rb)*(S1*ra+T1*rb) + 1.0);
-            // Bound state asymptopia check (simplified: use BNDMXP/BNDMXT)
-            // Ptolemy GRDSET line 16225: if RT > BNDMXT or RP > BNDMXP, step back
-            // We skip the explicit check here — the BSPROD value already handles it
-            vmax_out = VVAL;
+          double RI = U + VVAL * U;
+          double RO = U - VVAL * U;
+          if (RO < 0) RO = 0;
+          double ULIM_loc = RVRLIM_li / std::max(1.0e-2, RI * RO);  // per-point ULIM
+          bool above = false;
+          double f1 = std::abs(bsprod2(RI, RO, XS1));
+          double f2 = std::abs(bsprod2(RI, RO, XS2));
+          if (f1 > ULIM_loc || f2 > ULIM_loc) {
+            vmax_out = std::min(1.0, VVAL);
             break;
           }
           VVAL -= DV_scan;
         }
 
-        // Scan VMIN (negative side): same logic
+        // SYNE = -0.5*VLEN: scan VMIN (negative V side)
         VVAL = std::min(1.0, vmin_prev + 3.0*DV_scan);
-        double vmin_out = 1.0;
+        double vmin_out = DV_scan;
         while (true) {
           if (VVAL <= 0.5*DV_scan) { vmin_out = DV_scan; break; }
-          double ra = U - VVAL * U;   // SYNE=-0.5*VLEN => RI=U-VVAL*U, RO=U+VVAL*U
-          double rb = U + VVAL * U;
-          if (ra < 0) ra = 0;
-          double f1 = bsprod2(ra, rb, XS1);
-          double f2 = bsprod2(ra, rb, XS2);
-          if (f1 < ULIM && f2 < ULIM) {
-            VVAL = std::min(1.0, VVAL + DV_scan);
-            vmin_out = VVAL;
+          double RI = U - VVAL * U;
+          double RO = U + VVAL * U;
+          if (RI < 0) RI = 0;
+          double ULIM_loc = RVRLIM_li / std::max(1.0e-2, RI * RO);
+          double f1 = std::abs(bsprod2(RI, RO, XS1));
+          double f2 = std::abs(bsprod2(RI, RO, XS2));
+          bool above = (f1 > ULIM_loc || f2 > ULIM_loc);
+          if (above) {
+            vmin_out = std::min(1.0, VVAL);
             break;
           }
           VVAL -= DV_scan;
@@ -939,9 +1019,16 @@ void DWBA::InelDc() {
         vmin_frac[IU] = vmin_out;
         vmax_prev = vmax_out;
         vmin_prev = vmin_out;
+      }
+    }
 
-        // VABSMIN = -vmin_frac*VLEN, VABSMAX = +vmax_frac*VLEN
-        // Apply clip VMIN=MAX(VMIN,-2U), VMAX=MIN(VMAX,2U) → always satisfied since frac∈[0,1]
+    // Diagnostic: print vmax_frac for Li=0
+    if (Li == 0) {
+      fprintf(stderr, "=== vmax_frac/vmin_frac for Li=0 ===\n");
+      for (int IU = 0; IU < NPSUM; ++IU) {
+        double U = xi_s[IU];
+        fprintf(stderr, "IU=%2d U=%7.4f vmax_frac=%7.4f vmin_frac=%7.4f VABSMAX=%7.4f VABSMIN=%7.4f\n",
+                IU+1, U, vmax_frac[IU], vmin_frac[IU], vmax_frac[IU]*2*U, vmin_frac[IU]*2*U);
       }
     }
 
