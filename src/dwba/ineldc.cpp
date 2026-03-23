@@ -262,7 +262,7 @@ void DWBA::InelDc() {
   // -------------------------------------------------------
   // Partial wave loops
   // -------------------------------------------------------
-  int Lmax = 40;  // Match Ptolemy lmax=40
+  int Lmax = 5;  // TEMP: reduced for quick test
 
   TransferSMatrix.clear();
 
@@ -1297,14 +1297,20 @@ void DWBA::InelDc() {
     //   DO 789 IU = 1, NPSUMI:           ← chi integral (ONCE, not per IV)
     //     I[IH,JPI,JPO] += TERM * SMIVL[IH][IU] * chi_b * chi_a
     //
-    // Our previous code incorrectly placed DO 609+789 INSIDE the DO 859 loop.
-    // Fixed: accumulate SMHVL across all IV, then spline+chi-integrate once.
+    // Faithful Ptolemy structure:
+    //   DO 859 IV:
+    //     DO 549 IU: SMHVL[IH][IU] = H(IU,IV)*RIOEX(IV,IU)  ← SET (not accumulate)
+    //     DO 609 IH: spline SMHVL → SMIVL
+    //     DO 789 IU: I[IH,JPI,JPO] += LWIO(IV,IU)*SMIVL[IH][IU]*DW(IV,IU)
+    // The outer IV sum in I_accum is done by looping and adding each IV's contribution.
 
     std::vector<std::vector<double>> SMHVL(IHMAX, std::vector<double>(NPSUM, 0.0));
 
     for (int IV = 0; IV < NPDIF; ++IV) {
-      // ── H-computation IU loop ──────────────────────────────────────────────────
-      // SMHVL is accumulated across all IV (reset before IV loop, not inside)
+      // ── H-computation IU loop (DO 549): SET SMHVL for this IV ─────────────────
+      // Ptolemy: SMHVL[IH][IU] = H(IU,IV)*RIOEX(IV,IU) — NOT accumulated across IV
+      for (int IH = 0; IH < IHMAX; ++IH)
+        std::fill(SMHVL[IH].begin(), SMHVL[IH].end(), 0.0);
 
       for (int IU = 0; IU < NPSUM; ++IU) {
         double U = xi_s[IU];
@@ -1393,10 +1399,14 @@ void DWBA::InelDc() {
         }
         // End phi loop
 
-        // Accumulate SMHVL[IH][IU] += H[IH] * RIOEX (Ptolemy DO 509)
-        // Note: SMHVL is accumulated across all IV (outer loop)
+        // SET SMHVL[IH][IU] = H[IH] * RIOEX (Ptolemy DO 509 — assignment, not accumulation)
+        // Reset to zero above at top of IV loop, then set here for each IU
         for (int IH = 0; IH < IHMAX; ++IH)
-          SMHVL[IH][IU] += HINT[IH] * RIOEX;
+          SMHVL[IH][IU] = HINT[IH] * RIOEX;
+        // STEP_A equivalent: Li=3, IV=0
+        if (Li==3 && IV==0)
+          fprintf(stderr,"CPP_STEP_A LI3 IU=%2d U=%8.4f V=%8.4f SMHVL[0]=%12.5e HINT[0]=%12.5e RIOEX=%12.5e\n",
+                  IU+1, U, V, SMHVL[0][IU], HINT[0], RIOEX);
 
         // DIAGNOSTIC: print H values for Li=1, IV=0 (most-negative V side), all IU
         // Ptolemy HGRD_LI1 prints at IV=1 (most-negative V) on the NPSUM grid
@@ -1408,7 +1418,8 @@ void DWBA::InelDc() {
 
       }  // End H-computation IU loop (Ptolemy DO 549)
 
-    }  // End IV loop (Ptolemy DO 859) — SMHVL is now fully accumulated
+    // ── DO 609 + DO 789: spline cumulative SMHVL → SMIVL, then chi-integrate at this IV ──
+    // (Ptolemy: this runs INSIDE DO 859, once per IV, using cumulative SMHVL up to this IV)
 
       // ── SPLNCB + INTRPC: spline SMHVL[IH][NPSUM] → SMIVL[IH][NPSUMI] ──────────
       // (Ptolemy DO 609 IH=1,IHMAX)
@@ -1438,17 +1449,25 @@ void DWBA::InelDc() {
       for (int IH = 0; IH < IHMAX; ++IH)
         do_spline(xi_s, SMHVL[IH], xi_si, SMIVL[IH]);
 
-      // ── Chi integration: IU=1..NPSUMI (Ptolemy DO 789) ─────────────────────────
-      // TERM = exp(-ALPHAP*RP - ALPHAT*RT) * DIFWT * wi_si[IU]  (Ptolemy LWIO * GL wt)
-      // I(IH,JPI,JPO) += TERM * chi_a(ra) * SMIVL[IH][IU] * chi_b*(rb)
+      // DIAG: verify SMHVL varies between IV steps (Li=0, IH=0, IU=5)
+      if (Li==0 && IHMAX>0 && (int)SMHVL[0].size()>5)
+        fprintf(stderr,"SMHVL_CHK Li=%d IV=%d SMHVL[0][5]=%.6e\n", Li, IV, SMHVL[0][5]);
+
+      // ── Chi integration: Ptolemy DO 789 (IU), at current IV of DO 859 ──────────────
+      // Uses current IV's LWIO_chi and (ra_chi, rb_chi) grid.
+      // SMIVL is the cumulative spline up to this IV step.
       for (int IU = 0; IU < NPSUMI; ++IU) {
         double U_chi  = xi_si[IU];
         double WGT_U  = wi_si[IU];
         if (U_chi < 1e-6) continue;
 
-        // V at this chi-grid IU: use precomputed LWIO from per-IU CUBMAP
+        // LWIO(IV,IU): precomputed = JACOB*ra*rb*WOW*DIFWT*exp_neg
         double LWIO = LWIO_chi[IV * NPSUMI + IU];
-        double TERM = LWIO;  // already includes WOW (U-grid weight), DIFWT, JACOB, ra, rb, exp_neg
+        double TERM = LWIO;
+        // STEP_C equivalent: LWIO/TERM at Li=3, IV=0, IU=0..4
+        if (Li==3 && IV==0 && IU<5)
+          fprintf(stderr,"CPP_STEP_C LI3 IV=0 IU=%2d IPLUNK=%5d TERM=%12.5e\n",
+                  IU+1, IV*NPSUMI+IU+1, TERM);
 
         double ra_chi = U_chi + 0.5 * dif_pts_chi[IU][IV];
         double rb_chi = U_chi - 0.5 * dif_pts_chi[IU][IV];
@@ -1524,9 +1543,16 @@ void DWBA::InelDc() {
             }
           }
         }
-      }  // End chi IU loop (Ptolemy DO 789)
+      }  // End chi IU loop (Ptolemy DO 789) — chi integration for this IV
 
-    // (IV loop already closed above — spline+chi are outside IV loop)
+      // STEP_E equivalent: print running I_accum[IH=0] after each IV (matches Ptolemy II=1)
+      if (Li == 3 && !I_accum.empty()) {
+        auto it0 = I_accum.begin();
+        fprintf(stderr, "CPP_STEP_E LI3 after IV=%2d I_accum[0] re=%.6e im=%.6e\n",
+                IV, it0->second.real(), it0->second.imag());
+      }
+
+  }  // End IV loop (Ptolemy DO 859) — SMHVL accumulated, chi integrated at each IV
 
     // ── Step 6: Apply SFROMI factors and store ────────────────────────────────────
     for (int IH = 0; IH < IHMAX; ++IH) {
@@ -1581,6 +1607,16 @@ void DWBA::InelDc() {
 
           auto S_pre9j = Integral * sfromi_norm;
           TransferSMatrix.push_back({Lx, Li, Lo, JPI_key, JPO, S_pre9j});
+
+          // DIAGNOSTIC: print raw I_accum for Li=3, Lo=3 to compare JPI dependence
+          if (Li==3 && Lo==3 && (JPO==5 || JPO==7)) {
+            fprintf(stderr, "IACCUM_DIAG Li=%d JPI=%d/2 Lo=%d JPO=%d/2 Lx=%d  "
+                    "I_raw=(%10.4e,%10.4e) ATERM=%.5f phase=(%g,%g) S=(%10.4e,%10.4e)\n",
+                    Li, JPI_key, Lo, JPO, Lx,
+                    it->second.real(), it->second.imag(),
+                    ATERM_val, phase_factor.real(), phase_factor.imag(),
+                    S_pre9j.real(), S_pre9j.imag());
+          }
 
 #ifdef DEBUG_PRE9J
           fprintf(stderr, "PRE9J Li=%2d JPI=%2d/2  Lo=%2d JPO=%2d/2  Lx=%d  "
