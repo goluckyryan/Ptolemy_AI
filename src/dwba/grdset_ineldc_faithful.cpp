@@ -689,8 +689,9 @@ void DWBA::InelDcFaithful2()
         int nsct = (ITYPE >= 3) ? N_chi_scan : 0;
         double sinv = (ITYPE >= 3) ? SCTSP_inv : 0.0;
         double smx  = (ITYPE >= 3) ? SCTMAX : 0.0;
+        // NAIT=4 → 5-point Lagrange interpolation (Fortran AITLAG, INADD=4)
         return bsprod_faithful(FPFT, ITYPE, RA, RB, X, sp, nsct, sinv, smx,
-                               1, RP_, RT_, bs);
+                               4, RP_, RT_, bs);
     };
     auto bsp_ISCTCR = [&](int ITYPE, double RA, double RB, double X,
                            double& FPFT, double& RP_, double& RT_) -> bool {
@@ -698,8 +699,9 @@ void DWBA::InelDcFaithful2()
         int nsct = (ITYPE >= 3) ? N_chi_scan : 0;
         double sinv = (ITYPE >= 3) ? SCTSP_inv : 0.0;
         double smx  = (ITYPE >= 3) ? SCTMAX : 0.0;
+        // NAIT=4 → 5-point Lagrange interpolation (Fortran AITLAG, INADD=4)
         return bsprod_faithful(FPFT, ITYPE, RA, RB, X, sp, nsct, sinv, smx,
-                               1, RP_, RT_, bs);
+                               4, RP_, RT_, bs);
     };
 
     // ─── GRDSET Step 1: Find WVWMAX (Fortran lines 15920-15955) ─────────────
@@ -1225,99 +1227,62 @@ void DWBA::InelDcFaithful2()
     }
 
     // ── Stage 5 (GRDSET DO 749): fill chi-grid LWIO, LRI, LRO tables ────────
-    // Fortran: for each IU=1..NPSUMI, WOW = SMIVL_wt(IU), U = SMIPT(IU)
-    //   V-range from LVMIN/LVMID/LVMAX (polynomial or copy of H-grid)
-    //   When NPLYSW=TRUE: VRANGE(I) = ALLOC(LVMIN + (I-1)*NPSUM + IU)
-    //     which copies LVMIN_arr/LVMID_arr/LVMAX_arr evaluated at the chi IU
-    //   When NPLYSW=FALSE: polynomial evaluation
-    // For simplicity/faithfulness, we mimic NPLYSW=FALSE by re-evaluating
-    // the Stage 1-2 scan for each SMIPT IU. This is the polynomial approach.
+    // Fortran: NPLYSW=FALSE (NPSUMI≠NPSUM) → polynomial evaluation of VMIN/VMID/VMAX
+    //   at each SMIPT[IU] using LSQPOL degree-3 polynomial fit to H-grid data.
+    // We approximate using natural cubic spline interpolation of H-grid LVMIN/LVMID/LVMAX
+    // at each SMIPT chi-grid point. This closely matches the Fortran polynomial approach.
     //
-    // Actually, Fortran always uses LSQPOL polynomial when NPLYSW=FALSE (default).
-    // But we can approximate by Stage 1-2 scan directly at SMIPT[IU] values.
-    // This is equivalent to NPLYSW=TRUE mode (bypass polynomial).
+    // IMPORTANT: Fortran stores VMID as a FRACTION (VMID-VMIN)/(VMAX-VMIN) in the polynomial.
+    // After evaluation: VMID_abs = (VMAX-VMIN)*VMID_frac + VMIN.
+    //
+    // Step 1: build splines for VMIN, VMAX, VMID_frac over H-grid SMHPT.
     {
-        // For chi-grid, V-range is computed fresh for each SMIPT[IU]
+        // ── Build cubic splines of H-grid V-range over SMHPT ──────────────────
+        // Fortran LSQPOL fits degree-3 polynomial to H-grid LVMIN/LVMAX/VMIDfrac.
+        // We approximate with cubic spline interpolation — closely matches LSQPOL.
+        // VMID is stored as fraction (VMID-VMIN)/(VMAX-VMIN) in the polynomial.
+        std::vector<double> SMHPT_0(NPSUM), VMIN_h(NPSUM), VMAX_h(NPSUM), VMIDf_h(NPSUM);
+        for (int k=0; k<NPSUM; k++) {
+            SMHPT_0[k] = SMHPT[k];
+            VMIN_h[k]  = LVMIN_arr[k+1];
+            VMAX_h[k]  = LVMAX_arr[k+1];
+            double width = LVMAX_arr[k+1] - LVMIN_arr[k+1];
+            VMIDf_h[k] = (width > 1e-12) ? (LVMID_arr[k+1] - VMIN_h[k]) / width : 0.5;
+        }
+        std::vector<double> Bv(NPSUM),Cv(NPSUM),Dv(NPSUM);
+        std::vector<double> Bmax(NPSUM),Cmax(NPSUM),Dmax(NPSUM);
+        std::vector<double> Bfrac(NPSUM),Cfrac(NPSUM),Dfrac(NPSUM);
+        Splncb(NPSUM, SMHPT_0.data(), VMIN_h.data(), Bv.data(), Cv.data(), Dv.data());
+        Splncb(NPSUM, SMHPT_0.data(), VMAX_h.data(), Bmax.data(), Cmax.data(), Dmax.data());
+        Splncb(NPSUM, SMHPT_0.data(), VMIDf_h.data(), Bfrac.data(), Cfrac.data(), Dfrac.data());
+        std::vector<double> VMIN_chi(NPSUMI), VMAX_chi(NPSUMI), VMIDf_chi(NPSUMI);
+        Intrpc(NPSUM, SMHPT_0.data(), VMIN_h.data(), Bv.data(), Cv.data(), Dv.data(),
+               NPSUMI, SMIPT.data(), VMIN_chi.data());
+        Intrpc(NPSUM, SMHPT_0.data(), VMAX_h.data(), Bmax.data(), Cmax.data(), Dmax.data(),
+               NPSUMI, SMIPT.data(), VMAX_chi.data());
+        Intrpc(NPSUM, SMHPT_0.data(), VMIDf_h.data(), Bfrac.data(), Cfrac.data(), Dfrac.data(),
+               NPSUMI, SMIPT.data(), VMIDf_chi.data());
+        // Convert VMID fraction back to absolute
+        std::vector<double> VMID_chi(NPSUMI);
+        for (int k=0; k<NPSUMI; k++)
+            VMID_chi[k] = (VMAX_chi[k]-VMIN_chi[k])*VMIDf_chi[k] + VMIN_chi[k];
+
+        // ── DO 749 loop ──────────────────────────────────────────────────────
         std::vector<double> DIFPT_c(NPDIF+1), DIFWT_c(NPDIF+1);
-
         for (int IU = 1; IU <= NPSUMI; ++IU) {
-            double WOW = SMIVL_wts[IU-1];   // GL weight for U-grid point
-            double U   = SMIPT[IU-1];       // U value
+            double WOW = SMIVL_wts[IU-1];
+            double U   = SMIPT[IU-1];
+            double VMIN_c = VMIN_chi[IU-1];
+            double VMAX_c = VMAX_chi[IU-1];
+            double VMID_c = VMID_chi[IU-1];
 
-            // V-range: Fortran DO 709 (NPLYSW=TRUE → copy LVMIN/LVMID/LVMAX)
-            // When NPLYSW=FALSE: evaluate polynomial at U to get VMIN,VMID,VMAX
-            // We use direct Stage 1-2 scan for accuracy
-            if (IU == 5) fprintf(stderr, "STAGE5_DBG IU=5 U=%.6f WOW=%.6f\n", U, WOW);
-
-            // Stage 1 scan for chi grid IU
-            double VMIN_c = -U, VMAX_c = U;  // defaults: full range
-            if (U >= 1.0) {
-                double VMAX_f = 1.0, VMIN_f = 1.0;
-                for (int ISYNE = 0; ISYNE < 2; ++ISYNE) {
-                    double SYNE_eff = (ISYNE == 0) ? 0.5*2.0*U : -0.5*2.0*U;
-                    double& VEND_f = (ISYNE == 0) ? VMAX_f : VMIN_f;
-                    double VVAL = std::min(1.0, VEND_f + 3.0*DV_scan);
-                    for (;;) {
-                        if (VVAL <= 0.5*DV_scan) { VVAL = 0.0; break; }
-                        double RI = U + VVAL*SYNE_eff;
-                        double RO = U - VVAL*SYNE_eff;
-                        if (RI <= 0 || RO <= 0) { VVAL -= DV_scan; continue; }
-                        double ULIM2 = RVRLIM / std::max(1e-2, RI*RO);
-                        bool above = false;
-                        for (int ix = 0; ix < 2; ++ix) {
-                            double FIFO2, RP2, RT2;
-                            bool ok = bsp_ISCTMN(4, RI, RO, XS[ix], FIFO2, RP2, RT2);
-                            // Fortran Stage 5 uses ITYPE=4? Actually for chi-grid,
-                            // Fortran uses LVMIN values from H-grid (NPLYSW=TRUE).
-                            // For the chi-grid endpoint scan we should use BSPROD ITYPE=4
-                            // (phi' × phi' from bound-state form) but the Fortran actually
-                            // copies from the H-grid's LVMIN/LVMID/LVMAX.
-                            // Use ITYPE=2 (same as H-grid) for consistency.
-                            if (!ok) ok = bsp_ISCTMN(2, RI, RO, XS[ix], FIFO2, RP2, RT2);
-                            if (ok && std::fabs(FIFO2) > ULIM2) { above = true; break; }
-                        }
-                        if (above) break;
-                        VVAL -= DV_scan;
-                    }
-                    VVAL = std::min(1.0, VVAL + DV_scan);
-                    VEND_f = VVAL;
-                }
-                VMIN_c = -VMIN_f * 2.0*U;
-                VMAX_c =  VMAX_f * 2.0*U;
-            }
-
-            // Stage 2: find VMID
-            double VMID_c = 0.5*(VMIN_c + VMAX_c);
-            {
-                int IMAX_v2 = 2*NPDIF;
-                double DV3 = (VMAX_c - VMIN_c) / (IMAX_v2 + 1);
-                double PVPMAX2 = 0.0;
-                double VVAL3 = VMIN_c;
-                for (int k = 0; k < IMAX_v2; ++k) {
-                    VVAL3 += DV3;
-                    double RI3 = U + 0.5*VVAL3, RO3 = U - 0.5*VVAL3;
-                    if (RI3 <= 0 || RO3 <= 0) continue;
-                    double TEMP3 = 0.0;
-                    for (int ix = 0; ix < 2; ++ix) {
-                        double FIFO3, RP3, RT3;
-                        bool ok = bsp_ISCTMN(1, RI3, RO3, XS[ix], FIFO3, RP3, RT3);
-                        if (ok) TEMP3 += std::fabs(FIFO3);
-                    }
-                    if (TEMP3 > PVPMAX2) { PVPMAX2 = TEMP3; VMID_c = VVAL3; }
-                }
-                double TEMP3c = 0.3*(VMAX_c - VMIN_c);
-                VMID_c = std::min(std::max(VMID_c, VMIN_c + TEMP3c), VMAX_c - TEMP3c);
-            }
-
-            // Clip (Fortran DO 749 lines 720-724)
+            // Clip
             VMIN_c = std::max(VMIN_c, -2.0*U);
             VMAX_c = std::min(VMAX_c,  2.0*U);
             double TEMP_c = 0.3*(VMAX_c - VMIN_c);
-            VMID_c = std::min(std::max(VMID_c, VMIN_c + TEMP_c), VMAX_c - TEMP_c);
+            VMID_c = std::min(std::max(VMID_c, VMIN_c+TEMP_c), VMAX_c-TEMP_c);
 
-            // SYNE flip: Fortran logic — flip when VMID ≤ mean (not >)
-            // Fortran: IF(VMID.GT.0.5*(VMAX+VMIN)) GO TO 730 (skip flip)
-            //          ELSE: SYNE=-1, flip VMIN/VMAX/VMID
+            // SYNE flip: Fortran GO TO 730 if VMID>mean (keep SYNE=+1), else SYNE=-1
             double SYNE_c = 1.0;
             if (VMID_c <= 0.5*(VMAX_c + VMIN_c)) {
                 SYNE_c = -1.0;
@@ -1327,43 +1292,35 @@ void DWBA::InelDcFaithful2()
                 VMID_c = -VMID_c;
             }
 
-            // CUBMAP → NPDIF chi DIF-grid points
+            if (IU == 5) fprintf(stderr, "STAGE5_SPLINE IU=5 U=%.5f VMIN=%.5f VMID=%.5f VMAX=%.5f SYNE=%.1f\n",
+                U, VMIN_c, VMID_c, VMAX_c, SYNE_c);
+
+            // CUBMAP → NPDIF DIF-grid points
             {
                 std::vector<double> args(NPDIF), wts(NPDIF);
                 GaussLegendre(NPDIF, -1.0, 1.0, args, wts);
                 CubMapFaithful(MAPDIF, VMIN_c, VMID_c, VMAX_c, GAMDIF, args, wts);
-                for (int k=0;k<NPDIF;k++) { DIFPT_c[k+1]=args[k]; DIFWT_c[k+1]=wts[k]; }
+                for (int k=0;k<NPDIF;k++){DIFPT_c[k+1]=args[k];DIFWT_c[k+1]=wts[k];}
             }
 
             // Fill LWIO, LRI, LRO
-            if (IU == 5) fprintf(stderr, "STAGE5_DBG IU=5 VMIN=%.6f VMID=%.6f VMAX=%.6f SYNE=%.1f DIFPT[1]=%.6f\n",
-                VMIN_c, VMID_c, VMAX_c, SYNE_c, DIFPT_c[1]);
             for (int IV = 1; IV <= NPDIF; ++IV) {
-                int IPLUNK_iv = IV - 1;
-                if (SYNE_c < 0.0) IPLUNK_iv = NPDIF - IV;
+                int IPLUNK_iv = (SYNE_c > 0) ? IV-1 : NPDIF-IV;
                 int IPLUNK = NPSUMI * IPLUNK_iv + IU;
                 double VVAL = DIFPT_c[IV];
                 double RI = U + 0.5*VVAL*SYNE_c;
                 double RO = U - 0.5*VVAL*SYNE_c;
                 LRI_tab[IPLUNK] = (float)RI;
                 LRO_tab[IPLUNK] = (float)RO;
-                // RIOEX_minus = exp(-(ALPHAP*RP + ALPHAT*RT))
-                double RP_c = std::sqrt(1.0 + std::pow(S1*RI + T1*RO, 2));
-                double RT_c = std::sqrt(1.0 + std::pow(S2*RI + T2*RO, 2));
+                double RP_c = std::sqrt(1.0 + std::pow(S1*RI+T1*RO, 2));
+                double RT_c = std::sqrt(1.0 + std::pow(S2*RI+T2*RO, 2));
                 double TEMP_exp = std::exp(-(ALPHAP*RP_c + ALPHAT*RT_c));
-                // LWIO = JACOB * RI * RO * WOW * DIFWT[IV] * exp(-...)
                 LWIO_tab[IPLUNK] = (float)(JACOB * RI * RO * WOW * DIFWT_c[IV] * TEMP_exp);
             }
         }
-
-        // Debug: print LWIO for IU=5, IV=1 (IPLUNK = NPSUMI*0 + 5 = 5)
-        {
-            int IU_dbg = 5, IV_dbg = 1;
-            // Need to find SYNE for IU=5 to get correct IPLUNK
-            // For now just print LWIO_tab[5]:
-            fprintf(stderr, "DBG_LWIO_IU5_IV1: LWIO[%d]=%.6e  LRI=%.4f LRO=%.4f\n",
-                NPSUMI*0+5, LWIO_tab[NPSUMI*0+5], LRI_tab[NPSUMI*0+5], LRO_tab[NPSUMI*0+5]);
-        }
+        // Debug IPLUNK=5
+        fprintf(stderr, "STAGE5_IPLUNK5: LRI=%.5f LRO=%.5f LWIO=%.5e\n",
+            LRI_tab[5], LRO_tab[5], LWIO_tab[5]);
     }
 
     // ─── Phi base GL points (Fortran MAPPHI / NPPHI) ─────────────────────────
