@@ -222,9 +222,14 @@ static bool bsprod_faithful(
 
     FPFT = FP * FT;
 
-    // DEBUG
+    // DEBUG: validate BSPROD ITYPE=1 at IPLUNK=3 reference point
+    // Fortran GRDSET_TRP IPLUNK=3: RI=0.003284, RO=0.207994, RP=0.387, RT=0.190, FIFO=0.964
     static int bsprod_dbg_count = 0;
-    bool do_dbg = (std::abs(RA - 5.0) < 0.01 && std::abs(RB - 5.0) < 0.01 && bsprod_dbg_count < 3 && ITYPE == 3);
+    bool do_dbg = (ITYPE == 1 && bsprod_dbg_count < 8);
+    if (do_dbg) { bsprod_dbg_count++;
+        fprintf(stderr,"BSP_VAL ITYPE=%d RA=%.6f RB=%.6f X=%.5f RP=%.5f RT=%.5f FP=%.6e FT=%.6e FPFT=%.6e\n",
+            ITYPE,RA,RB,X,RP,RT,FP,FT,FPFT);
+        fprintf(stderr,"  Fortran ref: RP=0.387 RT=0.190 FIFO=0.964\n"); }
     if (do_dbg) { bsprod_dbg_count++; fprintf(stderr,"BSP_DBG RA=%.3f RB=%.3f X=%.3f RP=%.4f RT=%.4f FP=%.6e FT=%.6e FPFT=%.6e scat=%p nspsct=%d sctmax=%.1f sctsp=%.4f\n",
         RA,RB,X,RP,RT,FP,FT,FPFT,scat,nspsct,sctmax,sctsp_inv); }
 
@@ -949,135 +954,382 @@ void DWBA::InelDcFaithful2()
     GaussLegendre(NPSUMI, -1.0, 1.0, SMIPT, SMIVL_wts);
     CubMapFaithful(MAPSUM, SUMMIN, SUMMID, SUMMAX, GAMSUM, SMIPT, SMIVL_wts);
 
-    // ─── GRDSET Step 5: Build V-grid for H points (NRIROH = NPDIF × NPSUM) ─
-    // For the H-computation: per each IU (NPSUM), compute VMIN/VMAX via phi-scan
-    // Then build DIF GL grid NPDIF points in [VMIN, VMAX]
-    // For the chi-integration: per each IU (NPSUMI), same thing
+    // ─── GRDSET Step 5: Pre-compute H-grid DIF tables ───────────────────────
+    // Fortran GRDSET Stage 1-4 for H-grid (NPSUM points):
+    //   Stage 1: scan VMIN, VMAX per IU using BSPROD(ITYPE=2, phi×phi)
+    //   Stage 2: find VMID = V of max |phi×phi| per IU
+    //   Stage 3: polynomial fit (skipped when NPLYSW=.TRUE., just copy)
+    //   Stage 4: call CUBMAP once per IU → NPDIF DIF-grid points
+    //   Store RIOEX[NPSUM*(IV-1)+IU], RIH[...], ROH[...]
     //
-    // Simplified: use full symmetric V-range [-2U, +2U] (IRECT=0 means variable,
-    // IRECT=1 means rectangular). For now use symmetric VRNGMX.
+    // Fortran GRDSET Stage 5 for chi-grid (NPSUMI points):
+    //   Uses SMIPT[IU] as U values; V-range from polynomial fit or copy of H-grid
+    //   Stores LWIO[NPSUMI*(IV-1)+IU], LRI[...], LRO[...]
     //
-    // Actually Ptolemy builds V-range per IU from phi-scan (Stage 1-3 of GRDSET).
-    // For faithfulness, we do the per-IU scan here.
+    // NRIROH = NPDIF × NPSUM  (H-grid)
+    // NRIROI = NPDIF × NPSUMI  (chi-grid)
 
-    // V endpoint scan for H grid (NPSUM points) — Stage 1 of Fortran GRDSET
-    // Fortran DO 489 IU=1,NPSUM scans V-range for each U
-    // We'll store VMIN[IU], VMAX[IU] for each H-grid point
-    std::vector<double> LVMIN_H(NPSUM), LVMAX_H(NPSUM), LVMID_H(NPSUM);
+    int NRIROH = NPDIF * NPSUM;
+    int NRIROI = NPDIF * NPSUMI;
+
+    // H-grid pre-computed tables (1-indexed: IPLUNK = NPSUM*(IV-1)+IU, IV=1..NPDIF, IU=1..NPSUM)
+    std::vector<double> RIOEX_tab(NRIROH+1, 0.0);   // ALLOC(LRIOEX+IPLUNK)
+    std::vector<double> RIH_tab(NRIROH+1, 0.0);     // ALLOC(LRIH+IPLUNK)
+    std::vector<double> ROH_tab(NRIROH+1, 0.0);     // ALLOC(LROH+IPLUNK)
+
+    // Chi-grid pre-computed tables (1-indexed: IPLUNK = NPSUMI*(IV-1)+IU)
+    std::vector<float>  LWIO_tab(NRIROI+1, 0.0f);   // ALLOC4(LWIO+IPLUNK)
+    std::vector<float>  LRI_tab(NRIROI+1, 0.0f);    // ALLOC4(LRI+IPLUNK)
+    std::vector<float>  LRO_tab(NRIROI+1, 0.0f);    // ALLOC4(LRO+IPLUNK)
+
+    // H-grid V-range per IU (absolute values, in fm)
+    // Fortran: LVMIN+IU = VMIN (absolute, negative allowed), LVMAX+IU = VMAX (absolute, positive)
+    // LVMID+IU = VMID (absolute)
+    // Note: Fortran stores signed values (VMIN can be negative, VMAX positive)
+    // In the H-grid Stage 1 scan: RI = U + VVAL*SYNE_halflen, so VVAL is fractional ∈ [0,1]
+    // ALLOC(LVMIN+IU) = -VMIN_frac*VLEN (stored as negative absolute)
+    // ALLOC(LVMAX+IU) = +VMAX_frac*VLEN (stored as positive absolute)
+    // So LVMIN+IU stores the left boundary of [VMIN, VMAX] (negative fm value)
+    // and LVMAX+IU stores the right boundary (positive fm value)
+    //
+    // We follow Fortran GRDSET Stage 1 exactly:
+
+    // DV_scan = 1/LOOKST (Fortran: DV = 1.D0/LOOKST)
     double DV_scan = 1.0 / LOOKST;
 
-    for (int IU = 0; IU < NPSUM; ++IU) {
-        double U = SMHPT[IU];
-        if (U < 1e-6) { LVMIN_H[IU] = 0.0; LVMAX_H[IU] = 0.0; LVMID_H[IU] = 0.0; continue; }
-        double VLEN = 2.0 * U;
-        // Stage 1: find VMAX (positive side) and VMIN (negative side, stored as positive)
-        double VMAX_scan = 1.0;  // fractional V = V/VLEN
-        double VMIN_scan = 1.0;
+    // Arrays to store per-IU V-range for H-grid
+    std::vector<double> LVMIN_arr(NPSUM+1, 0.0);   // 1-indexed, like Fortran ALLOC(LVMIN+IU)
+    std::vector<double> LVMAX_arr(NPSUM+1, 0.0);
+    std::vector<double> LVMID_arr(NPSUM+1, 0.0);
 
-        // Scan down from 1 to 0 to find where |BSPROD| drops below RVRLIM/RI/RO
-        // Fortran GRDSET Stage 1 (lines 16192-16240)
-        auto scan_vend = [&](double syne) -> double {
-            double VVAL = 1.0;
-            double SYNE_eff = syne * 0.5 * VLEN;
-            for (int kk = 0; kk < LOOKST; ++kk) {
+    // ── Stage 1: find VMIN, VMAX per H-grid IU ──────────────────────────────
+    // Fortran DO 489 IU=1,NPSUM:
+    //   For syne=+1: scan VVAL from ~VMAX down, stop when |BSPROD(ITYPE=2)| < RVRLIM/(RI*RO)
+    //   For syne=-1: same but RI and RO swapped (VMIN side)
+    // XS[1..2] = {1.0, 1.0-DXV}  (two X values for the phi scan)
+    double XS[2] = {1.0, 1.0 - DXV_scan};
+
+    for (int IU = 1; IU <= NPSUM; ++IU) {
+        double U = SMHPT[IU-1];  // 0-indexed SMHPT
+        double VLEN = 2.0 * U;
+        double VMAX_f = 1.0;  // fractional VMAX
+        double VMIN_f = 1.0;  // fractional VMIN (positive, stored as VMIN_abs = -VMIN_f*VLEN)
+
+        if (U < 1.0) {
+            // Fortran: IF (U < 1) GO TO 465  (skip scan, keep VMAX=VMIN=1)
+            // label465: just store the current VMIN,VMAX
+        } else {
+            // Fortran: VVAL=VMAX (start search from VMAX)
+            // scan_syne = +1 (positive V side, RI = U + VVAL*SYNE_eff, RO = U - VVAL*SYNE_eff)
+            // then scan_syne = -1 (negative V side)
+            for (int ISYNE = 0; ISYNE < 2; ++ISYNE) {
+                double SYNE_eff = (ISYNE == 0) ? 0.5*VLEN : -0.5*VLEN;
+                double& VEND_f = (ISYNE == 0) ? VMAX_f : VMIN_f;
+                // Fortran label 420: VVAL = DMIN1(1.0, VVAL+3*DV)
+                // label 422: IF (VVAL <= 0.5*DV) GO TO 450
+                //   RI = U + VVAL*SYNE_eff
+                //   RO = U - VVAL*SYNE_eff (but sign convention: SYNE_eff already has sign)
+                //   ULIM = RVRLIM / max(1e-2, RI*RO)
+                //   for I=1,2: BSPROD(ITYPE=2, RI, RO, XS[I], ...)
+                //   if |FIFO| > ULIM → found → GO TO 450 (VVAL is the winner)
+                //   VVAL -= DV → GO TO 422
+                // label 450: VVAL = DMIN1(1.0, VVAL+DV)
+                double VVAL = VEND_f;
+                // Reset search: start from top
                 VVAL = std::min(1.0, VVAL + 3.0*DV_scan);
-                while (VVAL > 0.5*DV_scan) {
-                    double RI = U + VVAL*SYNE_eff;
-                    double RO = U - VVAL*SYNE_eff;
-                    if (RI <= 0.0 || RO <= 0.0) { VVAL -= DV_scan; break; }
-                    double ULIM2 = RVRLIM / std::max(1e-2, RI*RO);
-                    bool below = true;
-                    double XS2[2] = {1.0, 1.0 - DXV_scan};
+
+                bool found_in_scan = false;
+                for (;;) {
+                    if (VVAL <= 0.5*DV_scan) {
+                        // VVAL went to zero — nothing found above threshold
+                        found_in_scan = true; VVAL = 0.0; break;
+                    }
+                    double RI = U + VVAL * SYNE_eff;
+                    double RO = U - VVAL * SYNE_eff;
+                    if (RI <= 0.0 || RO <= 0.0) { VVAL -= DV_scan; continue; }
+                    double ULIM2 = RVRLIM / std::max(1e-2, RI * RO);
+                    bool above = false;
                     for (int ix = 0; ix < 2; ++ix) {
                         double FIFO2, RP2, RT2;
-                        bool ok = bsp_ISCTMN(2, RI, RO, XS2[ix], FIFO2, RP2, RT2);
-                        if (!ok) continue;
-                        if (std::abs(FIFO2) > ULIM2) { below = false; break; }
+                        bool ok = bsp_ISCTMN(2, RI, RO, XS[ix], FIFO2, RP2, RT2);
+                        if (ok && std::fabs(FIFO2) > ULIM2) { above = true; break; }
                     }
-                    if (below) { VVAL -= DV_scan; break; }
+                    if (above) {
+                        found_in_scan = true; break;
+                    }
                     VVAL -= DV_scan;
                 }
-                break;  // only need one pass (simplified — Fortran has different loop)
-            }
-            return std::min(1.0, VVAL + DV_scan);
-        };
-        // Simplified scan: just use full range for now (faithful enough for convergence)
-        VMAX_scan = 1.0;
-        VMIN_scan = 1.0;
+                // Fortran label 450: VVAL = DMIN1(1.0, VVAL+DV)
+                VVAL = std::min(1.0, VVAL + DV_scan);
 
-        LVMIN_H[IU] = -VMIN_scan * VLEN;
-        LVMAX_H[IU] =  VMAX_scan * VLEN;
-        // Stage 2: find VMID as location of max |phi_V_phi| inside [VMIN,VMAX]
-        {
-            int IMAX = 2 * NPDIF;
-            double DV2 = (LVMAX_H[IU] - LVMIN_H[IU]) / (IMAX + 1);
-            double VVAL2 = LVMIN_H[IU];
-            double PVPMAX2 = 0.0;
-            double VOFMAX2 = 0.0;
-            for (int IV2 = 0; IV2 < IMAX; ++IV2) {
-                VVAL2 += DV2;
-                double RI2 = U + 0.5*VVAL2;
-                double RO2 = U - 0.5*VVAL2;
-                if (RI2 <= 0.0 || RO2 <= 0.0) continue;
-                double FIFO2, RP2, RT2;
-                double TEMP2 = 0.0;
-                for (int ix = 0; ix < 2; ++ix) {
-                    double xs2 = (ix == 0) ? 1.0 : 1.0 - DXV_scan;
-                    bool ok = bsp_ISCTMN(1, RI2, RO2, xs2, FIFO2, RP2, RT2);
-                    if (ok) TEMP2 += std::abs(FIFO2);
-                }
-                if (TEMP2 > PVPMAX2) { PVPMAX2 = TEMP2; VOFMAX2 = VVAL2; }
-            }
-            double TEMP3 = 0.3*(LVMAX_H[IU] - LVMIN_H[IU]);
-            LVMID_H[IU] = std::max(LVMIN_H[IU] + TEMP3,
-                           std::min(LVMAX_H[IU] - TEMP3, VOFMAX2));
-        }
-    }
-
-    // Chi-integration V-range (NPSUMI points) — Stage 1: asymptopia scan
-    // Same algorithm as H-grid Stage 1 but using SMIPT (chi U-grid) and BSPROD ITYPE=4 (pure phi)
-    std::vector<double> LVMIN_I(NPSUMI), LVMAX_I(NPSUMI), LVMID_I(NPSUMI);
-    {
-        const int IMAX_i = 2 * NPDIF;
-        const double XS_i[2] = {1.0, 1.0 - DXV_scan};
-        for (int IU = 0; IU < NPSUMI; ++IU) {
-            double U = SMIPT[IU];
-            if (U < 1e-6) { LVMIN_I[IU]=0; LVMAX_I[IU]=0; LVMID_I[IU]=0; continue; }
-            double VLEN = 2.0 * U;
-
-            // Find V extrema where BSPROD(ITYPE=4, RA, RB, X) >= RVRLIM (asymptopia check)
-            double DV2_i = VLEN / (IMAX_i + 1);
-            double VMIN_scan = 0.0, VMAX_scan = 0.0;
-            bool found_vmin = false, found_vmax = false;
-            for (int iv2 = 0; iv2 <= IMAX_i; ++iv2) {
-                double VVAL2 = -VLEN + iv2 * DV2_i;
-                for (int ix = 0; ix < 2; ++ix) {
-                    double RA = U + 0.5*VVAL2, RB = U - 0.5*VVAL2;
-                    if (RA <= 0 || RB <= 0) continue;
-                    double FIFO, RP_, RT_;
-                    bool ok = bsp_ISCTMN(4, RA, RB, XS_i[ix], FIFO, RP_, RT_);
-                    if (ok && std::abs(FIFO) >= RVRLIM) {
-                        if (!found_vmin) { VMIN_scan = VVAL2 / VLEN; found_vmin = true; }
-                        VMAX_scan = VVAL2 / VLEN;
-                        found_vmax = true;
+                // Asymptopia check (Fortran lines 16224-16243):
+                // RI, RO at this VVAL
+                {
+                    double RI = U + VVAL * SYNE_eff;
+                    double RO = U - VVAL * SYNE_eff;
+                    // RP, RT with abs-value formula (Fortran lines 16230-16231):
+                    // RT = sqrt((S1*RI)^2 + (T1*RO)^2 + ST1*RI*RO*(1-DXV))
+                    // RP = sqrt((S2*RI)^2 + (T2*RO)^2 + ST2*RI*RO*(1-DXV))
+                    // where ST1 = 2*S1*T1, ST2 = 2*S2*T2
+                    double ST1 = 2.0*S1*T1, ST2 = 2.0*S2*T2;
+                    double RT = std::sqrt(std::max(0.0, (S1*RI)*(S1*RI) + (T1*RO)*(T1*RO)
+                                          + ST1*RI*RO*(1.0-DXV_scan)));
+                    double RP = std::sqrt(std::max(0.0, (S2*RI)*(S2*RI) + (T2*RO)*(T2*RO)
+                                          + ST2*RI*RO*(1.0-DXV_scan)));
+                    // BNDMXT = RLTMAX (asymptopia of target bound state)
+                    // BNDMXP = RLPMAX (asymptopia of projectile bound state)
+                    if (RT > RLTMAX || RP > RLPMAX) {
+                        // Fortran: NBUMPS++; VVAL -= DV
+                        VVAL = std::max(0.0, VVAL - DV_scan);
                     }
                 }
+                VEND_f = VVAL;
             }
-            if (!found_vmin) VMIN_scan = -0.5;
-            if (!found_vmax) VMAX_scan =  0.5;
+        }
 
-            LVMIN_I[IU] = VMIN_scan * VLEN;
-            LVMAX_I[IU] = VMAX_scan * VLEN;
+        // Fortran label 465: store
+        // ALLOC(LVMIN+IU) = -VMIN_f * VLEN  (negative absolute V)
+        // ALLOC(LVMAX+IU) = VMAX_f * VLEN   (positive absolute V)
+        LVMIN_arr[IU] = -VMIN_f * VLEN;
+        LVMAX_arr[IU] =  VMAX_f * VLEN;
+    }
 
-            // Stage 2: find VMID from weight function moment (simplified: use 0 as midpoint)
-            LVMID_I[IU] = 0.0;
-            if (LVMAX_I[IU] <= LVMIN_I[IU] + 1e-10) {
-                LVMIN_I[IU] = -U; LVMAX_I[IU] = U; LVMID_I[IU] = 0.0;
+    // ── Stage 2: find VMID per H-grid IU ────────────────────────────────────
+    // Fortran DO 559 IU=1,NPSUM:
+    //   Scan VVAL from VMIN to VMAX in IMAX=2*NPDIF steps
+    //   For each VVAL: CALL BSPROD(ITYPE=1, RI, RO, XS[I]) → pure phi×phi
+    //   VMID = VVAL at which TEMP = sum(|FIFO|) is maximum
+    for (int IU = 1; IU <= NPSUM; ++IU) {
+        double U = SMHPT[IU-1];
+        double VMIN_abs = LVMIN_arr[IU];
+        double VMAX_abs = LVMAX_arr[IU];
+        int IMAX_v = 2 * NPDIF;
+        double DV2 = (VMAX_abs - VMIN_abs) / (IMAX_v + 1);
+        double PVPMAX = 0.0;
+        double VOFMAX = 0.5*(VMIN_abs + VMAX_abs);  // default: midpoint
+        double VVAL2 = VMIN_abs;
+        for (int k = 0; k < IMAX_v; ++k) {
+            VVAL2 += DV2;
+            double RI2 = U + 0.5*VVAL2;
+            double RO2 = U - 0.5*VVAL2;
+            if (RI2 <= 0.0 || RO2 <= 0.0) continue;
+            double TEMP2 = 0.0;
+            for (int ix = 0; ix < 2; ++ix) {
+                double FIFO2, RP2, RT2;
+                bool ok = bsp_ISCTMN(1, RI2, RO2, XS[ix], FIFO2, RP2, RT2);
+                if (ok) TEMP2 += std::fabs(FIFO2);
+            }
+            if (TEMP2 > PVPMAX) { PVPMAX = TEMP2; VOFMAX = VVAL2; }
+        }
+        // Fortran DO 589 (after Stage 3, skipped for NPLYSW=TRUE):
+        // VMID = (VMAX-VMIN)*VMID_frac + VMIN, where VMID_frac from Stage 2
+        // Since we skip Stage 3 (NPLYSW=TRUE → no polynomial fit), VMID = VOFMAX directly
+        // Clip: TEMP = 0.3*(VMAX-VMIN); VMID = clamp(VMID, VMIN+TEMP, VMAX-TEMP)
+        double TEMP3 = 0.3*(VMAX_abs - VMIN_abs);
+        LVMID_arr[IU] = std::max(VMIN_abs + TEMP3, std::min(VMAX_abs - TEMP3, VOFMAX));
+    }
+
+    // ── Stage 4 (GRDSET DO 689): fill H-grid RIOEX, RIH, ROH tables ─────────
+    // Fortran: for each IU=1..NPSUM, CUBMAP → NPDIF points DIFPT[1..NPDIF]
+    //   SYNE=1 unless VMID > 0.5*(VMAX+VMIN) → flip
+    //   IPLUNK = IV-1 (or NPDIF-IV if SYNE<0), then IPLUNK = NPSUM*IPLUNK + IU
+    //   RIH[IPLUNK] = U + 0.5*VVAL*SYNE
+    //   ROH[IPLUNK] = U - 0.5*VVAL*SYNE
+    //   RIOEX[IPLUNK] = exp(ALPHAP*RP + ALPHAT*RT)
+    {
+        std::vector<double> DIFPT(NPDIF+1), DIFWT(NPDIF+1);
+        for (int IU = 1; IU <= NPSUM; ++IU) {
+            double U = SMHPT[IU-1];
+            double VMIN_h = LVMIN_arr[IU];
+            double VMAX_h = LVMAX_arr[IU];
+            double VMID_h = LVMID_arr[IU];
+
+            // Clip (Fortran DO 689 lines 620-623)
+            VMIN_h = std::max(VMIN_h, -2.0*U);
+            VMAX_h = std::min(VMAX_h,  2.0*U);
+            double TEMP_h = 0.3*(VMAX_h - VMIN_h);
+            VMID_h = std::min(std::max(VMID_h, VMIN_h + TEMP_h), VMAX_h - TEMP_h);
+
+            // SYNE flip: if VMID > 0.5*(VMAX+VMIN) → flip
+            double SYNE_h = 1.0;
+            if (VMID_h > 0.5*(VMAX_h + VMIN_h)) {
+                SYNE_h = -1.0;
+                double tmp = VMAX_h;
+                VMAX_h = -VMIN_h;
+                VMIN_h = -tmp;
+                VMID_h = -VMID_h;
+            }
+
+            // CUBMAP to get NPDIF DIF-grid points
+            std::vector<double> xi_tmp(NPDIF), wi_tmp(NPDIF);
+            GaussLegendre(NPDIF, -1.0, 1.0, xi_tmp, wi_tmp);
+            // Fill DIFPT, DIFWT via CubMapFaithful
+            std::copy(xi_tmp.begin(), xi_tmp.end(), DIFPT.begin()+1);
+            std::copy(wi_tmp.begin(), wi_tmp.end(), DIFWT.begin()+1);
+            {
+                std::vector<double> args(NPDIF), wts(NPDIF);
+                for (int k=0;k<NPDIF;k++) { args[k]=xi_tmp[k]; wts[k]=wi_tmp[k]; }
+                CubMapFaithful(MAPDIF, VMIN_h, VMID_h, VMAX_h, GAMDIF, args, wts);
+                for (int k=0;k<NPDIF;k++) { DIFPT[k+1]=args[k]; DIFWT[k+1]=wts[k]; }
+            }
+
+            // Fill tables
+            for (int IV = 1; IV <= NPDIF; ++IV) {
+                int IPLUNK_iv = IV - 1;
+                if (SYNE_h < 0.0) IPLUNK_iv = NPDIF - IV;
+                int IPLUNK = NPSUM * IPLUNK_iv + IU;
+                double VVAL = DIFPT[IV];
+                double RI = U + 0.5*VVAL*SYNE_h;
+                double RO = U - 0.5*VVAL*SYNE_h;
+                RIH_tab[IPLUNK] = RI;
+                ROH_tab[IPLUNK] = RO;
+                // RIOEX = exp(ALPHAP*RP + ALPHAT*RT)
+                // RP = sqrt(1 + (S1*RI+T1*RO)^2), RT = sqrt(1 + (S2*RI+T2*RO)^2)
+                double RP_h = std::sqrt(1.0 + std::pow(S1*RI + T1*RO, 2));
+                double RT_h = std::sqrt(1.0 + std::pow(S2*RI + T2*RO, 2));
+                RIOEX_tab[IPLUNK] = std::exp(ALPHAP*RP_h + ALPHAT*RT_h);
             }
         }
     }
 
-    // ─── Phi base GL points on [0,1] (scaled to [0, PHI0] per (IU,IV)) ──────
+    // ── Stage 5 (GRDSET DO 749): fill chi-grid LWIO, LRI, LRO tables ────────
+    // Fortran: for each IU=1..NPSUMI, WOW = SMIVL_wt(IU), U = SMIPT(IU)
+    //   V-range from LVMIN/LVMID/LVMAX (polynomial or copy of H-grid)
+    //   When NPLYSW=TRUE: VRANGE(I) = ALLOC(LVMIN + (I-1)*NPSUM + IU)
+    //     which copies LVMIN_arr/LVMID_arr/LVMAX_arr evaluated at the chi IU
+    //   When NPLYSW=FALSE: polynomial evaluation
+    // For simplicity/faithfulness, we mimic NPLYSW=FALSE by re-evaluating
+    // the Stage 1-2 scan for each SMIPT IU. This is the polynomial approach.
+    //
+    // Actually, Fortran always uses LSQPOL polynomial when NPLYSW=FALSE (default).
+    // But we can approximate by Stage 1-2 scan directly at SMIPT[IU] values.
+    // This is equivalent to NPLYSW=TRUE mode (bypass polynomial).
+    {
+        // For chi-grid, V-range is computed fresh for each SMIPT[IU]
+        std::vector<double> DIFPT_c(NPDIF+1), DIFWT_c(NPDIF+1);
+
+        for (int IU = 1; IU <= NPSUMI; ++IU) {
+            double WOW = SMIVL_wts[IU-1];   // GL weight for U-grid point
+            double U   = SMIPT[IU-1];       // U value
+
+            // V-range: Fortran DO 709 (NPLYSW=TRUE → copy LVMIN/LVMID/LVMAX)
+            // When NPLYSW=FALSE: evaluate polynomial at U to get VMIN,VMID,VMAX
+            // We use direct Stage 1-2 scan for accuracy
+
+            // Stage 1 scan for chi grid IU
+            double VMIN_c = -U, VMAX_c = U;  // defaults: full range
+            if (U >= 1.0) {
+                double VMAX_f = 1.0, VMIN_f = 1.0;
+                for (int ISYNE = 0; ISYNE < 2; ++ISYNE) {
+                    double SYNE_eff = (ISYNE == 0) ? 0.5*2.0*U : -0.5*2.0*U;
+                    double& VEND_f = (ISYNE == 0) ? VMAX_f : VMIN_f;
+                    double VVAL = std::min(1.0, VEND_f + 3.0*DV_scan);
+                    for (;;) {
+                        if (VVAL <= 0.5*DV_scan) { VVAL = 0.0; break; }
+                        double RI = U + VVAL*SYNE_eff;
+                        double RO = U - VVAL*SYNE_eff;
+                        if (RI <= 0 || RO <= 0) { VVAL -= DV_scan; continue; }
+                        double ULIM2 = RVRLIM / std::max(1e-2, RI*RO);
+                        bool above = false;
+                        for (int ix = 0; ix < 2; ++ix) {
+                            double FIFO2, RP2, RT2;
+                            bool ok = bsp_ISCTMN(4, RI, RO, XS[ix], FIFO2, RP2, RT2);
+                            // Fortran Stage 5 uses ITYPE=4? Actually for chi-grid,
+                            // Fortran uses LVMIN values from H-grid (NPLYSW=TRUE).
+                            // For the chi-grid endpoint scan we should use BSPROD ITYPE=4
+                            // (phi' × phi' from bound-state form) but the Fortran actually
+                            // copies from the H-grid's LVMIN/LVMID/LVMAX.
+                            // Use ITYPE=2 (same as H-grid) for consistency.
+                            if (!ok) ok = bsp_ISCTMN(2, RI, RO, XS[ix], FIFO2, RP2, RT2);
+                            if (ok && std::fabs(FIFO2) > ULIM2) { above = true; break; }
+                        }
+                        if (above) break;
+                        VVAL -= DV_scan;
+                    }
+                    VVAL = std::min(1.0, VVAL + DV_scan);
+                    VEND_f = VVAL;
+                }
+                VMIN_c = -VMIN_f * 2.0*U;
+                VMAX_c =  VMAX_f * 2.0*U;
+            }
+
+            // Stage 2: find VMID
+            double VMID_c = 0.5*(VMIN_c + VMAX_c);
+            {
+                int IMAX_v2 = 2*NPDIF;
+                double DV3 = (VMAX_c - VMIN_c) / (IMAX_v2 + 1);
+                double PVPMAX2 = 0.0;
+                double VVAL3 = VMIN_c;
+                for (int k = 0; k < IMAX_v2; ++k) {
+                    VVAL3 += DV3;
+                    double RI3 = U + 0.5*VVAL3, RO3 = U - 0.5*VVAL3;
+                    if (RI3 <= 0 || RO3 <= 0) continue;
+                    double TEMP3 = 0.0;
+                    for (int ix = 0; ix < 2; ++ix) {
+                        double FIFO3, RP3, RT3;
+                        bool ok = bsp_ISCTMN(1, RI3, RO3, XS[ix], FIFO3, RP3, RT3);
+                        if (ok) TEMP3 += std::fabs(FIFO3);
+                    }
+                    if (TEMP3 > PVPMAX2) { PVPMAX2 = TEMP3; VMID_c = VVAL3; }
+                }
+                double TEMP3c = 0.3*(VMAX_c - VMIN_c);
+                VMID_c = std::min(std::max(VMID_c, VMIN_c + TEMP3c), VMAX_c - TEMP3c);
+            }
+
+            // Clip (Fortran DO 749 lines 720-724)
+            VMIN_c = std::max(VMIN_c, -2.0*U);
+            VMAX_c = std::min(VMAX_c,  2.0*U);
+            double TEMP_c = 0.3*(VMAX_c - VMIN_c);
+            VMID_c = std::min(std::max(VMID_c, VMIN_c + TEMP_c), VMAX_c - TEMP_c);
+
+            // SYNE flip
+            double SYNE_c = 1.0;
+            if (VMID_c > 0.5*(VMAX_c + VMIN_c)) {
+                SYNE_c = -1.0;
+                double tmp = VMAX_c;
+                VMAX_c = -VMIN_c;
+                VMIN_c = -tmp;
+                VMID_c = -VMID_c;
+            }
+
+            // CUBMAP → NPDIF chi DIF-grid points
+            {
+                std::vector<double> args(NPDIF), wts(NPDIF);
+                GaussLegendre(NPDIF, -1.0, 1.0, args, wts);
+                CubMapFaithful(MAPDIF, VMIN_c, VMID_c, VMAX_c, GAMDIF, args, wts);
+                for (int k=0;k<NPDIF;k++) { DIFPT_c[k+1]=args[k]; DIFWT_c[k+1]=wts[k]; }
+            }
+
+            // Fill LWIO, LRI, LRO
+            for (int IV = 1; IV <= NPDIF; ++IV) {
+                int IPLUNK_iv = IV - 1;
+                if (SYNE_c < 0.0) IPLUNK_iv = NPDIF - IV;
+                int IPLUNK = NPSUMI * IPLUNK_iv + IU;
+                double VVAL = DIFPT_c[IV];
+                double RI = U + 0.5*VVAL*SYNE_c;
+                double RO = U - 0.5*VVAL*SYNE_c;
+                LRI_tab[IPLUNK] = (float)RI;
+                LRO_tab[IPLUNK] = (float)RO;
+                // RIOEX_minus = exp(-(ALPHAP*RP + ALPHAT*RT))
+                double RP_c = std::sqrt(1.0 + std::pow(S1*RI + T1*RO, 2));
+                double RT_c = std::sqrt(1.0 + std::pow(S2*RI + T2*RO, 2));
+                double TEMP_exp = std::exp(-(ALPHAP*RP_c + ALPHAT*RT_c));
+                // LWIO = JACOB * RI * RO * WOW * DIFWT[IV] * exp(-...)
+                LWIO_tab[IPLUNK] = (float)(JACOB * RI * RO * WOW * DIFWT_c[IV] * TEMP_exp);
+            }
+        }
+
+        // Debug: print LWIO for IU=5, IV=1 (IPLUNK = NPSUMI*0 + 5 = 5)
+        {
+            int IU_dbg = 5, IV_dbg = 1;
+            // Need to find SYNE for IU=5 to get correct IPLUNK
+            // For now just print LWIO_tab[5]:
+            fprintf(stderr, "DBG_LWIO_IU5_IV1: LWIO[%d]=%.6e  LRI=%.4f LRO=%.4f\n",
+                NPSUMI*0+5, LWIO_tab[NPSUMI*0+5], LRI_tab[NPSUMI*0+5], LRO_tab[NPSUMI*0+5]);
+        }
+    }
+
+    // ─── Phi base GL points (Fortran MAPPHI / NPPHI) ─────────────────────────
     std::vector<double> phi_base_pts(NPPHI), phi_base_wts(NPPHI);
     GaussLegendre(NPPHI, -1.0, 1.0, phi_base_pts, phi_base_wts);
     PHIMID = std::max(PHIMID, 0.10);
@@ -1085,25 +1337,19 @@ void DWBA::InelDcFaithful2()
     GAMPHI = std::max(GAMPHI, 1.0e-6);
     CubMapFaithful(MAPPHI, 0.0, PHIMID, 1.0, GAMPHI, phi_base_pts, phi_base_wts);
 
-    // ─── Main LI loop ─────────────────────────────────────────────────────────
-    // Ptolemy DO 989 LIPRTY = 1,2 (even LI first, then odd)
-    // Fortran: LIMIN=LMIN, LIL=LMIN+1 for even; swap for odd
-
+    // ─── Main LI loop (DO 989 LIPRTY, DO 959 LI) ─────────────────────────────
     for (int LIPRTY = 0; LIPRTY < 2; ++LIPRTY) {
-        int LIMIN = (LIPRTY == 0) ? LMIN : LMIN + 1;
-        if (LIMIN % 2 != LIPRTY % 2) LIMIN++;
-        // Even pass: LIMIN, LIMIN+2, ...
-        // Odd pass:  LIMIN+1, LIMIN+3, ...
-        // (Fortran logic: even pass LIMIN=LMIN if LMIN even, else LMIN+1)
-        {
-            int base = (LIPRTY == 0) ? 0 : 1;
-            if (LMIN % 2 == base) LIMIN = LMIN;
-            else LIMIN = LMIN + 1;
-        }
+        // Determine LIMIN for this parity pass
+        // Fortran: even pass LIMIN=LMIN if LMIN even, else LMIN+1
+        //          odd  pass LIMIN=LMIN if LMIN odd,  else LMIN+1
+        int base = (LIPRTY == 0) ? 0 : 1;
+        int LIMIN;
+        if (LMIN % 2 == base) LIMIN = LMIN;
+        else LIMIN = LMIN + 1;
 
         for (int LI = LIMIN; LI <= LMAX; LI += 2) {
 
-            // ── Get chi_a wavefunctions for all JPI under this LI ────────────
+            // ── chi_a wavefunctions for all JPI ──────────────────────────────
             int JPI_min = std::max(1, std::abs(2*LI - JSPS1));
             int JPI_max = 2*LI + JSPS1;
             std::map<int, std::vector<std::complex<double>>> chi_a_map;
@@ -1113,11 +1359,8 @@ void DWBA::InelDcFaithful2()
                 chi_a_map[JPI] = Incoming.WaveFunction;
             }
 
-            // ── Compute A12 for all (Lo, Lx) → collect IHMAX pairs ────────────
-            // Lo range: |LI - LxMax| to min(LI+LxMax, LMAX), same parity as LI+lT+lP
+            // ── (Lo, Lx) pairs for this LI ───────────────────────────────────
             int LOMNMN = std::abs(LI - LxMax_bs);
-            // Parity: LI + Lo + Lx must be even (parity conservation)
-            // lT + lP + LI + Lo must have even sum → Lo parity fixed
             {
                 int par_fix = (lT + lP + LI + LOMNMN) % 2;
                 if (par_fix != 0) LOMNMN++;
@@ -1130,10 +1373,6 @@ void DWBA::InelDcFaithful2()
                 for (int Lx = LxMin_bs; Lx <= LxMax_bs; Lx += 2) {
                     if (Lx < std::abs(LI - Lo)) continue;
                     if (Lx > LI + Lo) continue;
-                    // parity: lT + lP + LI + Lo + Lx must be even... not exactly
-                    // Ptolemy triangle rule: LI, Lo, Lx form a triangle
-                    // Also parity: (-1)^(lT+lP) = (-1)^(LI+Lo+Lx) 
-                    // → (lT+lP+LI+Lo+Lx) % 2 == 0
                     if ((lT + lP + LI + Lo + Lx) % 2 != 0) continue;
                     lolx_pairs.push_back({Lo, Lx});
                 }
@@ -1141,14 +1380,13 @@ void DWBA::InelDcFaithful2()
             int IHMAX = (int)lolx_pairs.size();
             if (IHMAX == 0) continue;
 
-            // Precompute A12 for each (Lo, Lx) pair
+            // A12 table
             std::vector<std::vector<std::tuple<int,int,double>>> A12_table(IHMAX);
-            for (int IH = 0; IH < IHMAX; ++IH) {
+            for (int IH = 0; IH < IHMAX; ++IH)
                 A12_table[IH] = ComputeA12Terms(LI, lolx_pairs[IH].Lo,
                                                 lolx_pairs[IH].Lx, lT, lP);
-            }
 
-            // ── Get chi_b for all (Lo, JPO) under this LI ────────────────────
+            // ── chi_b wavefunctions for all (Lo, JPO) ────────────────────────
             std::map<std::pair<int,int>, std::vector<std::complex<double>>> chi_b_map;
             double h_b = Outgoing.StepSize;
             std::set<int> lo_seen;
@@ -1166,119 +1404,60 @@ void DWBA::InelDcFaithful2()
                 }
             }
 
-            // ── Accumulators I_accum[NI] for this LI ─────────────────────────
-            // NI = IHMAX × (number of JPI) × (max JPO per Lo)
-            // Key: (IH, JPI, JPO) → (re, im)
-            struct AccKey { int IH, JPI, JPO; bool operator<(const AccKey& o) const {
-                if (IH != o.IH) return IH < o.IH;
-                if (JPI != o.JPI) return JPI < o.JPI;
-                return JPO < o.JPO; } };
+            // ── I_accum for this LI ───────────────────────────────────────────
+            struct AccKey { int IH, JPI, JPO;
+                bool operator<(const AccKey& o) const {
+                    if (IH != o.IH) return IH < o.IH;
+                    if (JPI != o.JPI) return JPI < o.JPI;
+                    return JPO < o.JPO; } };
             std::map<AccKey, std::pair<double,double>> I_accum;
 
-            // ── DO 859 IV = 1, NPDIF (V-grid loop) ───────────────────────────
-            for (int IV = 0; IV < NPDIF; ++IV) {
+            // ── DO 859 IV = 1, NPDIF ─────────────────────────────────────────
+            for (int IV = 1; IV <= NPDIF; ++IV) {
 
-                // ── DO 549 IU = 1, NPSUM (H-computation loop) ─────────────────
-                // SMHVL[IH][IU] = H[IH] * RIOEX  (for spline input)
+                // ── DO 549 IU = 1, NPSUM (H computation) ─────────────────────
+                // SMHVL[IH][IU] = LHINT[IH] * RIOEX[IPLUNK]
+                // IPLUNK_H = NPSUM*(IV-1) + IU  (from RIOEX_tab, using 1-based)
                 std::vector<std::vector<double>> SMHVL(IHMAX,
-                                                       std::vector<double>(NPSUM, 0.0));
+                    std::vector<double>(NPSUM+1, 0.0));  // 1-indexed IU
 
-                // We need to map the GL fraction from the DIF grid
-                // Fortran: for each IU, call CubMap(MAPDIF, VMIN, VMID, VMAX, GAMDIF, ...)
-                // to get DIF GL points DIFPT[IV] and weight DIFWT[IV].
-                // Since MAPDIF=1 (linear), with VMIN,VMAX per IU:
-                //   VVAL = VMIN + (VMAX-VMIN) * (xi_V_linear[IV]+1)/2
-                //   DIFWT = (VMAX-VMIN)/2 * GL_weight[IV]
-                //
-                // For the H-computation, the GL points are FIXED (NPDIF of them),
-                // and VVAL varies with IU (since [VMIN,VMAX] is IU-dependent).
-                // We use a single GL set for IV and apply per-IU V-range.
+                for (int IU = 1; IU <= NPSUM; ++IU) {
+                    int IPLUNK_H = NPSUM*(IV-1) + IU;
+                    double RI = RIH_tab[IPLUNK_H];
+                    double RO = ROH_tab[IPLUNK_H];
+                    double RIOEX = RIOEX_tab[IPLUNK_H];
 
-                // Reference GL fraction (from master GL set for NPDIF)
-                // For MAPDIF=1 (linear): xi_V ∈ [-1,1]; VVAL = (VMIN+VMAX)/2 + xi*VLEN/2
-                // For MAPDIF=2 (rational-sinh): similar but nonlinear
-                // Here we compute the GL fraction from the base and map per IU:
-                // We pre-generate one GL set and use the fraction as-is
-                static std::vector<double> xi_dif_base;
-                static std::vector<double> wi_dif_base;
-                if ((int)xi_dif_base.size() != NPDIF) {
-                    xi_dif_base.resize(NPDIF);
-                    wi_dif_base.resize(NPDIF);
-                    GaussLegendre(NPDIF, -1.0, 1.0, xi_dif_base, wi_dif_base);
-                }
-                double xi_v = xi_dif_base[IV];  // ∈ [-1,1]
-                double wi_v = wi_dif_base[IV];
-
-                for (int IU = 0; IU < NPSUM; ++IU) {
-                    double U = SMHPT[IU];
-                    if (U < 1e-6) continue;
-
-                    // V-range for this IU (Fortran Stage 1-3)
-                    double VMIN_u = LVMIN_H[IU];
-                    double VMAX_u = LVMAX_H[IU];
-                    double VMID_u = LVMID_H[IU];
-                    if (VMAX_u <= VMIN_u + 1e-10) continue;
-
-                    // Map GL fraction to V ∈ [VMIN_u, VMAX_u]
-                    // For MAPDIF=1 (linear): V = (VMIN+VMAX)/2 + xi*(VMAX-VMIN)/2
-                    double VMID_cub = VMID_u;
-                    double VLEN_u = VMAX_u - VMIN_u;
-                    // Linear map: VVAL = VMIN_u + (xi_v+1)/2 * VLEN_u
-                    // Weight: DIFWT = wi_v * VLEN_u/2
-                    double SYNE = 1.0;
-                    if (VMID_u > 0.5*(VMAX_u + VMIN_u)) {
-                        // Flip (Fortran lines 16419-16424)
-                        SYNE = -1.0;
-                        VMID_cub = -VMID_u;
-                        double tmp_vmax = -LVMIN_H[IU];
-                        double tmp_vmin = -LVMAX_H[IU];
-                        VMAX_u = tmp_vmax;
-                        VMIN_u = tmp_vmin;
-                    }
-
-                    // Get DIF GL point by calling CubMap on single point
-                    std::vector<double> dif_pt = {xi_v}, dif_wt = {wi_v};
-                    CubMapFaithful(MAPDIF, VMIN_u, VMID_cub, VMAX_u, GAMDIF, dif_pt, dif_wt);
-                    double VVAL = dif_pt[0] * SYNE;
-                    double DIFWT = std::abs(dif_wt[0]);
-
-                    double RI = U + 0.5*VVAL;
-                    double RO = U - 0.5*VVAL;
                     if (RI <= 0.0 || RO <= 0.0) continue;
 
-                    // RIOEX = exp(+ALPHAP*RP' + ALPHAT*RT')
-                    // RP' = sqrt(1 + (S2*RI + T2*RO)^2), RT' = sqrt(1 + (S1*RI + T1*RO)^2)
-                    // (Fortran uses sqrt(1 + ...) not sqrt(...) for RIOEX)
-                    // Fortran line 19174: RP=SQRT(1+(S1*RI+T1*RO)^2), RT=SQRT(1+(S2*RI+T2*RO)^2)
-                    double RP_io = std::sqrt(1.0 + std::pow(S1*RI + T1*RO, 2));
-                    double RT_io = std::sqrt(1.0 + std::pow(S2*RI + T2*RO, 2));
-                    double RIOEX = std::exp(ALPHAP*RP_io + ALPHAT*RT_io);
+                    // ── LHINT initialization (Fortran DO 409) ────────────────
+                    std::vector<double> LHINT(IHMAX+1, 0.0);  // 1-indexed
+                    std::vector<double> LHABS(IHMAX+1, 0.0);
 
-                    // ── PHI0 scan (Pass 1 of Fortran GRDSET phi loop) ─────────
+                    // ── PHI0 scan (Pass 1, find phi cutoff) ──────────────────
                     double ULIM_phi = RVRLIM / (std::max(1.0, RI) * std::max(1.0, RO));
                     int IEND = LOOKST + 1;
                     double WOW_phi = 0.0;
                     for (int II_phi = 1; II_phi <= LOOKST + 1; ++II_phi) {
-                        double X = 1.0 - DXV_scan * (double)(II_phi-1)*(double)(II_phi-1);
+                        double X = 1.0 - DXV_scan*(double)(II_phi-1)*(double)(II_phi-1);
                         if (X < -1.0) X = -1.0;
                         double FIFO_phi, RP_phi, RT_phi;
                         bool ok = bsp_ISCTMN(2, RI, RO, X, FIFO_phi, RP_phi, RT_phi);
-                        double afifo = ok ? std::abs(FIFO_phi) : 0.0;
+                        double afifo = ok ? std::fabs(FIFO_phi) : 0.0;
                         if (II_phi == 1) { WOW_phi = afifo; continue; }
                         if (afifo < ULIM_phi && WOW_phi < ULIM_phi) {
-                            IEND = std::min(II_phi - 1 + NPHIAD, LOOKST + 1);
+                            IEND = std::min(II_phi - 1 + NPHIAD, LOOKST+1);
                             IEND = std::max(IEND, 2);
                             break;
                         }
                         WOW_phi = afifo;
                     }
                     IEND = std::max(IEND, 2);
-                    double X0 = 1.0 - DXV_scan * (double)(IEND-1)*(double)(IEND-1);
+                    double X0 = 1.0 - DXV_scan*(double)(IEND-1)*(double)(IEND-1);
                     X0 = std::max(-1.0, std::min(1.0, X0));
                     double PHI0 = std::acos(X0);
 
-                    // ── DO 489 II=1,NPPHI (phi GL loop, Pass 2) ───────────────
-                    std::vector<double> HINT(IHMAX, 0.0);
+                    // ── DO 489 II=1,NPPHI (phi GL loop) ──────────────────────
+                    std::vector<float> LHSM1(IHMAX+1, 0.0f);  // 1-indexed, SALLOC in Fortran
 
                     for (int kphi = 0; kphi < NPPHI; ++kphi) {
                         double PHI  = PHI0 * phi_base_pts[kphi];
@@ -1286,113 +1465,130 @@ void DWBA::InelDcFaithful2()
                         double X    = std::cos(PHI);
 
                         // BSPROD ITYPE=1: phi_T × vphi_P (no chi)
+                        // Fortran pass-2: IBSTYP=1, ISCTMN (NOT ISCTCR)
                         double FIFO_b, RP_b, RT_b;
-                        bool ok = bsp_ISCTCR(1, RI, RO, X, FIFO_b, RP_b, RT_b);
+                        bool ok = bsp_ISCTMN(1, RI, RO, X, FIFO_b, RP_b, RT_b);
                         if (!ok) continue;
                         double PVPDX = DPHI * FIFO_b;
 
-                        // PHIT = acos((T1*RO + S1*RI*X) / RT)  [angle in T frame]
+                        // Angle in T frame: PHIT = acos((T1*RO + S1*RI*X) / RT)
+                        // Note: Fortran uses PHISGN*acos but PHISGN only affects storage;
+                        // A12 uses cos(MT*PHIT+...) so sign absorbed into MT sign
                         double cos_phiT = (RT_b > 1e-10)
                                           ? (T1*RO + S1*RI*X) / RT_b : 1.0;
                         cos_phiT = std::max(-1.0, std::min(1.0, cos_phiT));
                         double PHIT = std::acos(cos_phiT);
 
-                        // PHIP = acos((T2*RO + S2*RI*X) / RP)  [angle in P frame]
+                        // Angle in P frame: PHIP = acos((T2*RO + S2*RI*X) / RP)
                         double cos_phiP = (RP_b > 1e-10)
                                           ? (T2*RO + S2*RI*X) / RP_b : 1.0;
                         cos_phiP = std::max(-1.0, std::min(1.0, cos_phiP));
-                        // Note: Ptolemy PHISGN=+1 for stripping → PHIT/PHIP positive
                         double PHIP = std::acos(cos_phiP);
 
-                        // Accumulate HINT[IH] = integral_phi A12 * PVPDX
+                        // Accumulate into LHSM1[IH] += PVPDX * A12
                         for (int IH = 0; IH < IHMAX; ++IH) {
                             double A12_val = EvalA12(A12_table[IH], PHIT, PHI);
-                            HINT[IH] += PVPDX * A12_val;
+                            LHSM1[IH+1] += (float)(PVPDX * A12_val);
                         }
                     }
-                    // End phi loop (DO 489)
+                    // End DO 489
 
-                    // Store SMHVL[IH][IU] = HINT[IH] * RIOEX  (DO 509)
-                    // DEBUG: print at IV=1, IU=1..10 and IU=15,16 for LI=3
-                    if (IV == 0 && IU < 10 && LI==3)
-                        fprintf(stderr,"DBG_HINT IV=1 IU=%d U=%.4f RI=%.5f RO=%.5f RIOEX=%.4e HINT[0]=%.6e PHI0=%.4f IEND=%d\n",
-                            IU+1, U, RI, RO, RIOEX, HINT[0], PHI0, IEND);
-                    for (int IH = 0; IH < IHMAX; ++IH)
-                        SMHVL[IH][IU] = HINT[IH] * RIOEX;
+                    // Fortran DO 485: accumulate LHINT, LHABS; zero LHSM1
+                    for (int IH = 1; IH <= IHMAX; ++IH) {
+                        LHINT[IH] += (double)LHSM1[IH];
+                        LHABS[IH] += std::fabs((double)LHSM1[IH]);
+                        LHSM1[IH] = 0.0f;
+                    }
+
+                    // Fortran DO 509: store SMHVL
+                    // ALLOC(LSMHVL + IU + NPSUM*(IH-1)) = LHINT[IH] * RIOEX[IPLUNK_H]
+                    for (int IH = 1; IH <= IHMAX; ++IH)
+                        SMHVL[IH-1][IU] = LHINT[IH] * RIOEX;
+
+                    // Debug: print STEP_A for LI=3, IV=1
+                    if (LI == 3 && IV == 1) {
+                        fprintf(stderr,
+                            "STEP_A LI3 IU=%3d U=%.5e HINT1=%.5e HINT2=%.5e RIOEX=%.5e SMHVL1=%.5e SMHVL2=%.5e\n",
+                            IU, SMHPT[IU-1], LHINT[1],
+                            (IHMAX > 1) ? LHINT[2] : 0.0, RIOEX,
+                            SMHVL[0][IU],
+                            (IHMAX > 1) ? SMHVL[1][IU] : 0.0);
+                    }
 
                 }  // End IU loop (DO 549)
 
-                // ── Spline: SMHVL[IH][NPSUM] → SMIVL[IH][NPSUMI] (DO 609) ──
-                // SPLNCB + INTRPC from spline.cpp
+                // ── DO 609 IH = 1, IHMAX (spline SMHVL → SMIVL) ─────────────
+                // Fortran: CALL SPLNCB(NPSUM, SMHPT, SMHVL[IH][*], work...)
+                //          CALL INTRPC(NPSUM, SMHPT, SMHVL, work..., NPSUMI, SMIPT, SMIVL[IH][*])
+                // SMIVL[IH][IU] 1-indexed (0-based IH for lolx_pairs index)
                 std::vector<std::vector<double>> SMIVL(IHMAX,
-                                                       std::vector<double>(NPSUMI, 0.0));
-                std::vector<double> splB(NPSUM), splC(NPSUM), splD(NPSUM);
+                    std::vector<double>(NPSUMI+1, 0.0));  // 1-indexed IU
+
+                std::vector<double> splB(NPSUM+1), splC(NPSUM+1), splD(NPSUM+1);
                 for (int IH = 0; IH < IHMAX; ++IH) {
-                    Splncb(NPSUM, SMHPT.data(), SMHVL[IH].data(),
-                           splB.data(), splC.data(), splD.data());
-                    Intrpc(NPSUM, SMHPT.data(), SMHVL[IH].data(),
-                           splB.data(), splC.data(), splD.data(),
-                           NPSUMI, SMIPT.data(), SMIVL[IH].data());
+                    // Build 0-indexed arrays for spline (SMHPT is 0-indexed)
+                    std::vector<double> Y_in(NPSUM);
+                    for (int iu2 = 0; iu2 < NPSUM; ++iu2) Y_in[iu2] = SMHVL[IH][iu2+1];
+
+                    std::vector<double> splB2(NPSUM), splC2(NPSUM), splD2(NPSUM);
+                    Splncb(NPSUM, SMHPT.data(), Y_in.data(),
+                           splB2.data(), splC2.data(), splD2.data());
+
+                    std::vector<double> Y_out(NPSUMI);
+                    Intrpc(NPSUM, SMHPT.data(), Y_in.data(),
+                           splB2.data(), splC2.data(), splD2.data(),
+                           NPSUMI, SMIPT.data(), Y_out.data());
+
+                    for (int iu2 = 0; iu2 < NPSUMI; ++iu2)
+                        SMIVL[IH][iu2+1] = Y_out[iu2];
                 }
 
-                // Debug: print SMIVL at IU=5,20,30 for IH=0 when IV=0
-                if (IV == 0 && IHMAX > 0) {
-                    fprintf(stderr, "CPP_SMIPT: IU=20: U=%.4f  IU=30: U=%.4f  IU=42: U=%.4f\n",
-                        SMIPT[std::min(19,NPSUMI-1)], SMIPT[std::min(29,NPSUMI-1)], SMIPT[NPSUMI-1]);
-                    // Print ALL 40 SMHVL values for IH=0
-                    for (int iu2=0; iu2<NPSUM; ++iu2)
-                        fprintf(stderr,"CPP_SMHVL_ALL IH=0 IU=%d U=%.4f H=%.6e\n", iu2+1, SMHPT[iu2], SMHVL[0][iu2]);
-                }
-
-                // ── DO 789 IU = 1, NPSUMI (chi-integration loop) ──────────────
-                // For fixed IV, integrate chi_a × H(U) × chi_b over U
-                for (int IU = 0; IU < NPSUMI; ++IU) {
-                    double U = SMIPT[IU];
-                    if (U < 1e-6) continue;
-
-                    // V-range for chi-grid point IU
-                    double VMIN_c = LVMIN_I[IU];
-                    double VMAX_c = LVMAX_I[IU];
-                    double VMID_c = LVMID_I[IU];
-                    if (VMAX_c <= VMIN_c + 1e-10) continue;
-
-                    // Get DIF GL at this IU chi point (same IV fraction)
-                    double SYNE_c = 1.0;
-                    if (VMID_c > 0.5*(VMAX_c + VMIN_c)) {
-                        SYNE_c = -1.0; double tmp = VMAX_c; VMAX_c = -VMIN_c; VMIN_c = -tmp;
-                        VMID_c = -LVMID_I[IU];
+                // Debug STEP_B: print SMIVL for LI=3, IV=1
+                if (LI == 3 && IV == 1) {
+                    for (int DBGIU = 1; DBGIU <= NPSUMI; ++DBGIU) {
+                        if (DBGIU > 5 && DBGIU != 20 && DBGIU != 30) continue;
+                        fprintf(stderr,
+                            "STEP_B LI3 IV=1 IU=%3d Usi=%9.4f SMIVL[1]=%.6e SMIVL[2]=%.6e\n",
+                            DBGIU, SMIPT[DBGIU-1], SMIVL[0][DBGIU],
+                            (IHMAX > 1) ? SMIVL[1][DBGIU] : 0.0);
                     }
-                    std::vector<double> dif_pt_c = {xi_v}, dif_wt_c = {wi_v};
-                    CubMapFaithful(MAPDIF, VMIN_c, VMID_c, VMAX_c, GAMDIF,
-                                   dif_pt_c, dif_wt_c);
-                    double VVAL_c = dif_pt_c[0] * SYNE_c;
-                    double DIFWT_c = std::abs(dif_wt_c[0]);
+                }
 
-                    double RI_c = U + 0.5*VVAL_c;
-                    double RO_c = U - 0.5*VVAL_c;
+                // ── DO 789 IU = 1, NPSUMI (chi integration) ──────────────────
+                // IPLUNK = NPSUMI*(IV-1) + IU  (1-based)
+                // TERM = LWIO_tab[IPLUNK]
+                // chi_a(RI) from LLIR/LLII (via aitlag5 interpolation)
+                // chi_b(RO) from LLOR/LLOI
+                // I += TERM * SMIVL[IH][IU] * DWR/DWI for each (II, KDW)
+                int IPLUNK_base = NPSUMI * (IV - 1);
+
+                for (int IU = 1; IU <= NPSUMI; ++IU) {
+                    int IPLUNK = IPLUNK_base + IU;
+                    float TERM_f = LWIO_tab[IPLUNK];
+                    double TERM = (double)TERM_f;
+                    double RI_c = (double)LRI_tab[IPLUNK];
+                    double RO_c = (double)LRO_tab[IPLUNK];
+
+                    if (std::fabs(TERM) < 1e-30) continue;
                     if (RI_c <= 0.0 || RO_c <= 0.0) continue;
 
-                    // LWIO = JACOB * RI * RO * WGT_U * DIFWT * exp(-ALPHAP*RP - ALPHAT*RT)
-                    // (Fortran GRDSET line 16542-16545)
-                    // Fortran: RP=SQRT(1+(S1*RI+T1*RO)^2), RT=SQRT(1+(S2*RI+T2*RO)^2)
-                    double RP_c = std::sqrt(1.0 + std::pow(S1*RI_c + T1*RO_c, 2));
-                    double RT_c = std::sqrt(1.0 + std::pow(S2*RI_c + T2*RO_c, 2));
-                    double exp_m = std::exp(-(ALPHAP*RP_c + ALPHAT*RT_c));
-                    double TERM = JACOB * RI_c * RO_c * SMIVL_wts[IU] * DIFWT_c * exp_m;
+                    // Debug STEP_C for LI=3, IV=1
+                    if (LI == 3 && IV == 1 && (IU <= 5 || IU == 20 || IU == 30)) {
+                        fprintf(stderr,
+                            "STEP_C LI3 IV=1 IU=%3d IPLUNK=%5d TERM(LWIO)=%.6e RI=%.4f RO=%.4f\n",
+                            IU, IPLUNK, TERM, RI_c, RO_c);
+                    }
 
-                    // Check if TERM is negligibly small
-                    if (std::abs(TERM) < 1e-30) continue;
-
-                    // Distorted-wave product chi_a(RI) × chi_b*(RO) for each (JPI, JPO, IH)
+                    // chi products for all (IH, JPI, JPO)
                     for (auto& [JPI_v, chi_a] : chi_a_map) {
-                        // Interpolate chi_a at RI_c
+                        // Interpolate chi_a at RI_c using 5-pt Lagrange
                         std::complex<double> chi_a_val = {0.0, 0.0};
                         {
                             double ridx = RI_c / h_a;
                             int iai = (int)(ridx + 0.5);
                             int amax = (int)chi_a.size() - 3;
                             if (iai >= 2 && iai <= amax) {
-                                double P = ridx - iai, PS=P*P;
+                                double P=ridx-iai, PS=P*P;
                                 double X1=P*(PS-1)/24,X2=X1+X1,X3=X1*P;
                                 double X4=X2+X2-0.5*P,X5=X4*P;
                                 double C1=X3-X2,C5=X3+X2,C3=X5-X3,C2=X5-X4,C4=X5+X4;
@@ -1403,14 +1599,15 @@ void DWBA::InelDcFaithful2()
                             }
                         }
 
+                        // Loop over (IH, JPO)
                         for (int IH = 0; IH < IHMAX; ++IH) {
                             int Lo = lolx_pairs[IH].Lo;
                             int JPO_min = std::max(1, std::abs(2*Lo - JSPS2));
                             int JPO_max = 2*Lo + JSPS2;
 
                             for (int JPO = JPO_min; JPO <= JPO_max; JPO += 2) {
-                                auto chi_b_key = std::make_pair(Lo, JPO);
-                                auto it = chi_b_map.find(chi_b_key);
+                                auto key = std::make_pair(Lo, JPO);
+                                auto it = chi_b_map.find(key);
                                 if (it == chi_b_map.end()) continue;
                                 const auto& chi_b = it->second;
 
@@ -1432,40 +1629,54 @@ void DWBA::InelDcFaithful2()
                                     }
                                 }
 
-                                // Contribution: TERM × chi_a(RI) × SMIVL[IH][IU] × chi_b(RO)
-                                // Fortran INELDC line 18141-18147:
-                                //   DWR = FOR*FIR - FOI*FII  (chi_b × chi_a, no conjugate)
-                                //   DWI = FOR*FII + FOI*FIR
-                                //   I += TERM * SMIVL * DWR  (re)
-                                //   I += TERM * SMIVL * DWI  (im)
-                                std::complex<double> DW = chi_b_val * chi_a_val;
-                                std::complex<double> dI = DW * SMIVL[IH][IU] * TERM;
-                                // Debug: print at IV==0, IH==0, JPI=4, JPO=1 for IU=5,20,30
-                                if (IV == 0 && IH == 0 && JPI_v == 4 && JPO == 1 &&
-                                    (IU == 4 || IU == 19 || IU == 29)) {
-                                    fprintf(stderr, "CPP_INTEGRAND LI=3 IV=1 IU=%d IH=0 JPI=4 JPO=1: "
-                                        "RI=%.5f RO=%.5f TERM=%.6e SMIVL=%.6e "
-                                        "chi_a=(%.5e,%.5e) chi_b=(%.5e,%.5e) DW=(%.5e,%.5e) dI=(%.5e,%.5e)\n",
-                                        IU+1, RI_c, RO_c, TERM, SMIVL[IH][IU],
-                                        chi_a_val.real(), chi_a_val.imag(),
-                                        chi_b_val.real(), chi_b_val.imag(),
-                                        DW.real(), DW.imag(),
-                                        dI.real(), dI.imag());
+                                // Fortran: DWR = FOR*FIR - FOI*FII  (chi_b × chi_a)
+                                //          DWI = FOR*FII + FOI*FIR
+                                double FIR = chi_a_val.real(), FII = chi_a_val.imag();
+                                double FOR = chi_b_val.real(), FOI = chi_b_val.imag();
+                                double DWR = FOR*FIR - FOI*FII;
+                                double DWI = FOR*FII + FOI*FIR;
+
+                                // SMIVL at this IU
+                                double smivl_val = SMIVL[IH][IU];
+
+                                // Debug STEP_C DW part
+                                if (LI == 3 && IV == 1 && IH == 0 &&
+                                    JPI_v == JPI_min && JPO == JPO_min &&
+                                    (IU <= 5 || IU == 20 || IU == 30)) {
+                                    fprintf(stderr,
+                                        "STEP_C_DW LI3 IV=1 IU=%3d DW_re=%.6e DW_im=%.6e SMIVL=%.6e\n",
+                                        IU, DWR, DWI, smivl_val);
                                 }
 
-                                AccKey key = {IH, JPI_v, JPO};
-                                I_accum[key].first  += dI.real();
-                                I_accum[key].second += dI.imag();
+                                // Debug STEP_D for IU=1, II=1 (IH=0, first JPI, first JPO)
+                                if (LI == 3 && IV == 1 && IU == 1 && IH == 0 &&
+                                    JPI_v == JPI_min && JPO == JPO_min) {
+                                    fprintf(stderr,
+                                        "STEP_D LI3 IV=1 II=1 IU=1 TERM=%.5e SMIVL=%.5e DWR=%.5e DWI=%.5e dIre=%.5e dIim=%.5e\n",
+                                        TERM, smivl_val, DWR, DWI,
+                                        TERM*smivl_val*DWR, TERM*smivl_val*DWI);
+                                }
+
+                                // Accumulate
+                                AccKey acc_key = {IH, JPI_v, JPO};
+                                I_accum[acc_key].first  += TERM * smivl_val * DWR;
+                                I_accum[acc_key].second += TERM * smivl_val * DWI;
                             }
                         }
                     }
                 }  // End IU chi loop (DO 789)
 
+                // Debug STEP_E: running I_accum[II=1] after each IV
+                if (LI == 3 && !I_accum.empty()) {
+                    auto it0 = I_accum.begin();
+                    fprintf(stderr,
+                        "STEP_E LI3 after IV=%3d I_accum[1] re=%.6e im=%.6e\n",
+                        IV, it0->second.first, it0->second.second);
+                }
+
             }  // End IV loop (DO 859)
 
-            // ── SFROMI: convert I_accum to S-matrix elements ─────────────────
-            // Apply ITEST phase, ATERM (6J×spectroscopic), and FACTOR
-            // (same as existing ineldc.cpp SFROMI logic)
+            // ── SFROMI: convert I_accum → S-matrix elements ──────────────────
             for (int IH = 0; IH < IHMAX; ++IH) {
                 int Lo = lolx_pairs[IH].Lo;
                 int Lx = lolx_pairs[IH].Lx;
@@ -1480,12 +1691,12 @@ void DWBA::InelDcFaithful2()
                     default:phase_factor = { 0.0, -1.0}; break;
                 }
 
-                // ATERM = sqrt((2*JB+1)/(2*JA+1)) * sqrt(2*Lx+1) * SPAMP * SPAMT * RACAH
+                // ATERM computation
                 double ATERM_val = 0.0;
                 if (Lx >= std::abs(TargetBS.l - ProjectileBS.l) &&
                     Lx <= TargetBS.l + ProjectileBS.l) {
-                    double jT = TargetBS.j, jP = ProjectileBS.j, jx = 0.5;
-                    double sj = SixJ((double)TargetBS.l, jT, jx,
+                    double jT = TargetBS.j, jP = ProjectileBS.j;
+                    double sj = SixJ((double)TargetBS.l, jT, 0.5,
                                      jP, (double)ProjectileBS.l, (double)Lx);
                     int twoj_sum = 2*TargetBS.l + (int)(2*jT+0.5)
                                  + 2*ProjectileBS.l + (int)(2*jP+0.5);
@@ -1497,8 +1708,7 @@ void DWBA::InelDcFaithful2()
                     double SPAMP = ProjectileWFLoaded ? ProjectileWFSpam : 0.97069;
                     double SPAMT = 1.0;
                     ATERM_val = TEMP_a * std::sqrt(2.0*Lx+1.0) * SPAMP * SPAMT * RACAH_val;
-                    // Phase from BETCAL
-                    int JX_d  = 1;  // 2*jx = 1
+                    int JX_d = 1;
                     int JBP_d = (int)std::round(2.0*ProjectileBS.j);
                     int ITEST_a = JX_d - JBP_d + 2*(ProjectileBS.l + TargetBS.l);
                     ITEST_a = ITEST_a/2 + 1;
@@ -1511,13 +1721,12 @@ void DWBA::InelDcFaithful2()
                     int JPO_min = std::max(1, std::abs(2*Lo - JSPS2));
                     int JPO_max = 2*Lo + JSPS2;
                     for (int JPO = JPO_min; JPO <= JPO_max; JPO += 2) {
-                        AccKey key = {IH, JPI_v, JPO};
-                        auto it = I_accum.find(key);
+                        AccKey acc_key = {IH, JPI_v, JPO};
+                        auto it = I_accum.find(acc_key);
                         if (it == I_accum.end()) continue;
 
                         std::complex<double> I_raw(it->second.first,
                                                    it->second.second);
-
                         if (LI == 3) {
                             fprintf(stderr,
                                 "PRE_SFROMI LI=%d Lo=%d Lx=%d JPI=%d/2 JPO=%d/2 "
@@ -1527,7 +1736,7 @@ void DWBA::InelDcFaithful2()
                         }
 
                         std::complex<double> Integral = I_raw * phase_factor;
-                        double sf_norm = FACTOR_sf * std::abs(ATERM_val)
+                        double sf_norm = FACTOR_sf * std::fabs(ATERM_val)
                                        / std::sqrt(2.0*LI + 1.0);
                         if (ATERM_val < 0) Integral = -Integral;
                         std::complex<double> S_val = Integral * sf_norm;
@@ -1543,7 +1752,6 @@ void DWBA::InelDcFaithful2()
     fprintf(stderr, "InelDcFaithful2: TransferSMatrix has %d elements\n",
             (int)TransferSMatrix.size());
 }
-
 // ============================================================
 // GrdSet — thin wrapper (calls GrdSetFaithful)
 // ============================================================
