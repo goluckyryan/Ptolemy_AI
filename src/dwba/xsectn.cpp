@@ -170,6 +170,17 @@ void DWBA::XSectn() {
     }
   } // end SOSWT block
 
+  fprintf(stderr, "XSectn: S_koffs.size=%zu  JA=%d JB=%d JBT=%d JBP=%d lT=%d lP=%d LxMax=%d JPBASE=%d JPMX=%d\n",
+          S_koffs.size(), JA, JB, JBT, JBP, lT, lP, LxMax_bs, JPBASE, JPMX);
+  // Print first few S_koffs entries
+  int dbgn = 0;
+  for (auto &[k,v] : S_koffs) {
+      if (dbgn++ >= 5) break;
+      auto [jp,lx2,lo,li] = k;
+      fprintf(stderr, "  S_koffs JP=%d Lx2=%d Lo=%d Li=%d  re=%.6e im=%.6e\n",
+              jp,lx2,lo,li,v.real(),v.imag());
+  }
+
   // -----------------------------------------------
   // Coulomb phases sigma_L  (cumulative Coulomb phase shifts)
   // -----------------------------------------------

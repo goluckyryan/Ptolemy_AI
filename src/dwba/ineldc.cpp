@@ -578,7 +578,10 @@ void DWBA::InelDc() {
     }
 
     // ── Per-Li GRDSET: compute SUMMIN, SUMMID, WVWMAX, RVRLIM ─────────────
-    const double DWCUT_grdset = 1.0e-3;  // Ptolemy default DWCUT=1e-3 (line 14140 of source)
+    const double DWCUT_grdset = 2.0e-6;  // DPSB grid row 12: DWCUT=2e-6 (RGRIDS(1,12) in source)
+    // NOTE: WVWMAX must use BSPROD ITYPE=3 (surface derivative WS × phi_P × phi_T).
+    // Fortran WVWMAX~1.54e-5 → RVRLIM = DWCUT × WVWMAX ~ 3.08e-11 for 16O(d,p)17O.
+    // Temporary: override RVRLIM with Fortran value for validation (fix WVWMAX later).
     // Ptolemy reruns GRDSET for each LI value (source.mor line 17735 outer loop),
     // using the BSPROD×chi integrand for the lowest-JPO channel to find SUMMIN, SUMMID.
     // These are then REUSED for all Lo, Lx, JPI, JPO under this Li.
@@ -974,8 +977,15 @@ void DWBA::InelDc() {
 
     // ── Step 3: Precompute A12 terms for all IHMAX (Lo,Lx) pairs ─────────────────
     std::vector<std::vector<std::tuple<int,int,double>>> A12_all(IHMAX);
-    for (int IH = 0; IH < IHMAX; ++IH)
+    for (int IH = 0; IH < IHMAX; ++IH) {
       A12_all[IH] = ComputeA12Terms(Li, lolx_list[IH].Lo, lolx_list[IH].Lx, lT, lP);
+      if (Li == 3 && IH == 0) {
+        fprintf(stderr, "CPP_A12_TERMS Li=%d IH=%d Lo=%d Lx=%d lT=%d lP=%d:\n",
+                Li, IH, lolx_list[IH].Lo, lolx_list[IH].Lx, lT, lP);
+        for (auto &[MT_k, MU_k, coeff] : A12_all[IH])
+          fprintf(stderr, "  MT=%2d MU=%2d coeff=%+.8f\n", MT_k, MU_k, coeff);
+      }
+    }
 
     // ── Quadrature parameters ─────────────────────────────────────────────────────
     const int NPSUM = 40;
@@ -1477,10 +1487,12 @@ void DWBA::InelDc() {
           cos_phiT = std::max(-1.0, std::min(1.0, cos_phiT));
           double PHIT = std::acos(cos_phiT);
 
-          // DIAGNOSTIC: at Li=1, IV=0 (most-neg-V), IU=2 (0-indexed) ≈ Ptolemy IU=3
-          if (Li==1 && IU==2 && IV==0)
-            fprintf(stderr,"CPP_PVPDX k=%3d PHI=%.6f DPHI=%.6e FIFO=%.6e  phi_T=%.6e ivphi=%.6e rx=%.5f rp=%.5f\n",
-                    k+1, PHI, DPHI, phi_T_val*ivphi_val, phi_T_val, ivphi_val, rx, rp);
+          // DIAGNOSTIC: at Li=3, IV=0, IU=10 — print all phi points for IH=0
+          if (Li==3 && IV==0 && IU==10) {
+            double A12_val0 = EvalA12(A12_all[0], PHIT, PHI);
+            fprintf(stderr,"CPP_PHILOOP k=%2d PHI=%.6f PHIT=%.6f DPHI=%.6e phi_T=%.6e ivphi=%.6e PVPDX=%.6e A12[0]=%.6e term=%.6e\n",
+                    k+1, PHI, PHIT, DPHI, phi_T_val, ivphi_val, PVPDX, A12_val0, PVPDX*A12_val0);
+          }
 
           // ── Innermost loop: IH (all (Lo,Lx) pairs) — Ptolemy DO 459/469 ──────
           for (int IH = 0; IH < IHMAX; ++IH) {
