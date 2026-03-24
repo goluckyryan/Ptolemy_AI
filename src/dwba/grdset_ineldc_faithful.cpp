@@ -1337,6 +1337,138 @@ void DWBA::InelDcFaithful2()
     GAMPHI = std::max(GAMPHI, 1.0e-6);
     CubMapFaithful(MAPPHI, 0.0, PHIMID, 1.0, GAMPHI, phi_base_pts, phi_base_wts);
 
+    // ─── GRDSET pass-1 + pass-2: compute and store phi tables ────────────────
+    // Fortran: GRDSET loops over IPLUNK=1..NRIROH twice:
+    //   Pass 1 (IBSTYP=2, ITYPE=3): find IEND (phi cutoff) per IPLUNK → store in LOGIC
+    //   Pass 2 (IBSTYP=1, ITYPE=1): compute NPPHI GL phi points per IPLUNK → store PHI/PHIP/PHIT/LTRP
+    // INELDC then reads from stored tables sequentially via MCNT.
+    //
+    // Fortran: DXV = 2/LOOKST^2 (pass-1 X scan step)
+    //          PHI0 = acos(1 - DXV*(IEND-1)^2)
+    //          phi GL: PHI=PHI0*phi_base_pts[kphi], DPHI=PHI0*phi_base_wts[kphi]*sin(PHI)
+    //
+    // Storage layout: flat arrays indexed by MCNT (1-based).
+    // For each IPLUNK: if IEND==1 → skip (0 phi points stored); else store NPPHI points.
+    // MAXCNT = total phi points stored = sum of NPPHI for each active IPLUNK.
+    // MCNT_start[IPLUNK] = starting index in flat array (0-based offset).
+
+    struct PhiPoint { float PHI, PHIP, PHIT, PVPDX; };
+
+    // Pass 1: find IEND per IPLUNK
+    std::vector<int> IEND_logic(NRIROH+1, 1);  // 1-indexed by IPLUNK
+    {
+        double DXV_phi = 2.0 / ((double)LOOKST * (double)LOOKST);
+        int JCNT_pass1 = 0;
+        for (int IPLUNK = 1; IPLUNK <= NRIROH; ++IPLUNK) {
+            double RI = RIH_tab[IPLUNK];
+            double RO = ROH_tab[IPLUNK];
+            if (RI <= 0.0 || RO <= 0.0) {
+                IEND_logic[IPLUNK] = 1;
+                JCNT_pass1 += NPPHI;  // Fortran: JCNT += NPPHI even for skipped
+                continue;
+            }
+            double ULIM_phi = RVRLIM / (std::max(1.0, RI) * std::max(1.0, RO));
+            int IEND = LOOKST + 1;
+            double WOW_phi = 0.0;
+            // Fortran DO 859 pass-1: IXTOPZ = LOOKST+1 test points
+            for (int II = 1; II <= LOOKST + 1; ++II) {
+                double X = 1.0 - DXV_phi * (double)(II-1) * (double)(II-1);
+                if (X < -1.0) X = -1.0;
+                double FIFO, RP_p, RT_p;
+                // IBSTYP=2 → ITYPE=3: derivative-WS × phiT (ISCTMN=scattering min L)
+                bool ok = bsp_ISCTMN(2, RI, RO, X, FIFO, RP_p, RT_p);
+                double afifo = ok ? std::fabs(FIFO) : 0.0;
+                if (II == 1) { WOW_phi = afifo; continue; }
+                if (afifo < ULIM_phi && WOW_phi < ULIM_phi) {
+                    IEND = std::min(II - 1 + NPHIAD, LOOKST + 1);
+                    IEND = std::max(IEND, 2);
+                    break;
+                }
+                WOW_phi = afifo;
+            }
+            IEND = std::max(IEND, 2);
+            IEND_logic[IPLUNK] = IEND;
+            // Fortran JCNT accumulation: if IEND!=1, add NPPHI
+            if (IEND != 1) JCNT_pass1 += NPPHI;
+        }
+        fprintf(stderr, "GRDSET pass-1 done: JCNT=%d MAXCNT≈%d\n", JCNT_pass1, JCNT_pass1);
+    }
+
+    // Pass 2: compute and store phi tables
+    // phi_table[IPLUNK] = vector of NPPHI PhiPoints (or empty if IEND==1)
+    // MCNT_start[IPLUNK] = 1-based offset into flat table
+    std::vector<std::vector<PhiPoint>> phi_table(NRIROH+1);  // 1-indexed by IPLUNK
+    std::vector<int> MCNT_start(NRIROH+1, 0);  // 1-based start index per IPLUNK
+    {
+        double DXV_phi = 2.0 / ((double)LOOKST * (double)LOOKST);
+        // PHISGN: Fortran sets PHISGN = SIGN(1,PHISGN) but default is +1.
+        // For 16O(d,p) we take PHISGN=+1.
+        double PHISGN = 1.0;
+        int JCNT = 0;
+        for (int IPLUNK = 1; IPLUNK <= NRIROH; ++IPLUNK) {
+            double RI = RIH_tab[IPLUNK];
+            double RO = ROH_tab[IPLUNK];
+            int IEND = IEND_logic[IPLUNK];
+
+            MCNT_start[IPLUNK] = JCNT + 1;  // 1-based
+
+            if (RI <= 0.0 || RO <= 0.0 || IEND == 1) {
+                // No phi points stored for this IPLUNK
+                // Fortran still adds NPPHI to JCNT if IEND!=1, but IEND=1 → skip
+                continue;
+            }
+
+            // PHI0 from IEND
+            double X0 = 1.0 - DXV_phi * (double)(IEND-1) * (double)(IEND-1);
+            X0 = std::max(-1.0, std::min(1.0, X0));
+            double PHI0 = std::acos(X0);
+
+            phi_table[IPLUNK].resize(NPPHI);
+            // Fortran pass-2: IXTOPZ=NPPHI, loop II=1..NPPHI
+            // PHI = PHI0 * phi_base_pts[kphi]  (mapped GL points)
+            // DPHI = PHI0 * phi_base_wts[kphi] * sin(PHI)
+            // X = cos(PHI)
+            // BSPROD ITYPE=1 (IBSTYP=1): vphi_P × phi_T (no chi)
+            // PHIT = PHISGN * acos((T1*RO + S1*RI*X) / RT)
+            // PHIP = PHISGN * acos((T2*RO + S2*RI*X) / RP)
+            // PHI stored as PHI (the angle itself)
+            // PVPDX = DPHI * FIFO
+            for (int kphi = 0; kphi < NPPHI; ++kphi) {
+                double PHI  = PHI0 * phi_base_pts[kphi];
+                double DPHI = PHI0 * phi_base_wts[kphi] * std::sin(PHI);
+                double X    = std::cos(PHI);
+
+                double FIFO, RP_b, RT_b;
+                bool ok = bsp_ISCTMN(1, RI, RO, X, FIFO, RP_b, RT_b);
+                float pvpdx = 0.0f;
+                float phit_stored = 0.0f, phip_stored = 0.0f;
+                if (ok) {
+                    pvpdx = (float)(DPHI * FIFO);
+                    double cos_phiT = (RT_b > 1e-12) ? (T1*RO + S1*RI*X) / RT_b : 1.0;
+                    cos_phiT = std::max(-1.0, std::min(1.0, cos_phiT));
+                    phit_stored = (float)(PHISGN * std::acos(cos_phiT));
+                    double cos_phiP = (RP_b > 1e-12) ? (T2*RO + S2*RI*X) / RP_b : 1.0;
+                    cos_phiP = std::max(-1.0, std::min(1.0, cos_phiP));
+                    phip_stored = (float)(PHISGN * std::acos(cos_phiP));
+                }
+                phi_table[IPLUNK][kphi] = { (float)PHI, phip_stored, phit_stored, pvpdx };
+                JCNT++;
+            }
+
+            // Debug: print first few phi points for IPLUNK=3
+            if (IPLUNK == 3) {
+                fprintf(stderr, "GRDSET_PASS2 IPLUNK=3 RI=%.6f RO=%.6f IEND=%d PHI0=%.6f\n",
+                        RI, RO, IEND, PHI0);
+                for (int k = 0; k < std::min(NPPHI, 5); ++k) {
+                    auto& p = phi_table[IPLUNK][k];
+                    fprintf(stderr, "  kphi=%d PHI=%.6f PHIT=%.6f PVPDX=%.6e\n",
+                            k+1, p.PHI, p.PHIT, p.PVPDX);
+                }
+            }
+        }
+        fprintf(stderr, "GRDSET pass-2 done: MAXCNT=%d\n", JCNT);
+    }
+
     // ─── Main LI loop (DO 989 LIPRTY, DO 959 LI) ─────────────────────────────
     for (int LIPRTY = 0; LIPRTY < 2; ++LIPRTY) {
         // Determine LIMIN for this parity pass
@@ -1433,59 +1565,29 @@ void DWBA::InelDcFaithful2()
                     std::vector<double> LHINT(IHMAX+1, 0.0);  // 1-indexed
                     std::vector<double> LHABS(IHMAX+1, 0.0);
 
-                    // ── PHI0 scan (Pass 1, find phi cutoff) ──────────────────
-                    double ULIM_phi = RVRLIM / (std::max(1.0, RI) * std::max(1.0, RO));
-                    int IEND = LOOKST + 1;
-                    double WOW_phi = 0.0;
-                    for (int II_phi = 1; II_phi <= LOOKST + 1; ++II_phi) {
-                        double X = 1.0 - DXV_scan*(double)(II_phi-1)*(double)(II_phi-1);
-                        if (X < -1.0) X = -1.0;
-                        double FIFO_phi, RP_phi, RT_phi;
-                        bool ok = bsp_ISCTMN(2, RI, RO, X, FIFO_phi, RP_phi, RT_phi);
-                        double afifo = ok ? std::fabs(FIFO_phi) : 0.0;
-                        if (II_phi == 1) { WOW_phi = afifo; continue; }
-                        if (afifo < ULIM_phi && WOW_phi < ULIM_phi) {
-                            IEND = std::min(II_phi - 1 + NPHIAD, LOOKST+1);
-                            IEND = std::max(IEND, 2);
-                            break;
-                        }
-                        WOW_phi = afifo;
-                    }
-                    IEND = std::max(IEND, 2);
-                    double X0 = 1.0 - DXV_scan*(double)(IEND-1)*(double)(IEND-1);
-                    X0 = std::max(-1.0, std::min(1.0, X0));
-                    double PHI0 = std::acos(X0);
-
-                    // ── DO 489 II=1,NPPHI (phi GL loop) ──────────────────────
+                    // ── DO 489 II=1,NPPHI (phi GL loop) — read from GRDSET stored table ──
+                    // Fortran: PHI/PHIP/PHIT/PVPDX read from ALLOC4(LPHI+MCNT) etc.
+                    // C++: phi_table[IPLUNK_H] has NPPHI precomputed PhiPoints
                     std::vector<float> LHSM1(IHMAX+1, 0.0f);  // 1-indexed, SALLOC in Fortran
 
-                    for (int kphi = 0; kphi < NPPHI; ++kphi) {
-                        double PHI  = PHI0 * phi_base_pts[kphi];
-                        double DPHI = PHI0 * phi_base_wts[kphi] * std::sin(PHI);
-                        double X    = std::cos(PHI);
+                    const auto& phi_pts = phi_table[IPLUNK_H];
+                    int Npts = (int)phi_pts.size();  // 0 if IEND==1 (skipped)
 
-                        // BSPROD ITYPE=1: phi_T × vphi_P (no chi)
-                        // Fortran pass-2: IBSTYP=1, ISCTMN (NOT ISCTCR)
-                        double FIFO_b, RP_b, RT_b;
-                        bool ok = bsp_ISCTMN(1, RI, RO, X, FIFO_b, RP_b, RT_b);
-                        if (!ok) continue;
-                        double PVPDX = DPHI * FIFO_b;
+                    for (int kphi = 0; kphi < Npts; ++kphi) {
+                        double PHI   = (double)phi_pts[kphi].PHI;
+                        double PHIP  = (double)phi_pts[kphi].PHIP;
+                        double PHIT  = (double)phi_pts[kphi].PHIT;
+                        double PVPDX = (double)phi_pts[kphi].PVPDX;
 
-                        // Angle in T frame: PHIT = acos((T1*RO + S1*RI*X) / RT)
-                        // Note: Fortran uses PHISGN*acos but PHISGN only affects storage;
-                        // A12 uses cos(MT*PHIT+...) so sign absorbed into MT sign
-                        double cos_phiT = (RT_b > 1e-10)
-                                          ? (T1*RO + S1*RI*X) / RT_b : 1.0;
-                        cos_phiT = std::max(-1.0, std::min(1.0, cos_phiT));
-                        double PHIT = std::acos(cos_phiT);
+                        if (PVPDX == 0.0) continue;
 
-                        // Angle in P frame: PHIP = acos((T2*RO + S2*RI*X) / RP)
-                        double cos_phiP = (RP_b > 1e-10)
-                                          ? (T2*RO + S2*RI*X) / RP_b : 1.0;
-                        cos_phiP = std::max(-1.0, std::min(1.0, cos_phiP));
-                        double PHIP = std::acos(cos_phiP);
+                        // Debug: print for LI=3, IU=11, IV=1
+                        if (LI == 3 && IU == 11 && IV == 1) {
+                            fprintf(stderr, "CPP_PHILOOP II=%d PHI=%.8f PHIT=%.8f PVPDX=%.8e\n",
+                                    kphi+1, PHI, PHIT, PVPDX);
+                        }
 
-                        // Accumulate into LHSM1[IH] += PVPDX * A12
+                        // Accumulate into LHSM1[IH] += PVPDX * A12(PHIT, PHI)
                         for (int IH = 0; IH < IHMAX; ++IH) {
                             double A12_val = EvalA12(A12_table[IH], PHIT, PHI);
                             LHSM1[IH+1] += (float)(PVPDX * A12_val);
