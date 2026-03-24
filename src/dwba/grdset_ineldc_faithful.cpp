@@ -221,6 +221,12 @@ static bool bsprod_faithful(
 
     FPFT = FP * FT;
 
+    // DEBUG
+    static int bsprod_dbg_count = 0;
+    bool do_dbg = (std::abs(RA - 5.0) < 0.01 && std::abs(RB - 5.0) < 0.01 && bsprod_dbg_count < 3 && ITYPE == 3);
+    if (do_dbg) { bsprod_dbg_count++; fprintf(stderr,"BSP_DBG RA=%.3f RB=%.3f X=%.3f RP=%.4f RT=%.4f FP=%.6e FT=%.6e FPFT=%.6e scat=%p nspsct=%d sctmax=%.1f sctsp=%.4f\n",
+        RA,RB,X,RP,RT,FP,FT,FPFT,scat,nspsct,sctmax,sctsp_inv); }
+
     // For ITYPE <= 2: just return phi*V*phi (no chi)
     if (ITYPE <= 2)
         return true;
@@ -239,6 +245,8 @@ static bool bsprod_faithful(
         } else {
             chi_ra = aitlag5(scat, nspsct, sctsp_inv, RA);
         }
+        if (do_dbg) fprintf(stderr,"BSP_DBG chi_ra=%.6e (idx=%.2f ii=%d nspsct=%d)\n",
+            chi_ra, RA*sctsp_inv, (int)(RA*sctsp_inv), nspsct);
         FPFT *= chi_ra;
         if (std::abs(FPFT) <= 1e-34) { FPFT = 0.0; return true; }
     } else {
@@ -790,7 +798,11 @@ void DWBA::InelDcFaithful2()
             double WVWMAX_u = 0.0;
             bool ZEROSW = true;
             double VMAX_s = 0.0;
+            // Fortran: RP, RT are shared variables — last call to BSPROD sets them
+            // We track "last RP/RT" from any successful call (label 359 exit)
+            double last_RP = 0.0, last_RT = 0.0;
 
+            bool dbg_this_U = (std::abs(U - 5.0) < 0.05);
             for (int iv = 0; iv < 5; ++iv) {
                 double VVAL = VS[iv];
                 for (int ix = 0; ix < 2; ++ix) {
@@ -800,7 +812,11 @@ void DWBA::InelDcFaithful2()
                     double FIFO, RP_, RT_;
                     // Fortran line 18726: BSPROD(ITYPE=3, ..., ISCTCR, ...) — uses LCRIT chi
                     bool ok = bsp_ISCTCR(3, RA, RB, XS[ix], FIFO, RP_, RT_);
+                    if (dbg_this_U) fprintf(stderr,"SUMMAX_DBG U=%.2f iv=%d ix=%d RA=%.3f RB=%.3f ok=%d FIFO=%.4e RP=%.3f RT=%.3f\n",
+                        U,iv,ix,RA,RB,(int)ok,FIFO,RP_,RT_);
                     if (!ok) continue;
+                    // Fortran: RP, RT updated on every successful BSPROD call
+                    last_RP = RP_; last_RT = RT_;
                     TEMP += std::abs(FIFO);
                     if (std::abs(FIFO) > WVWMAX_u) {
                         WVWMAX_u = std::abs(FIFO);
@@ -811,6 +827,8 @@ void DWBA::InelDcFaithful2()
                     ZEROSW = false;
                 }
             }
+            // Fortran: RP, RT after DO 359 = last values from successful BSPROD call
+            // Used for exit test: IF (RP > RLMAXS(1) .AND. RT > RLMAXS(2)) GO TO 380
 
             if (ZEROSW) {
                 // All asymptopia violations — label375
@@ -828,9 +846,10 @@ void DWBA::InelDcFaithful2()
             // Continue condition: (Fortran line 16049)
             // IF (WVWMAX_u >= RVRLIM .OR. U < ULIM_scan) GOTO 365 (continue)
             // ELSE IF (RP > RLPMAX .AND. RT > RLTMAX) GOTO 380 (done)
-            if (U > 12.0 && U < 16.0)
-                fprintf(stderr,"SUMMAX_SCAN U=%.2f WVWMAX_u=%.3e RVRLIM=%.3e RPMAX=%.3f RTMAX=%.3f ULIM=%.2f ZEROSW=%d\n",
-                    U, WVWMAX_u, RVRLIM, RPMAX_s, RTMAX_s, ULIM_scan, (int)ZEROSW);
+            if (U > 3.0 && U < 16.0)
+                fprintf(stderr,"SUMMAX_SCAN U=%.2f WVWMAX_u=%.3e RVRLIM=%.3e last_RP=%.3f last_RT=%.3f ULIM=%.2f ZEROSW=%d\n",
+                    U, WVWMAX_u, RVRLIM, last_RP, last_RT, ULIM_scan, (int)ZEROSW);
+            // Fortran: IF (WVWMAX >= RVRLIM .OR. U < ULIM) GOTO 365 (continue scanning)
             if (WVWMAX_u >= RVRLIM || U < ULIM_scan) {
                 U += USTEP;
                 if (U > ASYMPT + 5.0) {
@@ -841,7 +860,9 @@ void DWBA::InelDcFaithful2()
                 continue;
             }
             // WVWMAX_u < RVRLIM AND U >= ULIM_scan
-            if (RPMAX_s > RLPMAX && RTMAX_s > RLTMAX) {
+            // Fortran: IF (RP > RLMAXS(1) .AND. RT > RLMAXS(2)) GOTO 380 (done)
+            // RP, RT = last values from DO 359 loop
+            if (last_RP > RLPMAX && last_RT > RLTMAX) {
                 // label380: normal exit — RVRLIM reset uses this WVWMAX_u
                 WVWMAX_exit = WVWMAX_u;
                 found_summax = true;
@@ -984,15 +1005,47 @@ void DWBA::InelDcFaithful2()
         }
     }
 
-    // Similarly for chi-integration grid (NPSUMI points)
+    // Chi-integration V-range (NPSUMI points) — Stage 1: asymptopia scan
+    // Same algorithm as H-grid Stage 1 but using SMIPT (chi U-grid) and BSPROD ITYPE=4 (pure phi)
     std::vector<double> LVMIN_I(NPSUMI), LVMAX_I(NPSUMI), LVMID_I(NPSUMI);
-    for (int IU = 0; IU < NPSUMI; ++IU) {
-        double U = SMIPT[IU];
-        if (U < 1e-6) { LVMIN_I[IU] = 0.0; LVMAX_I[IU] = 0.0; LVMID_I[IU] = 0.0; continue; }
-        double VLEN = 2.0 * U;
-        LVMIN_I[IU] = -VLEN;
-        LVMAX_I[IU] =  VLEN;
-        LVMID_I[IU] = 0.0;
+    {
+        const int IMAX_i = 2 * NPDIF;
+        const double XS_i[2] = {1.0, 1.0 - DXV_scan};
+        for (int IU = 0; IU < NPSUMI; ++IU) {
+            double U = SMIPT[IU];
+            if (U < 1e-6) { LVMIN_I[IU]=0; LVMAX_I[IU]=0; LVMID_I[IU]=0; continue; }
+            double VLEN = 2.0 * U;
+
+            // Find V extrema where BSPROD(ITYPE=4, RA, RB, X) >= RVRLIM (asymptopia check)
+            double DV2_i = VLEN / (IMAX_i + 1);
+            double VMIN_scan = 0.0, VMAX_scan = 0.0;
+            bool found_vmin = false, found_vmax = false;
+            for (int iv2 = 0; iv2 <= IMAX_i; ++iv2) {
+                double VVAL2 = -VLEN + iv2 * DV2_i;
+                for (int ix = 0; ix < 2; ++ix) {
+                    double RA = U + 0.5*VVAL2, RB = U - 0.5*VVAL2;
+                    if (RA <= 0 || RB <= 0) continue;
+                    double FIFO, RP_, RT_;
+                    bool ok = bsp_ISCTMN(4, RA, RB, XS_i[ix], FIFO, RP_, RT_);
+                    if (ok && std::abs(FIFO) >= RVRLIM) {
+                        if (!found_vmin) { VMIN_scan = VVAL2 / VLEN; found_vmin = true; }
+                        VMAX_scan = VVAL2 / VLEN;
+                        found_vmax = true;
+                    }
+                }
+            }
+            if (!found_vmin) VMIN_scan = -0.5;
+            if (!found_vmax) VMAX_scan =  0.5;
+
+            LVMIN_I[IU] = VMIN_scan * VLEN;
+            LVMAX_I[IU] = VMAX_scan * VLEN;
+
+            // Stage 2: find VMID from weight function moment (simplified: use 0 as midpoint)
+            LVMID_I[IU] = 0.0;
+            if (LVMAX_I[IU] <= LVMIN_I[IU] + 1e-10) {
+                LVMIN_I[IU] = -U; LVMAX_I[IU] = U; LVMID_I[IU] = 0.0;
+            }
+        }
     }
 
     // ─── Phi base GL points on [0,1] (scaled to [0, PHI0] per (IU,IV)) ──────
@@ -1249,6 +1302,15 @@ void DWBA::InelDcFaithful2()
                            NPSUMI, SMIPT.data(), SMIVL[IH].data());
                 }
 
+                // Debug: print SMIVL at IU=5,20,30 for IH=0 when IV=0
+                if (IV == 0 && IHMAX > 0) {
+                    fprintf(stderr, "CPP_SMIPT: IU=20: U=%.4f  IU=30: U=%.4f  IU=42: U=%.4f\n",
+                        SMIPT[std::min(19,NPSUMI-1)], SMIPT[std::min(29,NPSUMI-1)], SMIPT[NPSUMI-1]);
+                    // Print ALL 40 SMHVL values for IH=0
+                    for (int iu2=0; iu2<NPSUM; ++iu2)
+                        fprintf(stderr,"CPP_SMHVL_ALL IH=0 IU=%d U=%.4f H=%.6e\n", iu2+1, SMHPT[iu2], SMHVL[0][iu2]);
+                }
+
                 // ── DO 789 IU = 1, NPSUMI (chi-integration loop) ──────────────
                 // For fixed IV, integrate chi_a × H(U) × chi_b over U
                 for (int IU = 0; IU < NPSUMI; ++IU) {
@@ -1345,6 +1407,18 @@ void DWBA::InelDcFaithful2()
                                 //   I += TERM * SMIVL * DWI  (im)
                                 std::complex<double> DW = chi_b_val * chi_a_val;
                                 std::complex<double> dI = DW * SMIVL[IH][IU] * TERM;
+                                // Debug: print at IV==0, IH==0, JPI=4, JPO=1 for IU=5,20,30
+                                if (IV == 0 && IH == 0 && JPI_v == 4 && JPO == 1 &&
+                                    (IU == 4 || IU == 19 || IU == 29)) {
+                                    fprintf(stderr, "CPP_INTEGRAND LI=3 IV=1 IU=%d IH=0 JPI=4 JPO=1: "
+                                        "RI=%.5f RO=%.5f TERM=%.6e SMIVL=%.6e "
+                                        "chi_a=(%.5e,%.5e) chi_b=(%.5e,%.5e) DW=(%.5e,%.5e) dI=(%.5e,%.5e)\n",
+                                        IU+1, RI_c, RO_c, TERM, SMIVL[IH][IU],
+                                        chi_a_val.real(), chi_a_val.imag(),
+                                        chi_b_val.real(), chi_b_val.imag(),
+                                        DW.real(), DW.imag(),
+                                        dI.real(), dI.imag());
+                                }
 
                                 AccKey key = {IH, JPI_v, JPO};
                                 I_accum[key].first  += dI.real();
