@@ -27,7 +27,7 @@ static double xlam_correct(int L, int am) {
   // Build the table up to level L using Ptolemy recurrence
   double outter = 1.0;
   int m_cur = 0;
-  static double xlam_cache[20][20];  // [ll][mm/2]
+  static double xlam_cache[100][100];  // [ll][mm/2] — sized for Li up to ~40
   xlam_cache[0][0] = 1.0;  // xlam(0,0)=1
 
   for (int ll = 1; ll <= L; ll++) {
