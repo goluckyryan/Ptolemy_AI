@@ -198,26 +198,16 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
 
     double mag = std::abs(u[i + 1]);
     if (mag > BIGNUM) {
-      // Rescale: multiply all stored values by 1/mag
-      // AND zero out the inner region where |u * (1/mag)| < STEPI
+      // Rescale: multiply ALL stored values by 1/mag to prevent overflow.
+      // DO NOT zero inner points here — that happens after normalization.
+      // (Fortran WAVELJ: zeroing only after final ALPHAR/ALPHAI computation)
       double inv_mag = 1.0 / mag;
-      double threshold = STEPI * mag;  // |u| must exceed this to survive
-
-      // Find new ISTRT: scan forward from old ISTRT to find first nonzero
-      int new_istrt = i + 1;  // default: everything up to now is zeroed
-      for (int j = ISTRT; j <= i + 1; ++j) {
-        if (std::abs(u[j]) >= threshold) {
-          new_istrt = j;
-          break;
-        }
-      }
-
-      // Zero the inner region
-      for (int j = ISTRT; j < new_istrt; ++j) u[j] = 0.0;
-      ISTRT = new_istrt;
-
-      // Scale the surviving region
       for (int j = ISTRT; j <= i + 1; ++j) u[j] *= inv_mag;
+      // Track ISTRT: find first nonzero (inner region is naturally small)
+      double threshold = STEPI * inv_mag;  // already-rescaled threshold
+      for (int j = ISTRT; j <= i + 1; ++j) {
+        if (std::abs(u[j]) >= threshold) { ISTRT = j; break; }
+      }
     }
   }
 
@@ -279,8 +269,19 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     double alpha_i = (ur * A2n - ui * A1n) / den2;
     std::complex<double> alpha(alpha_r, alpha_i);
 
-    for (int i = 0; i <= N; ++i)
-      ch.WaveFunction[i] = u[i] * alpha;
+    double AA1 = std::abs(alpha_r) + std::abs(alpha_i);
+    // Fortran DO 629: after normalization, zero points where |u_norm| < STEPI
+    // BB1 = STEPI / AA1 — threshold for the UNnormalized u array
+    double BB1 = (AA1 > 1e-300) ? STEPI / AA1 : 1e300;
+
+    for (int i = 0; i <= N; ++i) {
+      double ui_mag = std::abs(u[i].real()) + std::abs(u[i].imag());
+      if (ui_mag < BB1) {
+        ch.WaveFunction[i] = {0.0, 0.0};
+      } else {
+        ch.WaveFunction[i] = u[i] * alpha;
+      }
+    }
   }
 
   // --- Coulomb asymptotic extension beyond NSTEP (Ptolemy WAVELJ NSTP2S logic) ---
@@ -292,7 +293,10 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
   // Since we already know alpha = normalization constant, and the Coulomb functions,
   // just call Rcwfn at each extension point and apply alpha.
   {
-    const int NEXTRA = 10;  // ~1.25fm extra (10 × 0.125fm) to cover 30→31.25fm
+    // Fortran NSTP2S = RIMAX/h + 3.5 → INT = RIMAX/h + 3 (for h=0.125, RIMAX=30: NSTP2S=243)
+    // Extra points = NSTP2S - NSTEPS = (RIMAX/h+3) - RIMAX/h = 3.
+    // This gives max chi R = NSTP2S * h = (RIMAX/h+3)*h = RIMAX+3h = 30.375 fm (→ Fortran "30.4").
+    const int NEXTRA = static_cast<int>(ch.MaxR / h + 3.5) - static_cast<int>(ch.MaxR / h);
     int old_size = static_cast<int>(ch.WaveFunction.size());
     int need_size = N + NEXTRA + 4;
     if (need_size > old_size) ch.WaveFunction.resize(need_size, {0.0, 0.0});

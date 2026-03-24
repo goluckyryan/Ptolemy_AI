@@ -74,21 +74,37 @@ void DWBA::CalculateKinematics() {
     Outgoing.mu     = mu_out_MeV / AMU_B;
 
   } else {
-    // ── Non-relativistic kinematics (Ptolemy default) ─────────────────────
-    // Ecm = Elab * mA/(ma+mA),  k = sqrt(2*mu*Ecm)/hbarc
-    Incoming.Ecm = Incoming.Elab * mA / (ma + mA);
-    Incoming.mu  = mu_in_MeV / AMU_B;
-    Incoming.k   = std::sqrt(2.0 * mu_in_MeV * Incoming.Ecm) / HBARC_B;
-    Incoming.eta = Z1 * Z2 * mu_in_MeV / (137.036 * HBARC_B * Incoming.k);
+    // ── Non-relativistic kinematics (Ptolemy default, MASTYP=0: integer masses) ─────────────────────
+    // Ptolemy MASTYP=0: use integer mass numbers (A × AMU) for kinematics
+    // This matches Ptolemy's default behavior (no mass excess corrections).
+    // For 16O(d,p)17O: ma=2 AMU, mA=16 AMU, mb=1 AMU, mB=17 AMU (integer)
+    double AMU_MEV = 931.5016;  // AMU in MeV (Ptolemy's AMUMEV)
+    double ma_kin = (double)Incoming.Projectile.A * AMU_MEV;  // integer mass for kinematics
+    double mA_kin = (double)Incoming.Target.A     * AMU_MEV;
+    double mb_kin = (double)Outgoing.Projectile.A * AMU_MEV;
+    double mB_kin = (double)Outgoing.Target.A     * AMU_MEV;
+    // Q_calc with real masses (for energy balance)
+    // Ptolemy: Q = ma + mA - mb - mB using real masses when mass excess is given
+    //          For MASTYP=0: Q = (Aa+AA-Ab-AB) * AMU + mass_excess, but mass excess=0 → Q=0? No.
+    //          Actually Ptolemy uses the real mass-excess for Q even at MASTYP=0.
+    //          For our fr_o16dp.cpp, Q is hardcoded from the experimental value.
+    //          Use Q_calc from real masses for now (it's small compared to ECM).
+    double mu_in_kin  = ma_kin * mA_kin / (ma_kin + mA_kin);  // integer-mass reduced mass
+    double mu_out_kin = mb_kin * mB_kin / (mb_kin + mB_kin);
+    // Ecm from integer masses (Ptolemy: Ecm = Elab * AMT / (AMP + AMT))
+    Incoming.Ecm = Incoming.Elab * mA_kin / (ma_kin + mA_kin);
+    Incoming.mu  = mu_in_kin / AMU_MEV;  // in AMU
+    Incoming.k   = std::sqrt(2.0 * mu_in_kin * Incoming.Ecm) / HBARC_B;
+    Incoming.eta = Z1 * Z2 * mu_in_kin / (137.036 * HBARC_B * Incoming.k);
 
-    Outgoing.Ecm = Incoming.Ecm + Q_calc;
+    Outgoing.Ecm = Incoming.Ecm + Q_calc;  // Q_calc from real masses
     if (Outgoing.Ecm < 0) {
       std::cerr << "Error: Channel closed (below threshold)." << std::endl;
       Outgoing.Ecm = 0;
     }
-    Outgoing.mu  = mu_out_MeV / AMU_B;
-    Outgoing.k   = std::sqrt(2.0 * mu_out_MeV * Outgoing.Ecm) / HBARC_B;
-    Outgoing.eta = Z3 * Z4 * mu_out_MeV / (137.036 * HBARC_B * Outgoing.k);
+    Outgoing.mu  = mu_out_kin / AMU_MEV;  // in AMU
+    Outgoing.k   = std::sqrt(2.0 * mu_out_kin * Outgoing.Ecm) / HBARC_B;
+    Outgoing.eta = Z3 * Z4 * mu_out_kin / (137.036 * HBARC_B * Outgoing.k);
   }
 
   // Set projectile spin (JSPS = 2*spin) for each channel

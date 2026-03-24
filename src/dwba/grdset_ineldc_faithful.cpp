@@ -528,16 +528,16 @@ void DWBA::InelDcFaithful2()
 
     // ─── Grid parameters (from DPSB parameterset, row 12 of RGRIDS/IGRIDS) ──
     // From Ptolemy source: PARAMETERSET DPSB uses these defaults (IGRIDS row 12):
-    //   NPSUM=40  NPDIF=40  NPPHI=10  NPHIAD=4  LOOKST=254
+    //   NPSUM=40  NPDIF=40  NPPHI=20  NPHIAD=4  LOOKST=254
     //   MAPSUM=1  MAPDIF=1  MAPPHI=2  NVPOLY=3
     //   GAMSUM=2.0  GAMDIF=12.0  GAMPHI=1e-6  PHIMID=0.20  AMDMLT=0.90
     //   DWCUT=2e-6  SUMPTS=8.0
     const int    NPSUM   = 40;
     const int    NPDIF   = 40;
-    const int    NPPHI   = 10;
+    const int    NPPHI   = 20;
     const int    NPHIAD  = 4;
     const int    LOOKST  = 254;
-    const int    MAPSUM  = 1;   // linear GL for U (sum)
+    const int    MAPSUM  = 2;   // rational-sinh for U (sum) — Fortran MAPSUM=2 from DPSB parameterset
     const int    MAPDIF  = 1;   // linear GL for V (dif)
     const int    MAPPHI  = 2;   // rational-sinh for phi
     const int    NVPOLY  = 3;
@@ -664,8 +664,22 @@ void DWBA::InelDcFaithful2()
     double h_chi_scan = Incoming.StepSize;
     int N_chi_scan = (int)chi_ISCTMN.size();
     double SCTSP_inv = 1.0 / h_chi_scan;
-    fprintf(stderr, "ISCTMN: L=%d JPI=%d  ISCTCR: L=%d JPI=%d  ROFMAX=%.2f\n",
-            L_ISCTMN, JPI_ISCTMN, LCRIT, JPI_ISCTCR, ROFMAX);
+    // SUMMAX_from_chi = outgoing chi grid endpoint (Fortran SUMMAX = ABS(SCTASY) = outgoing grid end)
+    // Fortran OUTGOING = 30.4 fm = (N_out-1) * h_out for the outgoing scattering channel.
+    // We compute this by running WavElj once for the outgoing channel at L=0.
+    double SUMMAX_from_chi;
+    {
+        WavElj(Outgoing, 0, 1);  // L=0, JPI=1 (minimal run to determine grid size)
+        // N_out includes guard zeros; actual filled data ends at N_data = N + NEXTRA
+        // where NEXTRA = INT(MaxR/h + 3.5) - INT(MaxR/h)
+        // Fortran NSTP2S = RIMAX/h + 3.5 → max chi R = NSTP2S * h = (RIMAX/h + NEXTRA) * h
+        double h_out = Outgoing.StepSize;
+        int N_data = static_cast<int>(Outgoing.MaxR / h_out + 3.5);  // = NSTP2S = 243 for MaxR=30, h=0.125
+        SUMMAX_from_chi = (double)N_data * h_out;  // = 243 * 0.125 = 30.375 fm
+        fprintf(stderr, "Outgoing chi N_data=%d h_out=%.6f SUMMAX_out=%.4f\n", N_data, h_out, SUMMAX_from_chi);
+    }
+    fprintf(stderr, "ISCTMN: L=%d JPI=%d  ISCTCR: L=%d JPI=%d  ROFMAX=%.2f chi_max_R_in=%.4f SUMMAX_out=%.4f\n",
+            L_ISCTMN, JPI_ISCTMN, LCRIT, JPI_ISCTCR, ROFMAX, (double)(N_chi_scan-1)*h_chi_scan, SUMMAX_from_chi);
 
     // Convenience BSPROD callers — ISCTMN (WVWMAX/SUMMIN) and ISCTCR (SUMMAX/phi loop)
     // Fortran: NAIT=1 (linear interpolation) for all GRDSET grid scans
@@ -912,8 +926,10 @@ void DWBA::InelDcFaithful2()
         }
 
         // SUMMAX = U  (Fortran line 16063: IF(SUMMAX.EQ.UNDEF) SUMMAX=U)
-        SUMMAX = U;
-        fprintf(stderr, "SUMMAX = %.4f\n", SUMMAX);
+        // Fortran: SUMMAX = ABS(SCTASY) = scattering chi grid endpoint (asymptopia)
+        // We override scan exit with chi_max_R to match Fortran behavior exactly.
+        SUMMAX = SUMMAX_from_chi;
+        fprintf(stderr, "SUMMAX = %.4f (override from chi_max_R; scan exit was U=%.4f)\n", SUMMAX, U);
 
         // SUMMID = first moment × AMDMLT (Fortran line 16070)
         if (SUM0 > 1e-30) {
@@ -953,6 +969,20 @@ void DWBA::InelDcFaithful2()
     std::vector<double> SMIPT(NPSUMI), SMIVL_wts(NPSUMI);
     GaussLegendre(NPSUMI, -1.0, 1.0, SMIPT, SMIVL_wts);
     CubMapFaithful(MAPSUM, SUMMIN, SUMMID, SUMMAX, GAMSUM, SMIPT, SMIVL_wts);
+    // Debug: print first 8 SMIPT U values to compare with Fortran
+    fprintf(stderr, "CUBMAP_CHI: SUMMIN=%.4f SUMMID=%.4f SUMMAX=%.4f GAMSUM=%.4f NPSUMI=%d MAPSUM=%d\n",
+            SUMMIN, SUMMID, SUMMAX, GAMSUM, NPSUMI, MAPSUM);
+    fprintf(stderr, "SMIPT[1..8]:");
+    for (int k=0;k<std::min(8,NPSUMI);k++) fprintf(stderr," %.5f", SMIPT[k]);
+    fprintf(stderr,"\n");
+    // Also print raw GL values before mapping (by checking a fresh copy)
+    {
+        std::vector<double> gl_raw(NPSUMI), gl_w(NPSUMI);
+        GaussLegendre(NPSUMI, -1.0, 1.0, gl_raw, gl_w);
+        fprintf(stderr, "GL_RAW[1..5]:");
+        for (int k=0;k<std::min(5,NPSUMI);k++) fprintf(stderr," %.6f", gl_raw[k]);
+        fprintf(stderr,"\n");
+    }
 
     // ─── GRDSET Step 5: Pre-compute H-grid DIF tables ───────────────────────
     // Fortran GRDSET Stage 1-4 for H-grid (NPSUM points):
@@ -1150,9 +1180,11 @@ void DWBA::InelDcFaithful2()
             double TEMP_h = 0.3*(VMAX_h - VMIN_h);
             VMID_h = std::min(std::max(VMID_h, VMIN_h + TEMP_h), VMAX_h - TEMP_h);
 
-            // SYNE flip: if VMID > 0.5*(VMAX+VMIN) → flip
+            // SYNE flip: Fortran logic — flip when VMID ≤ mean (not >)
+            // Fortran: IF(VMID.GT.0.5*(VMAX+VMIN)) GO TO → keep SYNE=1
+            //          ELSE: SYNE=-1, flip signs
             double SYNE_h = 1.0;
-            if (VMID_h > 0.5*(VMAX_h + VMIN_h)) {
+            if (VMID_h <= 0.5*(VMAX_h + VMIN_h)) {
                 SYNE_h = -1.0;
                 double tmp = VMAX_h;
                 VMAX_h = -VMIN_h;
@@ -1215,6 +1247,7 @@ void DWBA::InelDcFaithful2()
             // V-range: Fortran DO 709 (NPLYSW=TRUE → copy LVMIN/LVMID/LVMAX)
             // When NPLYSW=FALSE: evaluate polynomial at U to get VMIN,VMID,VMAX
             // We use direct Stage 1-2 scan for accuracy
+            if (IU == 5) fprintf(stderr, "STAGE5_DBG IU=5 U=%.6f WOW=%.6f\n", U, WOW);
 
             // Stage 1 scan for chi grid IU
             double VMIN_c = -U, VMAX_c = U;  // defaults: full range
@@ -1282,9 +1315,11 @@ void DWBA::InelDcFaithful2()
             double TEMP_c = 0.3*(VMAX_c - VMIN_c);
             VMID_c = std::min(std::max(VMID_c, VMIN_c + TEMP_c), VMAX_c - TEMP_c);
 
-            // SYNE flip
+            // SYNE flip: Fortran logic — flip when VMID ≤ mean (not >)
+            // Fortran: IF(VMID.GT.0.5*(VMAX+VMIN)) GO TO 730 (skip flip)
+            //          ELSE: SYNE=-1, flip VMIN/VMAX/VMID
             double SYNE_c = 1.0;
-            if (VMID_c > 0.5*(VMAX_c + VMIN_c)) {
+            if (VMID_c <= 0.5*(VMAX_c + VMIN_c)) {
                 SYNE_c = -1.0;
                 double tmp = VMAX_c;
                 VMAX_c = -VMIN_c;
@@ -1301,6 +1336,8 @@ void DWBA::InelDcFaithful2()
             }
 
             // Fill LWIO, LRI, LRO
+            if (IU == 5) fprintf(stderr, "STAGE5_DBG IU=5 VMIN=%.6f VMID=%.6f VMAX=%.6f SYNE=%.1f DIFPT[1]=%.6f\n",
+                VMIN_c, VMID_c, VMAX_c, SYNE_c, DIFPT_c[1]);
             for (int IV = 1; IV <= NPDIF; ++IV) {
                 int IPLUNK_iv = IV - 1;
                 if (SYNE_c < 0.0) IPLUNK_iv = NPDIF - IV;
@@ -1455,10 +1492,10 @@ void DWBA::InelDcFaithful2()
                 JCNT++;
             }
 
-            // Debug: print first few phi points for IPLUNK=3
-            if (IPLUNK == 3) {
-                fprintf(stderr, "GRDSET_PASS2 IPLUNK=3 RI=%.6f RO=%.6f IEND=%d PHI0=%.6f\n",
-                        RI, RO, IEND, PHI0);
+            // Debug: print first few phi points for key IPLUNKs
+            if (IPLUNK == 3 || IPLUNK == 11) {
+                fprintf(stderr, "GRDSET_PASS2 IPLUNK=%d RI=%.6f RO=%.6f IEND=%d PHI0=%.6f\n",
+                        IPLUNK, RI, RO, IEND, PHI0);
                 for (int k = 0; k < std::min(NPPHI, 5); ++k) {
                     auto& p = phi_table[IPLUNK][k];
                     fprintf(stderr, "  kphi=%d PHI=%.6f PHIT=%.6f PVPDX=%.6e\n",
