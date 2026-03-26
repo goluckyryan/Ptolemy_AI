@@ -1,13 +1,7 @@
-// wavelj.cpp — Distorted wave setup and Numerov integration
+// wavelj_ZR.cpp — Distorted wave setup and Numerov integration (Zero-Range / ZR version)
 //
-// Single-point Wronskian implementation (shared between FR and ZR paths).
-// The ZR reference copy is preserved in wavelj_ZR.cpp.
-//
-// NOTE: The 2-point Wronskian (Fortran NBAKCM=4) was investigated but found
-// ill-conditioned at R~30 fm with h=0.125 fm (separation = 0.5 fm << wavelength).
-// Fortran uses h~0.15 fm with matching at ~24 fm where the formula is well-conditioned.
-// The 6.4° S-matrix phase error is caused by a potential V(R) discrepancy (~1.5% at R~3 fm)
-// that must be fixed in the potential computation, not the Wronskian method.
+// This is the original single-point Wronskian implementation used for ZR calculations.
+// Kept as reference; for finite-range (FR) use wavelj.cpp (Fortran 2-point Wronskian).
 //
 // Extracted from dwba.cpp (original lines 342–567):
 //   DWBA::WavSet  (lines 342–376)
@@ -181,22 +175,6 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
                   + spin_dot_L * f_conv * Vso;
     double f_im = f_conv * Wi + spin_dot_L * f_conv * Vsoi;
     f[i] = std::complex<double>(f_re, f_im);
-
-    // Debug: print W(i) = 1 + h²/12·f(i) for L=1, JP=4 (NWP=1 incoming, ISCTMN)
-    // Fortran stores W(I) in WAVR(I+4)/WAVI(I+4) before integration
-    if (L == 1 && Jp == 4 && r >= 0.125 && r <= 6.0) {
-      double Wr = 1.0 + h2_12 * f_re;
-      double Wi_nm = h2_12 * f_im;
-      fprintf(stderr, "CPP_WPOT:%2d %5d %16.9f %16.9f %16.9f\n",
-              1, i, r, Wr, Wi_nm);
-      // Also print individual f components for diagnosis
-      if (i == 24) {  // R=3 fm
-        fprintf(stderr, "CPP_PCOMP: r=%.4f Vr=%.6f Vi=%.6f Vc=%.6f Vso=%.6f SDL=%.4f f_conv=%.8f\n",
-                r, ch.V_real[i], ch.V_imag[i], ch.V_coulomb[i], ch.V_so_real[i], spin_dot_L, f_conv);
-        fprintf(stderr, "CPP_FCOMP: r=%.4f k2=%.6f f_re=%.6f (h2_12*f=%.9f)\n",
-                r, k2, f_re, h2_12*f_re);
-      }
-    }
   }
 
   // --- Standard Numerov integration (Ptolemy WAVELJ form) ---
@@ -208,12 +186,8 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
   const double STEPI  = 1e-10;  // inner cutoff after rescaling
 
   std::vector<std::complex<double>> u(N + 2, 0.0);
-  // Initial conditions: u[0]=0, u[1]=h^(L+1) (real regular solution near origin)
-  // Note: Fortran uses u[1] = THISR*(1+i) — complex IC. For a complex optical potential,
-  // this gives a slightly different WF phase at matching radius but the same S-matrix
-  // (the Wronskian normalization removes the overall complex scale).
-  u[0] = std::complex<double>(0.0, 0.0);
-  u[1] = std::complex<double>(std::pow(h, L + 1), 0.0);
+  u[0] = 0.0;
+  u[1] = std::pow(h, L + 1);
   if (std::abs(u[1]) < 1e-300) u[1] = 1e-300;
 
   int ISTRT = 0;  // first nonzero index (tracks inner zeroing after rescale)
@@ -224,13 +198,6 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     std::complex<double> dn = 1.0 + h2_12 * f[i + 1];
     if (std::abs(dn) < 1e-300) dn = 1e-300;
     u[i + 1] = (t1 - t2) / dn;
-
-    if (L == 1 && Jp == 4 && i <= 25) {
-      double Wr = 1.0 + h2_12 * f[i].real();
-      double Wi_nm = h2_12 * f[i].imag();
-      fprintf(stderr, "CPP_NUMER %4d %8.4f %18.9e %18.9e %18.9e %18.9e\n",
-              i, i*h, u[i+1].real(), u[i+1].imag(), Wr, Wi_nm);
-    }
 
     double mag = std::abs(u[i + 1]);
     if (mag > BIGNUM) {
@@ -247,44 +214,7 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     }
   }
 
-  // Debug: print u at Fortran's NSTEP=160 (R=20 fm) for comparison
-  if (L == 1 && Jp == 4) {
-    int i_ftn = 160;  // Fortran NSTEP
-    fprintf(stderr, "CPP_UN_FTN: i=%d R=%.3f u=(%.7e,%.7e)  [FTN: (4.036e-5,-1.499e-5)]\n",
-            i_ftn, i_ftn*h, u[i_ftn].real(), u[i_ftn].imag());
-    int i_ftn4 = 156;  // NSTEP-NBAKCM
-    fprintf(stderr, "CPP_UN4_FTN: i=%d R=%.3f u=(%.7e,%.7e)  [FTN: (5.337e-5, 1.647e-5)]\n",
-            i_ftn4, i_ftn4*h, u[i_ftn4].real(), u[i_ftn4].imag());
-  }
-
   // --- S-matrix extraction: handbook single-point method ---
-  // Debug: also try matching at Fortran's NSTEP=160 (R=20 fm) for comparison
-  if (L == 1 && Jp == 4) {
-    int nm_ftn = 160 - 3;  // same stencil offset
-    double R_ftn = nm_ftn * h;
-    double rho_ftn = ch.k * R_ftn;
-    std::vector<double> FC_f(L+2), FCP_f(L+2), GC_f(L+2), GCP_f(L+2);
-    Rcwfn(rho_ftn, ch.eta, L, L, FC_f, FCP_f, GC_f, GCP_f);
-    double FL_f = FC_f[L], GL_f = GC_f[L];
-    double FLP_f = FCP_f[L]*ch.k, GLP_f = GCP_f[L]*ch.k;
-    std::complex<double> u_ftn4 = u[nm_ftn-2], u_ftn3 = u[nm_ftn-1],
-                         u_ftn2 = u[nm_ftn+1], u_ftn1 = u[nm_ftn+2];
-    std::complex<double> up_ftn = (u_ftn4 - 8.0*u_ftn3 + 8.0*u_ftn2 - u_ftn1)/(12.0*h);
-    std::complex<double> u_m_f = u[nm_ftn];
-    double ur_f=u_m_f.real(), ui_f=u_m_f.imag(), upr_f=up_ftn.real(), upi_f=up_ftn.imag();
-    double Ar_f=FLP_f*ur_f-upr_f*FL_f, Ai_f=FLP_f*ui_f-upi_f*FL_f;
-    double Br_f=upr_f*GL_f-GLP_f*ur_f, Bi_f=upi_f*GL_f-GLP_f*ui_f;
-    double nr_f=Br_f-Ai_f, ni_f=Bi_f+Ar_f, dr_f=Br_f+Ai_f, di_f=Bi_f-Ar_f;
-    double den_f=dr_f*dr_f+di_f*di_f;
-    double SJR_f=(den_f>1e-60)?(nr_f*dr_f+ni_f*di_f)/den_f:0;
-    double SJI_f=(den_f>1e-60)?(ni_f*dr_f-nr_f*di_f)/den_f:0;
-    fprintf(stderr, "CPP_AT20FM L=%d JP=%d R_match=%.2f SJR=%.7e SJI=%.7e |S|=%.6f phase=%.3f deg\n",
-            L, Jp, R_ftn, SJR_f, SJI_f,
-            std::sqrt(SJR_f*SJR_f+SJI_f*SJI_f),
-            std::atan2(SJI_f,SJR_f)*180.0/M_PI);
-    fprintf(stderr, "CPP_AT20FM FTN ref: SJR=0.21878 SJI=-0.02362 phase=-6.163 deg\n");
-  }
-
   // Match at index n_match = N-3 so 5-point stencil fits within [0..N]
   int n_match = N - 3;
   double R_match = n_match * h;
