@@ -1709,6 +1709,15 @@ void DWBA::InelDc() {
         int ITEST_a = JX_d - JBP_d + 2*(ProjectileBS.l + TargetBS.l);
         ITEST_a = ITEST_a/2 + 1;   // Ptolemy two-step transform
         if (ITEST_a % 2 != 0) ATERM_val = -ATERM_val;
+        if (Li == 3) {
+          fprintf(stderr, "ATERM_DBG Li=%d Lx=%d TEMP_aterm=%.5e SPAMP=%.5f RACAH=%.5e ATERM=%.5e\n",
+                  Li, Lx, std::sqrt((JBIGB+1.0)/(JBIGA+1.0)) * std::sqrt(2.0*Lx+1.0),
+                  ProjectileWFLoaded ? ProjectileWFSpam : 0.97069,
+                  SixJ((double)TargetBS.l, TargetBS.j, 0.5, ProjectileBS.j,
+                       (double)ProjectileBS.l, (double)Lx) *
+                  (((2*TargetBS.l+(int)(2*TargetBS.j+0.5)+2*ProjectileBS.l+(int)(2*ProjectileBS.j+0.5))/2%2==0)?1.0:-1.0),
+                  ATERM_val);
+        }
       }
 
       double FACTOR_sfromi = 2.0 * std::sqrt(Incoming.k * Outgoing.k /
