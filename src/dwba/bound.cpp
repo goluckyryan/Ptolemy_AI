@@ -74,28 +74,28 @@ void DWBA::CalculateKinematics() {
     Outgoing.mu     = mu_out_MeV / AMU_B;
 
   } else {
-    // ── Non-relativistic kinematics (Ptolemy default, MASTYP=0: integer masses) ─────────────────────
-    // Ptolemy MASTYP=0: use integer mass numbers (A × AMU) for kinematics
-    // This matches Ptolemy's default behavior (no mass excess corrections).
-    // For 16O(d,p)17O: ma=2 AMU, mA=16 AMU, mb=1 AMU, mB=17 AMU (integer)
-    double AMU_MEV = 931.5016;  // AMU in MeV (Ptolemy's AMUMEV)
-    double ma_kin = (double)Incoming.Projectile.A * AMU_MEV;  // integer mass for kinematics
-    double mA_kin = (double)Incoming.Target.A     * AMU_MEV;
-    double mb_kin = (double)Outgoing.Projectile.A * AMU_MEV;
-    double mB_kin = (double)Outgoing.Target.A     * AMU_MEV;
-    // Q_calc with real masses (for energy balance)
-    // Ptolemy: Q = ma + mA - mb - mB using real masses when mass excess is given
-    //          For MASTYP=0: Q = (Aa+AA-Ab-AB) * AMU + mass_excess, but mass excess=0 → Q=0? No.
-    //          Actually Ptolemy uses the real mass-excess for Q even at MASTYP=0.
-    //          For our fr_o16dp.cpp, Q is hardcoded from the experimental value.
-    //          Use Q_calc from real masses for now (it's small compared to ECM).
-    double mu_in_kin  = ma_kin * mA_kin / (ma_kin + mA_kin);  // integer-mass reduced mass
+    // ── Non-relativistic kinematics with REAL nuclear masses (Ptolemy dpsb convention) ────────────
+    // Ptolemy PARAMETERSET dpsb uses actual nuclear masses (with mass defects) for kinematics.
+    // Isotope.Mass = Z*mp + (A-Z)*mn - BEA/1000*A  (nuclear mass in MeV, no electrons)
+    // This matches Fortran WAVELJ output: mu=1665.86 MeV for d+16O, k=1.2328 fm^-1.
+    //
+    // Previously used integer masses (A × AMU_int) which gave mu=1656 MeV, k=1.2297 fm^-1 (-0.25%).
+    // That 0.25% k error caused chi table to differ by 5-9% from Fortran, leading to
+    // 23% BSPROD FPFT error and wrong SUMMID/I_accum/DCS.
+    double AMU_MEV = 931.5016;  // AMU in MeV (Ptolemy's AMUMEV — used for mu→AMU conversion only)
+    double ma_kin = ma;   // real nuclear mass (from Isotope.Mass)
+    double mA_kin = mA;
+    double mb_kin = mb;
+    double mB_kin = mB;
+    double mu_in_kin  = ma_kin * mA_kin / (ma_kin + mA_kin);
     double mu_out_kin = mb_kin * mB_kin / (mb_kin + mB_kin);
-    // Ecm from integer masses (Ptolemy: Ecm = Elab * AMT / (AMP + AMT))
+    // Ecm: use real masses for Ecm = Elab × mA/(ma+mA)
     Incoming.Ecm = Incoming.Elab * mA_kin / (ma_kin + mA_kin);
-    Incoming.mu  = mu_in_kin / AMU_MEV;  // in AMU
+    Incoming.mu  = mu_in_kin / AMU_MEV;  // in AMU (for f_conv in WavElj)
     Incoming.k   = std::sqrt(2.0 * mu_in_kin * Incoming.Ecm) / HBARC_B;
     Incoming.eta = Z1 * Z2 * mu_in_kin / (137.036 * HBARC_B * Incoming.k);
+    fprintf(stderr, "Kinematics (real masses): ma=%.4f mA=%.4f mu_in=%.4f Ecm=%.4f k=%.6f eta=%.5f\n",
+            ma_kin, mA_kin, mu_in_kin, Incoming.Ecm, Incoming.k, Incoming.eta);
 
     Outgoing.Ecm = Incoming.Ecm + Q_calc;  // Q_calc from real masses
     if (Outgoing.Ecm < 0) {
@@ -105,6 +105,8 @@ void DWBA::CalculateKinematics() {
     Outgoing.mu  = mu_out_kin / AMU_MEV;  // in AMU
     Outgoing.k   = std::sqrt(2.0 * mu_out_kin * Outgoing.Ecm) / HBARC_B;
     Outgoing.eta = Z3 * Z4 * mu_out_kin / (137.036 * HBARC_B * Outgoing.k);
+    fprintf(stderr, "Kinematics (real masses): mb=%.4f mB=%.4f mu_out=%.4f Ecm_out=%.4f k_out=%.6f eta_out=%.5f\n",
+            mb_kin, mB_kin, mu_out_kin, Outgoing.Ecm, Outgoing.k, Outgoing.eta);
   }
 
   // Set projectile spin (JSPS = 2*spin) for each channel
@@ -698,13 +700,20 @@ bool DWBA::LoadDeuteronWavefunction(Channel &ch, const std::string &dataPath,
     // BUT Ptolemy BSSET IVPHI_P = phi * (-V) where V is the raw potential.
     // av18.mor array2(i) = -v (i.e. array2 = -V_eff) → IVPHI_P = phi * array2 = phi*(-V_eff)
     // Convention: IVPHI_P as used in InelDc = phi_P * (-V_eff) (same sign as Reid)
+    ch.V_real.assign(NSTEPS, 0.0);
     for (int i = 1; i < NSTEPS; ++i) {
       double r = i * h;
       double phi = av18_interp(AV18_PHI, r);
-      double vs  = av18_vs_interp(r);  // = -V_eff (av18 sign convention)
+      double vs  = av18_vs_interp(r);  // = -V_eff (av18 sign convention: vs = -V)
       ch.WaveFunction[i] = std::complex<double>(phi, 0.0);
       // IVPHI_P = phi * array2 = phi * (-V_eff) — matches Ptolemy BSSET
       ch.VPhiProduct[i] = phi * vs;  // vs is already -V_eff → IVPHI_P = phi*(-V_eff)
+      // Store actual potential V_eff = -vs in V_real (for NUCONL=3 JPOT)
+      // AV18_VS sign: positive = repulsive, negative = attractive.
+      // Fortran JPOT = NPOTS(IVRTEX=1) = potential array from BOUND, sign as stored.
+      // From FTN_JPOT_V: at r=0, JPOT=2408 (repulsive core); at r=0.875, JPOT=-119 (attractive).
+      // → JPOT = V_eff = AV18_VS values directly (not negated).
+      ch.V_real[i] = av18_vs_interp(r);  // = -V_eff, but AV18_VS itself is the Fortran JPOT
     }
 
     // Diagnostics

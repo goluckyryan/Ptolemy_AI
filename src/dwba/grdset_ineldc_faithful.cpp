@@ -138,6 +138,39 @@ struct BSProdTables {
 
     // S1,T1,S2,T2 mapping
     double s1, t1, s2, t2;
+
+    // ── NUCONL=3 FACTOR correction parameters ──────────────────────────────
+    // Fortran BSSET lines 5563–5654: sets up per-IVRTEX correction params.
+    // For stripping 16O(d,p)17O:
+    //   IVRTEX=1 (projectile vertex): ISC=2, IOUTSW=true (RSCAT=RB)
+    //   IVRTEX=2 (target vertex):     ISC=1, IOUTSW=false (RSCAT=RA)
+
+    // WS nuclear correction: DELVNU = VOPT*(WS(RCORE)-WS(RSCAT))
+    double nuconl_VOPT;   // real depth of scattering optical potential (negative sign already in)
+    double nuconl_RNSCAT; // WS radius for scatter distance
+    double nuconl_RNCORE; // WS radius for core-core distance
+    double nuconl_AOPT;   // WS diffuseness
+
+    // Coulomb correction: DELVCO - DELVSC using VCSQ12-style formulas
+    // For uniform sphere (charge Z2) + point charge (Z1):
+    //   if R >= R_sphere: V = Z1*Z2*e²/R = VC0/R
+    //   if R < R_sphere:  V = (Z1*Z2*e²/R_sphere) * (3/2 - r²/(2*R_sphere²)) — uniform sphere interior
+    // FTN_SETVSQ IVRTEX=1: IZC1=1, IZC2=8, RCCOT=3.302 (core-core: proton sees 16O uniform sphere)
+    //            ISC=2: RCTSCT=3.350 (scatter: proton sees 17O uniform sphere)
+    double nuconl_VC0_core;   // = Z1*Z2*(ħc/α) for core-core
+    double nuconl_R_core;     // sphere radius for RCORE Coulomb
+    double nuconl_VC0_scat;   // = Z1*Z2*(ħc/α) for scatter channel
+    double nuconl_R_scat;     // sphere radius for RSCAT Coulomb
+
+    bool nuconl_IOUTSW;  // true → RSCAT=RB (outgoing), false → RSCAT=RA (incoming)
+    int  nuconl_IVRTEX;  // 1 or 2
+
+    // VEFF: bound state potential at RBND
+    // RBND = RP if IVRTEX=1, RT if IVRTEX=2
+    // = JPOT table: the nuclear potential grid from the bound state calculation
+    std::vector<double> jpot;   // V(r) at r=i*jpot_h, i=0..jpot_n-1
+    double jpot_h;              // step size of jpot grid
+    int jpot_n;
 };
 
 // ============================================================
@@ -156,6 +189,32 @@ struct BSProdTables {
 // NAIT: number of AITLAG points (1=linear, 4=5-pt Lagrange)
 // Returns FPFT via reference; returns false if RP or RT exceeds asymptopia
 // ============================================================
+// ============================================================
+// vcsq12: Coulomb potential between a uniform sphere (radius R_sphere) and a
+// point charge, at separation R. Analytic formula (Poling 1976 PRC 13,648).
+//   VC0 = Z1*Z2*(ħc/α)  (= Z1*Z2*1.44 MeV·fm)
+//   R_sphere: radius of uniform charge distribution (set to 0 for point-point)
+// Matches Fortran VCSQ12 output:
+//   R >= R_sphere  → V = VC0/R
+//   R < R_sphere   → polynomial expansion
+// ============================================================
+static double vcsq12(double R, double VC0, double R_sphere)
+{
+    if (R_sphere <= 0.0) {
+        // Both point charges
+        return (R > 1e-10) ? VC0/R : 0.0;
+    }
+    double R1 = R_sphere;  // larger sphere (R2=0 for point charge)
+    if (R >= R1) {
+        return VC0 / R;
+    } else {
+        // R < R1 (inside sphere): polynomial from Fortran VCSQ12 line 2
+        // (R2=0 case): X(K) = 0.3*(5*R1^2-R2^2)*(VC0/R1^3), Y(K) = -0.5*VC0/R1^3
+        // → V = X + Y*R^2 = (VC0/R1^3)*(0.3*5*R1^2 - 0.5*R^2) = VC0*(1.5/R1 - 0.5*R^2/R1^3)
+        return VC0 * (1.5/R1 - 0.5*R*R/(R1*R1*R1));
+    }
+}
+
 static bool bsprod_faithful(
     double& FPFT,
     int ITYPE,
@@ -222,9 +281,81 @@ static bool bsprod_faithful(
 
     FPFT = FP * FT;
 
+    // ── NUCONL=3 FACTOR correction (Fortran BSPROD lines 5330–5380) ───────
+    // For transfer reactions, Ptolemy applies a correction factor:
+    //   FACTOR = 1 + DELV/VEFF
+    // where DELV = Coulomb correction (core-core vs scatter) + nuclear WS correction
+    // Skip if FPFT is too small (Fortran: IF(ABS(FPFT).LT.SMLNUM) GO TO 200)
+    if (std::abs(FPFT) >= 1e-30 && !bs.jpot.empty()) {
+        // Determine RSCAT (Fortran: RSCAT = RA or RB depending on IOUTSW)
+        double RSCAT = bs.nuconl_IOUTSW ? RB : RA;
+
+        // RCORE = sqrt((S1-S2)^2*RA^2 + (T1-T2)^2*RB^2 + 2*(S1-S2)*(T1-T2)*RA*RB*X)
+        double dS = bs.s1 - bs.s2;
+        double dT = bs.t1 - bs.t2;
+        double rcore2 = (dS*RA)*(dS*RA) + (dT*RB)*(dT*RB)
+                       + 2.0*(dS*RA)*(dT*RB)*X;
+        if (rcore2 < 0.0) rcore2 = 0.0;
+        double RCORE = std::sqrt(rcore2);
+
+        // Coulomb correction: DELVCO - DELVSC
+        double DELVCO = vcsq12(RCORE, bs.nuconl_VC0_core, bs.nuconl_R_core);
+        double DELVSC = vcsq12(RSCAT, bs.nuconl_VC0_scat, bs.nuconl_R_scat);
+        double DELV   = DELVCO - DELVSC;
+
+        // Nuclear WS correction: DELVNU = VOPT*(WS(RCORE) - WS(RSCAT))
+        // Fortran: XCORE=(RCORE-RNCORE)/AOPT; FCORE=WS(XCORE); etc.
+        // Skip if NAIT==2 (Fortran: IF((NUCONL.NE.3).OR.(NAIT.EQ.2)) GO TO 8)
+        if (NAIT != 2) {
+            auto ws = [](double r, double R0, double a) -> double {
+                const double BIGLOG = 174.0;
+                double x = (r - R0) / a;
+                if (x < -BIGLOG) return 1.0;
+                if (x >  BIGLOG) return 0.0;
+                return 1.0 / (1.0 + std::exp(x));
+            };
+            double FCORE = ws(RCORE, bs.nuconl_RNCORE, bs.nuconl_AOPT);
+            double FSCAT = ws(RSCAT, bs.nuconl_RNSCAT, bs.nuconl_AOPT);
+            double DELVNU = bs.nuconl_VOPT * (FCORE - FSCAT);
+            DELV += DELVNU;
+        }
+
+        // VEFF = JPOT at RBND
+        // RBND = RP if IVRTEX=1, RT if IVRTEX=2
+        double RBND = (bs.nuconl_IVRTEX == 1) ? RP : RT;
+        double VEFF = 0.0;
+        {
+            double idx = RBND / bs.jpot_h;
+            int ii = (int)idx;
+            if (ii >= bs.jpot_n - 1) {
+                VEFF = bs.jpot.empty() ? 0.0 : bs.jpot.back();
+            } else {
+                double f = idx - ii;
+                VEFF = bs.jpot[ii]*(1.0-f) + bs.jpot[ii+1]*f;
+            }
+        }
+
+        double FACTOR = (std::abs(VEFF) > 1e-30) ? (1.0 + DELV/VEFF) : 1.0;
+        FPFT *= FACTOR;
+
+        static int fac_dbg3 = 0, fac_dbg1 = 0;
+        if (fac_dbg3 < 3 && ITYPE == 3) {
+            fac_dbg3++;
+            fprintf(stderr, "CPP_FACTOR_T3 %3d RCORE=%.7g RSCAT=%.7g DELVCO=%.7g DELVSC=%.7g DELV=%.7g VEFF=%.7g FACTOR=%.7g\n",
+                fac_dbg3, RCORE, RSCAT, DELVCO, DELVSC, DELV, VEFF, FACTOR);
+        }
+        if (fac_dbg1 < 5 && ITYPE == 1) {
+            fac_dbg1++;
+            fprintf(stderr, "CPP_FACTOR_T1 %3d RA=%.4g RB=%.4g RP=%.4g RT=%.4g RCORE=%.4g RSCAT=%.4g VEFF=%.7g FACTOR=%.7g\n",
+                fac_dbg1, RA, RB, RP, RT, RCORE, RSCAT, VEFF, FACTOR);
+        }
+    }
+    // ── end NUCONL=3 FACTOR ────────────────────────────────────────────────
+
     // DEBUG: validate BSPROD ITYPE=1 at IPLUNK=3 reference point
     // Fortran GRDSET_TRP IPLUNK=3: RI=0.003284, RO=0.207994, RP=0.387, RT=0.190, FIFO=0.964
     static int bsprod_dbg_count = 0;
+    static int bsp3_det_count = 0;   // counter for ITYPE=3 detailed prints
     bool do_dbg = (ITYPE == 1 && bsprod_dbg_count < 8);
     if (do_dbg) { bsprod_dbg_count++;
         fprintf(stderr,"BSP_VAL ITYPE=%d RA=%.6f RB=%.6f X=%.5f RP=%.5f RT=%.5f FP=%.6e FT=%.6e FPFT=%.6e\n",
@@ -240,6 +371,9 @@ static bool bsprod_faithful(
     // For ITYPE >= 3: multiply in R*chi(R) for both RA and RB
     // chi is the reference scattering wavefunction stored in scat[]
 
+    double FPFT_before_chi = FPFT;
+    double chi_ra_val = 0.0, chi_rb_val = 0.0;
+
     // RA side
     if (RA <= sctmax) {
         double chi_ra;
@@ -253,10 +387,12 @@ static bool bsprod_faithful(
         }
         if (do_dbg) fprintf(stderr,"BSP_DBG chi_ra=%.6e (idx=%.2f ii=%d nspsct=%d)\n",
             chi_ra, RA*sctsp_inv, (int)(RA*sctsp_inv), nspsct);
+        chi_ra_val = chi_ra;
         FPFT *= chi_ra;
         if (std::abs(FPFT) <= 1e-34) { FPFT = 0.0; return true; }
     } else {
         // Beyond sctmax: use RA directly (FPFT = FPFT * RA)
+        chi_ra_val = RA;
         FPFT *= RA;
     }
 
@@ -271,9 +407,19 @@ static bool bsprod_faithful(
         } else {
             chi_rb = aitlag5(scat, nspsct, sctsp_inv, RB);
         }
+        chi_rb_val = chi_rb;
         FPFT *= chi_rb;
     } else {
+        chi_rb_val = RB;
         FPFT *= RB;
+    }
+
+    // Detailed ITYPE=3 print: first 30 calls
+    if (ITYPE == 3 && bsp3_det_count < 30) {
+        bsp3_det_count++;
+        fprintf(stderr, "CPP_BSP3_DET %3d RA=%.7g RB=%.7g RP=%.7g RT=%.7g FP=%.7g FT=%.7g FpFt=%.7g chi_RA=%.7g chi_RB=%.7g FPFT=%.7g\n",
+            bsp3_det_count, RA, RB, RP, RT, FP, FT, FPFT_before_chi,
+            chi_ra_val, chi_rb_val, FPFT);
     }
 
     return true;
@@ -423,7 +569,8 @@ void DWBA::InelDcFaithful2()
     }
 
     // Rebuild V_real for PrjBS_ch after bound state solve
-    {
+    // (Only if NOT loaded from AV18 — AV18 LoadDeuteronWavefunction fills V_real directly)
+    if (!reidLoaded) {
         for (int i = 0; i < PrjBS_ch.NSteps; ++i) {
             double r = i * PrjBS_ch.StepSize;
             if (r < 0.001) { PrjBS_ch.V_real[i] = 0.0; continue; }
@@ -526,15 +673,95 @@ void DWBA::InelDcFaithful2()
     bs.alphat = ALPHAT;
     bs.s1 = S1; bs.t1 = T1; bs.s2 = S2; bs.t2 = T2;
 
+    // ── NUCONL=3 FACTOR parameters (Fortran BSSET stripping, IVRTEX=1) ─────
+    // This is for STRIPPING (PHISGN=+1), projectile vertex (IVRTEX=1):
+    //   ISC=2 (p+17O outgoing), IOUTSW=true (RSCAT=RB)
+    // Kinematic mass powers (cube roots of masses in AMU):
+    {
+        // Particle masses for 16O(d,p)17O:
+        //   a = deuteron (A=2), b = neutron (A=1), A = 16O (A=16), B = 17O (A=17)
+        //   AMBIGA = A + b = 16O = 16  → AMBIGA3 = 16^(1/3)
+        //   AMBIGB = a - b = d - n = p = 1 → AMBIGB3 = 1^(1/3) = 1... wait
+        // From Fortran output: AMBGA3=2.5198(≈16^1/3), AMBGB3=2.5713(≈17^1/3)
+        // AMBGA = residual after transfer = A + stripped = 16 + n = 17O?
+        // Actually from Fortran: AMBGA3=16^(1/3)=2.5198, AMBGB3=17^(1/3)=2.5713.
+        // AMBIGA=16O (target+stripped = DOES NOT match 17). Let me just hardcode from Fortran printout.
+        // But for robustness, compute from actual particle masses:
+        //   AMBIGA = target nucleus A = 16 (from Incoming.Target.A)
+        //   AMBIGB = residual recoil A = 17 (from Outgoing.Recoil.A or Incoming.Target.A + stripped.A)
+        //   AMA = projectile A = 2 (Incoming.Projectile.A)
+        //   AMB = stripped A = 1 (Incoming.Projectile.A - Outgoing.Projectile.A)
+        // Wait — from Fortran AMBGA3=2.5198=16^(1/3), AMBGB3=2.5713=17^(1/3)
+        // From Fortran: AMBIGA = 16, AMBIGB = 17.
+        // In Ptolemy notation: AMBIGA = A (target), AMBIGB = B (residual) for stripping.
+        double A_a    = (double)Incoming.Projectile.A;  // deuteron = 2
+        double A_b    = A_a - (double)Outgoing.Projectile.A;  // neutron = 1
+        double A_A    = (double)Incoming.Target.A;   // 16O = 16
+        double A_B    = A_A + A_b;                   // 17O = 17
+
+        double AMA3   = std::cbrt(A_a);   // 2^(1/3)
+        double AMB3   = std::cbrt(A_b);   // 1^(1/3) = 1
+        double AMBGA3 = std::cbrt(A_A);   // 16^(1/3) = 2.5198
+        double AMBGB3 = std::cbrt(A_B);   // 17^(1/3) = 2.5713
+
+        // NUCONL=3, stripping, IVRTEX=1 (projectile vertex):
+        bs.nuconl_IVRTEX = 1;
+        bs.nuconl_IOUTSW = true;   // RSCAT = RB
+
+        // Nuclear WS params (using p+17O outgoing potential, ISC=2):
+        double R0_out = Outgoing.Pot.R0;   // 1.1462 fm
+        double A_out  = Outgoing.Pot.A;    // 0.6753 fm
+        double V0_out = Outgoing.Pot.V;    // 49.5434 MeV (real depth)
+        double A_recoil = (double)Outgoing.Target.A;  // 17O = 17 (residual/recoil nucleus)
+        bs.nuconl_RNSCAT = R0_out * std::cbrt(A_recoil);  // RSCTS(2) = 2.9472 fm
+        bs.nuconl_RNCORE = bs.nuconl_RNSCAT * (AMBGA3 + AMB3) / (AMBGB3 + AMB3);  // 2.9048 fm
+        bs.nuconl_VOPT   = -V0_out;   // VOPT = -V0RS(2) = -49.543 MeV
+        bs.nuconl_AOPT   = A_out;     // AOPT = ASCTS(2) = 0.6753 fm
+
+        // Coulomb params:
+        // For core-core (K=3): IZC1=Z_target=8, IZC2=Z_ejectile=Z_proton=1
+        //   RCCOP = 0 (proton is point), RCCOT = RCSCTT(2)*(AMBGA3+AMB3)/(AMBGB3+AMB3)
+        // For scatter (K=ISC=2): IZC same charges
+        //   RCPSCT = 0, RCTSCT = RCSCTT(2) = RC0 * A_recoil^(1/3)
+        double RC0       = Outgoing.Pot.RC0;  // Coulomb radius param = 1.3030 fm
+        double RCTSCT    = RC0 * std::cbrt(A_recoil);  // 1.3030 * 17^(1/3) = 3.350 fm
+        double RCCOT     = RCTSCT * (AMBGA3 + AMB3) / (AMBGB3 + AMB3);  // 3.302 fm
+
+        int IZC1 = Incoming.Target.Z;   // 8 (16O core charge)
+        int IZC2 = Outgoing.Projectile.Z;  // 1 (proton charge)
+        const double HBARC_FINE = HBARC_V / 137.03599908;  // ħc/α = e² = 1.4400 MeV·fm
+        bs.nuconl_VC0_core = IZC1 * IZC2 * HBARC_FINE;  // 8*1*1.44 = 11.52 MeV·fm
+        bs.nuconl_R_core   = RCCOT;    // 3.302 fm (sphere radius for RCORE Coulomb)
+        bs.nuconl_VC0_scat = IZC1 * IZC2 * HBARC_FINE;  // same charges → same VC0
+        bs.nuconl_R_scat   = RCTSCT;   // 3.350 fm (sphere radius for RSCAT Coulomb)
+
+        // JPOT table: bound state potential for projectile vertex = V_np(r)
+        // Fortran: JPOT = NPOTS(IVRTEX=1) = potential from projectile BS calculation
+        // In C++: this is PrjBS_ch.V_real[] (the V_np(r) values at each grid point)
+        bs.jpot.resize(PrjBS_ch.NSteps, 0.0);
+        bs.jpot_h = PrjBS_ch.StepSize;
+        bs.jpot_n = PrjBS_ch.NSteps;
+        for (int i = 0; i < PrjBS_ch.NSteps; ++i)
+            bs.jpot[i] = PrjBS_ch.V_real[i];  // already in MeV
+
+        fprintf(stderr, "CPP_NUCONL3 RNSCAT=%.6g RNCORE=%.6g VOPT=%.6g AOPT=%.6g\n",
+            bs.nuconl_RNSCAT, bs.nuconl_RNCORE, bs.nuconl_VOPT, bs.nuconl_AOPT);
+        fprintf(stderr, "CPP_NUCONL3 VC0=%.6g R_core=%.6g R_scat=%.6g\n",
+            bs.nuconl_VC0_core, bs.nuconl_R_core, bs.nuconl_R_scat);
+        fprintf(stderr, "CPP_NUCONL3 jpot[0]=%.6g jpot[16]=%.6g h=%.6g n=%d\n",
+            bs.jpot.empty()?0:bs.jpot[0], bs.jpot_n>16?bs.jpot[16]:0,
+            bs.jpot_h, bs.jpot_n);
+    }
+
     // ─── Grid parameters (from DPSB parameterset, row 12 of RGRIDS/IGRIDS) ──
     // From Ptolemy source: PARAMETERSET DPSB uses these defaults (IGRIDS row 12):
-    //   NPSUM=40  NPDIF=40  NPPHI=20  NPHIAD=4  LOOKST=254
+    //   NPSUM=40  NPDIF=40  NPPHI=10  NPHIAD=4  LOOKST=254
     //   MAPSUM=1  MAPDIF=1  MAPPHI=2  NVPOLY=3
     //   GAMSUM=2.0  GAMDIF=12.0  GAMPHI=1e-6  PHIMID=0.20  AMDMLT=0.90
     //   DWCUT=2e-6  SUMPTS=8.0
     const int    NPSUM   = 40;
     const int    NPDIF   = 40;
-    const int    NPPHI   = 20;
+    const int    NPPHI   = 10;
     const int    NPHIAD  = 4;
     const int    LOOKST  = 254;
     const int    MAPSUM  = 2;   // rational-sinh for U (sum) — Fortran MAPSUM=2 from DPSB parameterset
@@ -660,6 +887,8 @@ void DWBA::InelDcFaithful2()
     // For L=3 ISCTCR vs L=1 ISCTMN: max(psi) for L=3 (0.878 at R=8.375) > max for L=1 (0.757 at R=8.875)
     // → ROFMAX = 8.375 fm from Fortran (from ISCTCR L=3).
     std::vector<double> chi_ISCTMN = build_rpsi_table(L_ISCTMN, JPI_ISCTMN, true);
+    // Save ISCTMN WaveFunction (Re/Im) before ISCTCR call overwrites Incoming.WaveFunction
+    std::vector<std::complex<double>> wf_ISCTMN_saved = Incoming.WaveFunction;
     std::vector<double> chi_ISCTCR = build_rpsi_table(LCRIT,    JPI_ISCTCR, true);  // also updates ROFMAX
     double h_chi_scan = Incoming.StepSize;
     int N_chi_scan = (int)chi_ISCTMN.size();
@@ -681,27 +910,42 @@ void DWBA::InelDcFaithful2()
     fprintf(stderr, "ISCTMN: L=%d JPI=%d  ISCTCR: L=%d JPI=%d  ROFMAX=%.2f chi_max_R_in=%.4f SUMMAX_out=%.4f\n",
             L_ISCTMN, JPI_ISCTMN, LCRIT, JPI_ISCTCR, ROFMAX, (double)(N_chi_scan-1)*h_chi_scan, SUMMAX_from_chi);
 
+    // Dump chi_ISCTMN table for comparison with Fortran DBGCHI (using saved ISCTMN WF)
+    fprintf(stderr, "CPP_DBGCHI L=%d h=%.6f N=%d\n", L_ISCTMN, h_chi_scan, N_chi_scan);
+    for (int i = 0; i < N_chi_scan && i <= 162; ++i) {  // up to index 162 = R=20.25 fm
+        double r = i * h_chi_scan;
+        double re = (i < (int)wf_ISCTMN_saved.size()) ? wf_ISCTMN_saved[i].real() : 0.0;
+        double im = (i < (int)wf_ISCTMN_saved.size()) ? wf_ISCTMN_saved[i].imag() : 0.0;
+        fprintf(stderr, "CPP_DBGCHI %5d %10.4f %20.10e %20.10e %20.10e\n",
+            i+1, r, re, im, chi_ISCTMN[i]);
+    }
+
     // Convenience BSPROD callers — ISCTMN (WVWMAX/SUMMIN) and ISCTCR (SUMMAX/phi loop)
     // Fortran: NAIT=1 (linear interpolation) for all GRDSET grid scans
+    // Fortran NAIT conventions:
+    //   WVWMAX/SUMMIN/SUMMAX grid scans: CALL BSPROD(..., ISCTMN, 1, ...) → NAIT=1 (linear)
+    //   pass-1/pass-2 phi loops:         NNAIT=2 → NAIT=2 (linear pairs)
+    //   INELDC H-integral:               Fortran default NAIT=4 (5-pt Lagrange)
+    // We expose NAIT as a parameter to the BSPROD callers.
     auto bsp_ISCTMN = [&](int ITYPE, double RA, double RB, double X,
-                           double& FPFT, double& RP_, double& RT_) -> bool {
+                           double& FPFT, double& RP_, double& RT_,
+                           int NAIT_use = 1) -> bool {
         const double* sp = (ITYPE >= 3) ? chi_ISCTMN.data() : nullptr;
         int nsct = (ITYPE >= 3) ? N_chi_scan : 0;
         double sinv = (ITYPE >= 3) ? SCTSP_inv : 0.0;
         double smx  = (ITYPE >= 3) ? SCTMAX : 0.0;
-        // NAIT=4 → 5-point Lagrange interpolation (Fortran AITLAG, INADD=4)
         return bsprod_faithful(FPFT, ITYPE, RA, RB, X, sp, nsct, sinv, smx,
-                               4, RP_, RT_, bs);
+                               NAIT_use, RP_, RT_, bs);
     };
     auto bsp_ISCTCR = [&](int ITYPE, double RA, double RB, double X,
-                           double& FPFT, double& RP_, double& RT_) -> bool {
+                           double& FPFT, double& RP_, double& RT_,
+                           int NAIT_use = 1) -> bool {
         const double* sp = (ITYPE >= 3) ? chi_ISCTCR.data() : nullptr;
         int nsct = (ITYPE >= 3) ? N_chi_scan : 0;
         double sinv = (ITYPE >= 3) ? SCTSP_inv : 0.0;
         double smx  = (ITYPE >= 3) ? SCTMAX : 0.0;
-        // NAIT=4 → 5-point Lagrange interpolation (Fortran AITLAG, INADD=4)
         return bsprod_faithful(FPFT, ITYPE, RA, RB, X, sp, nsct, sinv, smx,
-                               4, RP_, RT_, bs);
+                               NAIT_use, RP_, RT_, bs);
     };
 
     // ─── GRDSET Step 1: Find WVWMAX (Fortran lines 15920-15955) ─────────────
@@ -858,6 +1102,7 @@ void DWBA::InelDcFaithful2()
             double last_RP = 0.0, last_RT = 0.0;
 
             bool dbg_this_U = (std::abs(U - 5.0) < 0.05);
+            static int cpp_bsp3_scan_count = 0;
             for (int iv = 0; iv < 5; ++iv) {
                 double VVAL = VS[iv];
                 for (int ix = 0; ix < 2; ++ix) {
@@ -867,6 +1112,10 @@ void DWBA::InelDcFaithful2()
                     double FIFO, RP_, RT_;
                     // Fortran line 18726: BSPROD(ITYPE=3, ..., ISCTCR, ...) — uses LCRIT chi
                     bool ok = bsp_ISCTCR(3, RA, RB, XS[ix], FIFO, RP_, RT_);
+                    cpp_bsp3_scan_count++;
+                    if (cpp_bsp3_scan_count <= 30)
+                        fprintf(stderr, "CPP_BSP3 %3d U=%.7g RA=%.7g RB=%.7g X=%.7g RP=%.7g RT=%.7g FIFO=%.7g ok=%d\n",
+                            cpp_bsp3_scan_count, U, RA, RB, XS[ix], RP_, RT_, FIFO, (int)ok);
                     if (dbg_this_U) fprintf(stderr,"SUMMAX_DBG U=%.2f iv=%d ix=%d RA=%.3f RB=%.3f ok=%d FIFO=%.4e RP=%.3f RT=%.3f\n",
                         U,iv,ix,RA,RB,(int)ok,FIFO,RP_,RT_);
                     if (!ok) continue;
@@ -928,10 +1177,10 @@ void DWBA::InelDcFaithful2()
         }
 
         // SUMMAX = U  (Fortran line 16063: IF(SUMMAX.EQ.UNDEF) SUMMAX=U)
-        // Fortran: SUMMAX = ABS(SCTASY) = scattering chi grid endpoint (asymptopia)
-        // We override scan exit with chi_max_R to match Fortran behavior exactly.
-        SUMMAX = SUMMAX_from_chi;
-        fprintf(stderr, "SUMMAX = %.4f (override from chi_max_R; scan exit was U=%.4f)\n", SUMMAX, U);
+        // Fortran: SUMMAX = ABS(SCTASY) = scattering chi grid endpoint.
+        // Use scan exit U (matches edfce88 behavior):
+        SUMMAX = U;
+        fprintf(stderr, "SUMMAX = %.4f (scan exit; chi_max_R would be %.4f)\n", SUMMAX, SUMMAX_from_chi);
 
         // SUMMID = first moment × AMDMLT (Fortran line 16070)
         if (SUM0 > 1e-30) {
@@ -947,6 +1196,16 @@ void DWBA::InelDcFaithful2()
         // SUMMID = DMIN1(SUMMID, 0.5*(SUMMIN+SUMMAX))
         SUMMIN = std::min(SUMMIN, 7.0*(SUMMID - SUMMAX/7.0)/6.0);
         SUMMID = std::min(SUMMID, 0.5*(SUMMIN + SUMMAX));
+
+        // ─── FORCE Fortran values for diagnostic (remove after validation) ───
+        // Fortran: SUMMIN=0, SUMMID=4.839, SUMMAX=30.4, NPSUMI=42
+        // This tests whether matching these exactly closes the I_accum error.
+#ifdef FORCE_FTN_GRID
+        SUMMIN = 0.0;
+        SUMMID = 4.8392743;
+        SUMMAX = 30.4;
+        fprintf(stderr, "FORCE_FTN_GRID: SUMMIN=%.4f SUMMID=%.7f SUMMAX=%.4f\n", SUMMIN, SUMMID, SUMMAX);
+#endif
         // Fortran line 19646: RVRLIM = WVWMAX * DWCUT  (reset using exit-step WVWMAX)
         // IHSAVE=0 → TEMP=DWCUT (no SAVEHS adjustment)
         if (WVWMAX_exit > 0.0)
@@ -960,11 +1219,19 @@ void DWBA::InelDcFaithful2()
     std::vector<double> SMHPT(NPSUM), SMHWK_wts(NPSUM);  // U values, weights
     GaussLegendre(NPSUM, -1.0, 1.0, SMHPT, SMHWK_wts);
     CubMapFaithful(MAPSUM, SUMMIN, SUMMID, SUMMAX, GAMSUM, SMHPT, SMHWK_wts);
+    // DBG: print SMHPT H-grid U values
+    fprintf(stderr, "CPP_SMHPT: SUMMIN=%.7f SUMMID=%.7f SUMMAX=%.7f NPSUM=%d\n", SUMMIN, SUMMID, SUMMAX, NPSUM);
+    for (int idbg=0; idbg<NPSUM; idbg++)
+        fprintf(stderr, "CPP_SMHPT[%3d]= %18.10g\n", idbg+1, SMHPT[idbg]);
 
     // Number of chi-integration points:
     // NPSUMI = (SUMMAX-SUMMIN)*SUMPTS*(AKI+AKO)/(4*PI)  clamped to >= NPSUM
     int NPSUMI = (int)((SUMMAX - SUMMIN) * SUMPTS * (AKI + AKO) / (4.0 * PI));
     NPSUMI = std::max(NPSUMI, NPSUM);
+#ifdef FORCE_FTN_GRID
+    NPSUMI = 42;  // Fortran reference value
+    fprintf(stderr, "FORCE_FTN_GRID: NPSUMI forced to %d\n", NPSUMI);
+#endif
     fprintf(stderr, "NPSUMI = %d (NPSUM=%d)\n", NPSUMI, NPSUM);
 
     // Chi-integration grid: NPSUMI points
@@ -1182,11 +1449,13 @@ void DWBA::InelDcFaithful2()
             double TEMP_h = 0.3*(VMAX_h - VMIN_h);
             VMID_h = std::min(std::max(VMID_h, VMIN_h + TEMP_h), VMAX_h - TEMP_h);
 
-            // SYNE flip: Fortran logic — flip when VMID ≤ mean (not >)
-            // Fortran: IF(VMID.GT.0.5*(VMAX+VMIN)) GO TO → keep SYNE=1
-            //          ELSE: SYNE=-1, flip signs
+            // SYNE flip: Fortran logic (line 19151-19159):
+            //   SYNE=1
+            //   IF(VMID.LE.0.5*(VMAX+VMIN)) GO TO 630   ← skip flip, SYNE stays +1
+            //   flip signs, SYNE=-1
+            // So: SYNE=-1 when VMID > mean (asymmetric toward positive V)
             double SYNE_h = 1.0;
-            if (VMID_h <= 0.5*(VMAX_h + VMIN_h)) {
+            if (VMID_h > 0.5*(VMAX_h + VMIN_h)) {
                 SYNE_h = -1.0;
                 double tmp = VMAX_h;
                 VMAX_h = -VMIN_h;
@@ -1282,9 +1551,10 @@ void DWBA::InelDcFaithful2()
             double TEMP_c = 0.3*(VMAX_c - VMIN_c);
             VMID_c = std::min(std::max(VMID_c, VMIN_c+TEMP_c), VMAX_c-TEMP_c);
 
-            // SYNE flip: Fortran GO TO 730 if VMID>mean (keep SYNE=+1), else SYNE=-1
+            // SYNE flip: Fortran — SYNE=-1 when VMID > mean (same logic as H-grid)
+            // IF(VMID.LE.0.5*(VMAX+VMIN)) GO TO 730   ← skip flip, SYNE stays +1
             double SYNE_c = 1.0;
-            if (VMID_c <= 0.5*(VMAX_c + VMIN_c)) {
+            if (VMID_c > 0.5*(VMAX_c + VMIN_c)) {
                 SYNE_c = -1.0;
                 double tmp = VMAX_c;
                 VMAX_c = -VMIN_c;
@@ -1370,7 +1640,7 @@ void DWBA::InelDcFaithful2()
                 if (X < -1.0) X = -1.0;
                 double FIFO, RP_p, RT_p;
                 // IBSTYP=2 → ITYPE=3: derivative-WS × phiT (ISCTMN=scattering min L)
-                bool ok = bsp_ISCTMN(2, RI, RO, X, FIFO, RP_p, RT_p);
+                bool ok = bsp_ISCTMN(2, RI, RO, X, FIFO, RP_p, RT_p, 2);
                 double afifo = ok ? std::fabs(FIFO) : 0.0;
                 if (II == 1) { WOW_phi = afifo; continue; }
                 if (afifo < ULIM_phi && WOW_phi < ULIM_phi) {
@@ -1433,7 +1703,7 @@ void DWBA::InelDcFaithful2()
                 double X    = std::cos(PHI);
 
                 double FIFO, RP_b, RT_b;
-                bool ok = bsp_ISCTMN(1, RI, RO, X, FIFO, RP_b, RT_b);
+                bool ok = bsp_ISCTMN(1, RI, RO, X, FIFO, RP_b, RT_b, 2);
                 float pvpdx = 0.0f;
                 float phit_stored = 0.0f, phip_stored = 0.0f;
                 if (ok) {
@@ -1863,3 +2133,6 @@ void DWBA::InelDc()
 {
     InelDcFaithful2();
 }
+
+// Stub: InelDcZR not used in FR DWBA path
+void DWBA::InelDcZR() {}
