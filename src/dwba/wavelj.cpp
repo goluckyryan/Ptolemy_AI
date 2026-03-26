@@ -190,11 +190,13 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
       fprintf(stderr, "CPP_WPOT:%2d %5d %16.9f %16.9f %16.9f\n",
               1, i, r, Wr, Wi_nm);
       // Also print individual f components for diagnosis
-      if (i == 24) {  // R=3 fm
+      if (i == 1 || i == 24) {  // R=0.125 and 3 fm
+        // Without SO term:
+        double f_re_noSO = k2 - LL1/(r*r) - f_conv*Vc + f_conv*Vr;
         fprintf(stderr, "CPP_PCOMP: r=%.4f Vr=%.6f Vi=%.6f Vc=%.6f Vso=%.6f SDL=%.4f f_conv=%.8f\n",
                 r, ch.V_real[i], ch.V_imag[i], ch.V_coulomb[i], ch.V_so_real[i], spin_dot_L, f_conv);
-        fprintf(stderr, "CPP_FCOMP: r=%.4f k2=%.6f f_re=%.6f (h2_12*f=%.9f)\n",
-                r, k2, f_re, h2_12*f_re);
+        fprintf(stderr, "CPP_FCOMP: r=%.4f k2=%.6f f_re=%.6f f_re_noSO=%.6f h2_12*f=%.9f h2_12*f_noSO=%.9f\n",
+                r, k2, f_re, f_re_noSO, h2_12*f_re, h2_12*f_re_noSO);
       }
     }
   }

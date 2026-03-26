@@ -24,8 +24,9 @@ int main() {
         p.V    =  88.9546; p.R0   = 1.1489; p.A   = 0.7508;
         p.VI   =   2.3480; p.RI0  = 1.3446; p.AI  = 0.6030;
         p.VSI  =  10.2180; p.RSI0 = 1.3943; p.ASI = 0.6872;
-        // Physical VSO=3.557 MeV (NOT 7.114 — C++ has correct L.S, no /2S bug)
-        p.VSO  =   3.5570; p.RSO0 = 0.9720; p.ASO = 1.0110;
+        // VSO=7.1140 matches Ptolemy input. Ptolemy WOODSX type2 = 2*VSO/r*dWS/dr.
+        // C++ V_so = 2*VSO/r*|dWS/dr|. SDOTL=<L·S> in both. So use same VSO as input.
+        p.VSO  =   7.1140; p.RSO0 = 0.9720; p.ASO = 1.0110;
         p.VSOI =   0.0;    p.RSOI0= 0.9720; p.ASOI= 1.0110;
         p.RC0  =   1.3030;
         dwba.SetIncomingPotential(p);
