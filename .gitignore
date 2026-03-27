@@ -42,4 +42,7 @@ o16dp_bs_cpp*.txt
 *_xsec_cpp.txt
 *_cpp_output*.txt
 comparison_*.txt
-data/reid_S_phi_norm.txt
+data/reid_S_phi_norm.txtptolemy
+
+# Main binary
+ptolemy
