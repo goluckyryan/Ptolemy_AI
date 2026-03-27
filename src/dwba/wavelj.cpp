@@ -187,16 +187,10 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     if (L == 1 && Jp == 4 && r >= 0.125 && r <= 6.0) {
       double Wr = 1.0 + h2_12 * f_re;
       double Wi_nm = h2_12 * f_im;
-      fprintf(stderr, "CPP_WPOT:%2d %5d %16.9f %16.9f %16.9f\n",
-              1, i, r, Wr, Wi_nm);
       // Also print individual f components for diagnosis
       if (i == 1 || i == 24) {  // R=0.125 and 3 fm
         // Without SO term:
         double f_re_noSO = k2 - LL1/(r*r) - f_conv*Vc + f_conv*Vr;
-        fprintf(stderr, "CPP_PCOMP: r=%.4f Vr=%.6f Vi=%.6f Vc=%.6f Vso=%.6f SDL=%.4f f_conv=%.8f\n",
-                r, ch.V_real[i], ch.V_imag[i], ch.V_coulomb[i], ch.V_so_real[i], spin_dot_L, f_conv);
-        fprintf(stderr, "CPP_FCOMP: r=%.4f k2=%.6f f_re=%.6f f_re_noSO=%.6f h2_12*f=%.9f h2_12*f_noSO=%.9f\n",
-                r, k2, f_re, f_re_noSO, h2_12*f_re, h2_12*f_re_noSO);
       }
     }
   }
@@ -230,8 +224,6 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     if (L == 1 && Jp == 4 && i <= 25) {
       double Wr = 1.0 + h2_12 * f[i].real();
       double Wi_nm = h2_12 * f[i].imag();
-      fprintf(stderr, "CPP_NUMER %4d %8.4f %18.9e %18.9e %18.9e %18.9e\n",
-              i, i*h, u[i+1].real(), u[i+1].imag(), Wr, Wi_nm);
     }
 
     double mag = std::abs(u[i + 1]);
@@ -252,11 +244,7 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
   // Debug: print u at Fortran's NSTEP=160 (R=20 fm) for comparison
   if (L == 1 && Jp == 4) {
     int i_ftn = 160;  // Fortran NSTEP
-    fprintf(stderr, "CPP_UN_FTN: i=%d R=%.3f u=(%.7e,%.7e)  [FTN: (4.036e-5,-1.499e-5)]\n",
-            i_ftn, i_ftn*h, u[i_ftn].real(), u[i_ftn].imag());
     int i_ftn4 = 156;  // NSTEP-NBAKCM
-    fprintf(stderr, "CPP_UN4_FTN: i=%d R=%.3f u=(%.7e,%.7e)  [FTN: (5.337e-5, 1.647e-5)]\n",
-            i_ftn4, i_ftn4*h, u[i_ftn4].real(), u[i_ftn4].imag());
   }
 
   // --- S-matrix extraction: handbook single-point method ---
@@ -280,11 +268,6 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     double den_f=dr_f*dr_f+di_f*di_f;
     double SJR_f=(den_f>1e-60)?(nr_f*dr_f+ni_f*di_f)/den_f:0;
     double SJI_f=(den_f>1e-60)?(ni_f*dr_f-nr_f*di_f)/den_f:0;
-    fprintf(stderr, "CPP_AT20FM L=%d JP=%d R_match=%.2f SJR=%.7e SJI=%.7e |S|=%.6f phase=%.3f deg\n",
-            L, Jp, R_ftn, SJR_f, SJI_f,
-            std::sqrt(SJR_f*SJR_f+SJI_f*SJI_f),
-            std::atan2(SJI_f,SJR_f)*180.0/M_PI);
-    fprintf(stderr, "CPP_AT20FM FTN ref: SJR=0.21878 SJI=-0.02362 phase=-6.163 deg\n");
   }
 
   // Match at index n_match = N-3 so 5-point stencil fits within [0..N]
@@ -333,10 +316,6 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
   // Debug: print S-matrix for L=1 (ISCTMN)
   if (L == 1) {
     double phase_S = std::atan2(SJI, SJR) * 180.0 / M_PI;
-    fprintf(stderr, "WAVELJ_DBG L=%d JPI=%d k=%.6f eta=%.5f R_match=%.4f "
-            "F=%.7e G=%.7e SJR=%.7e SJI=%.7e |S|=%.6f phase_S=%.2f°\n",
-            L, Jp, ch.k, ch.eta, n_match * h, FL, GL, SJR, SJI,
-            std::sqrt(SJR*SJR+SJI*SJI), phase_S);
   }
 
   // --- Normalization (Ptolemy source.mor lines 30913–30916) ---
@@ -410,7 +389,4 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     }
   }
 
-  if (std::isnan(SJR) || std::isnan(SJI))
-    std::cerr << "WavElj NaN: L=" << L << " k=" << ch.k
-              << " eta=" << ch.eta << std::endl;
 }

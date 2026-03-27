@@ -62,7 +62,6 @@ void DWBA::CalculateKinematics() {
     double p_cm_out2 = (s_out - (mb + mB_star) * (mb + mB_star)) *
                        (s_out - (mb - mB_star) * (mb - mB_star)) / (4.0 * s_out);
     if (p_cm_out2 < 0) {
-      std::cerr << "Error: Channel closed (below threshold)." << std::endl;
       p_cm_out2 = 0;
     }
     double p_cm_out = std::sqrt(p_cm_out2);
@@ -94,19 +93,14 @@ void DWBA::CalculateKinematics() {
     Incoming.mu  = mu_in_kin / AMU_MEV;  // in AMU (for f_conv in WavElj)
     Incoming.k   = std::sqrt(2.0 * mu_in_kin * Incoming.Ecm) / HBARC_B;
     Incoming.eta = Z1 * Z2 * mu_in_kin / (137.036 * HBARC_B * Incoming.k);
-    fprintf(stderr, "Kinematics (real masses): ma=%.4f mA=%.4f mu_in=%.4f Ecm=%.4f k=%.6f eta=%.5f\n",
-            ma_kin, mA_kin, mu_in_kin, Incoming.Ecm, Incoming.k, Incoming.eta);
 
     Outgoing.Ecm = Incoming.Ecm + Q_calc;  // Q_calc from real masses
     if (Outgoing.Ecm < 0) {
-      std::cerr << "Error: Channel closed (below threshold)." << std::endl;
       Outgoing.Ecm = 0;
     }
     Outgoing.mu  = mu_out_kin / AMU_MEV;  // in AMU
     Outgoing.k   = std::sqrt(2.0 * mu_out_kin * Outgoing.Ecm) / HBARC_B;
     Outgoing.eta = Z3 * Z4 * mu_out_kin / (137.036 * HBARC_B * Outgoing.k);
-    fprintf(stderr, "Kinematics (real masses): mb=%.4f mB=%.4f mu_out=%.4f Ecm_out=%.4f k_out=%.6f eta_out=%.5f\n",
-            mb_kin, mB_kin, mu_out_kin, Outgoing.Ecm, Outgoing.k, Outgoing.eta);
   }
 
   // Set projectile spin (JSPS = 2*spin) for each channel
@@ -399,8 +393,6 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
     prev_phi = phi;
   }
   if (V_lo < 0.0) {
-    std::cerr << "  ERROR: CalculateBoundState: no V solution found for n=" << n
-              << " in [10,300] MeV\n";
     return;
   }
   std::cout << "  Bracket V=[" << V_lo << "," << V_hi << "] for n=" << found_n << std::endl;

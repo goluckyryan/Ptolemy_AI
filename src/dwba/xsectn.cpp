@@ -325,18 +325,13 @@ void DWBA::XSectn() {
       if(SMAG[k][i]>0) dbg_n++;
       dbg_max = std::max(dbg_max, SMAG[k][i]);
     }
-    fprintf(stderr, "XSectn_debug: nonzero SMAG=%d max=%.4e TransferSMatrix=%zu\n",
-            dbg_n, dbg_max, TransferSMatrix.size());
   }
 
   // Debug: print specific SMAG entry
   for (int k=0; k<NSPL; k++) {
     if (JTOCS[k].LDEL==-2 && JTOCS[k].LX==2 && JTOCS[k].JP==1 && JTOCS[k].MX==0) {
-      fprintf(stderr, "SMAG[LDEL=-2,LX=2,JP=1,MX=0][Li_idx=3] = %.6e phase=%.4f\n",
-              SMAG[k][3], SPHASE[k][3]);
       // Print first 10 Li values
       for (int i=0; i<std::min(NUMLIS,10); i++) {
-        fprintf(stderr, "  Li=%d: SMAG=%.4e SPHASE=%.4f\n", i+LMIN_dc, SMAG[k][i], SPHASE[k][i]);
       }
     }
   }
@@ -486,7 +481,6 @@ void DWBA::XSectn() {
       if(v>0) dbg_n++;
       dbg_max = std::max(dbg_max, v);
     }
-    fprintf(stderr, "XSectn_betcal: nonzero BETAS=%d max=%.4e\n", dbg_n, dbg_max);
   }
   // ── Step 4: AMPCAL ────────────────────────────────────────────────────
   // F[k] = sum_Lo BETAS[k][ilo] * PLM(Lo, MX, cos_theta) * FACMBL
@@ -572,6 +566,4 @@ void DWBA::XSectn() {
               << dSigma << "\n";
   }
 
-  fprintf(stderr, "XSectn: NSPL=%d LIMOST=%d LOMOST=%d LMIN=%d LMAX=%d\n",
-          NSPL, LIMOST, LOMOST, LMIN_dc, LMAX_dc);
 }

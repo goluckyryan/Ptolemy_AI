@@ -151,7 +151,6 @@ void DWBA::SetProjectileWFFile(const std::string &filename, double grid_h, doubl
   // File format: "   STEP    RADIUS    WAVEFUNCTION"
   std::ifstream f(filename);
   if (!f.is_open()) {
-    std::cerr << "SetProjectileWFFile: cannot open " << filename << "\n";
     return;
   }
   std::vector<double> r_tab, phi_tab;
@@ -161,7 +160,6 @@ void DWBA::SetProjectileWFFile(const std::string &filename, double grid_h, doubl
     phi_tab.push_back(phi_val);
   }
   f.close();
-  if (r_tab.empty()) { std::cerr << "SetProjectileWFFile: empty file\n"; return; }
 
   // Interpolate onto uniform grid with step grid_h, from 0 to r_tab.back()
   int N = static_cast<int>(r_tab.back() / grid_h) + 2;
@@ -238,8 +236,6 @@ void DWBA::Calculate() {
   const int STEPSPER = 8;
   Incoming.StepSize = std::min(2.0 * M_PI / Incoming.k, 1.0) / STEPSPER;
   Outgoing.StepSize = std::min(2.0 * M_PI / Outgoing.k, 1.0) / STEPSPER;
-  fprintf(stderr, "Incoming step: h=%.5f fm (k=%.5f fm^-1)\n", Incoming.StepSize, Incoming.k);
-  fprintf(stderr, "Outgoing step: h=%.5f fm (k=%.5f fm^-1)\n", Outgoing.StepSize, Outgoing.k);
   WavSet(Incoming);
   WavSet(Outgoing);
 

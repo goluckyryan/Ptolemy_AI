@@ -10,7 +10,6 @@ PtolemyParser::~PtolemyParser() {}
 void PtolemyParser::ParseFile(const std::string &filename, DWBA &dwba) {
   std::ifstream file(filename);
   if (!file.is_open()) {
-    std::cerr << "Error: Could not open file " << filename << std::endl;
     return;
   }
 
@@ -218,7 +217,6 @@ void PtolemyParser::ParseLine(const std::string &line, DWBA &dwba) {
     // Read the WF file: columns are (index, r, phi=u/r)
     std::ifstream wffile(path);
     if (!wffile.is_open()) {
-      std::cerr << "Warning: Cannot open projectile_wf_file: " << path << std::endl;
     } else {
       std::vector<std::pair<double,double>> wf_data;
       std::string wfline;
