@@ -102,6 +102,8 @@ public:
   // Nuclear spins (needed for generic XSectn / ATERM)
   void SetTargetSpin(double J);       // J of target nucleus A (e.g. 33Si: 1.5, 16O: 0)
   void SetResidualSpin(double J);     // J of residual nucleus B (e.g. 34Si: 0, 17O: 2.5)
+  void SetLmin(int lmin) { LminSet = lmin; }
+  void SetLmax(int lmax) { LmaxSet = lmax; }
 
   // Main calculation
   void Calculate();
@@ -122,6 +124,8 @@ private:
   // Nuclear spins (set by parser or defaulted in Calculate/CalculateZR)
   double SpinTarget   = -1.0;   // J of target nucleus A (-1 = not set, use heuristic)
   double SpinResidual = -1.0;   // J of residual nucleus B (-1 = not set, use heuristic)
+  int    LminSet      = -1;     // lmin for incoming partial wave (-1 = use default 0)
+  int    LmaxSet      = -1;     // lmax for incoming partial wave (-1 = use default 40)
 
   // Integration Grid
   std::vector<double> ThetaGrid;

@@ -66,6 +66,8 @@ int main() {
     // ── Nuclear spins ──
     dwba.SetTargetSpin(0.0);    // 16O: 0+
     dwba.SetResidualSpin(2.5);  // 17O g.s.: 5/2+
+    dwba.SetLmin(0);            // lmin=0 (full partial wave sum)
+    dwba.SetLmax(40);           // lmax=40
 
     // ── Run FR DWBA ──
     std::cout << "=== FR DWBA: 16O(d,p)17O g.s. at Elab=20 MeV ===\n";

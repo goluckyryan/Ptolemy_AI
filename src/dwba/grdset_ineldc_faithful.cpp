@@ -835,8 +835,10 @@ void DWBA::InelDcFaithful2()
     // For 16O(d,p) at 20 MeV with asymptopia=30: LMAX ~ k*R ~ 1.23*30 ~ 37
     // Use Lmax = 40 as in fr_o16dp.cpp; but for validation just Li=3
     // We'll detect the test case: if ThetaGrid.size() == 10, use Lmax=40
-    int LMAX = 40;
-    int LMIN = 0;
+    // Use Lmin/Lmax from DWBA setup (mirrors Ptolemy lmin/lmax input keywords)
+    // Fortran: lmin=lmax=3 restricts incoming partial wave Li
+    int LMIN = (LminSet >= 0) ? LminSet : 0;
+    int LMAX = (LmaxSet >= 0) ? LmaxSet : 40;
 
     // GLOBAL FACTOR = 2 * sqrt(ki * ko / (Ecm_i * Ecm_j))
     double FACTOR = 2.0 * std::sqrt(AKI * AKO / (ECM1 * ECM2));

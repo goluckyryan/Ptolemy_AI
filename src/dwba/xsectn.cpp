@@ -1,7 +1,15 @@
-// xsectn.cpp — DWBA::XSectn() extracted from dwba.cpp
-// Implements BETCAL + AMPCAL + cross-section output (Ptolemy XSECTN port)
+// xsectn.cpp — DWBA::XSectn()
+// Faithful translation of Ptolemy SFROMI + BETCAL + AMPCAL + XSECTN
 //
-// DO NOT MODIFY dwba.cpp — this file is the canonical home for XSectn().
+// Flow:
+//   InelDcFaithful2() → TransferSMatrix entries (I_accum per Li,Lo,JPI,JPO,Lx)
+//   XSectn():
+//     Step 1: ANGSET-equivalent — build JTOCS and allocate SMAG/SPHASE tables
+//     Step 2: SFROMI — for each (Li,Lo,JPI,JPO,Lx) I_accum, apply spectroscopic
+//             factor (ATERM), phase, then double 9-J to accumulate into SMAG(KOFFS,LiIdx)
+//     Step 3: BETCAL — outer loop over Lo, inner over KOFFS/Li, build BETAS
+//     Step 4: AMPCAL — for each KOFFS and angle, sum Lo contributions * PLM
+//     Step 5: DCS = 10 * sum_KOFFS FMNEG(MX) * |F|^2
 
 #include "dwba.h"
 #include "math_utils.h"
@@ -12,330 +20,550 @@
 #include <iostream>
 #include <map>
 #include <set>
-#include <tuple>
+#include <vector>
 
 void DWBA::XSectn() {
-  // ============================================================
-  // DWBA Cross Section — Ptolemy SFROMI (double 9-J) + BETCAL + AMPCAL + XSECTN
-  //
-  // Quantum numbers (doubled, integers) for 33Si(d,p)34Si:
-  //   JA  = 2*j_deuteron = 2   (spin of incoming projectile a)
-  //   JB  = 2*j_proton   = 1   (spin of outgoing ejectile b)
-  //   JBT = 2*j_target_neutron = 3   (j of neutron orbit in 33Si, 0d3/2)
-  //   JBP = 2*j_proj_neutron   = 1   (j of neutron orbit in deuteron, 0s1/2)
-  //   JT  = 2*J_target   = 3   (33Si ground state J=3/2)
-  //   JB_res = 2*J_residual = 0 (34Si ground state J=0)
-  //
-  // SFROMI (Ptolemy source.mor ~29150):
-  //   For each radial integral I(Li, Lo, Lx):
-  //     Loop JPI = |2*Li - JA| .. 2*Li+JA  step 2  (incoming J = L +/- 1/2 for spin-1 deuteron)
-  //     Loop JPO = |2*Lo - JB| .. 2*Lo+JB  step 2  (outgoing J = L +/- 1/2 for proton)
-  //       SAV9J = sqrt((JPI+1)(JPO+1)(2Lx+1)(JBP+1))
-  //               * W9J( JBT,  2*Lx, JBP,
-  //                      JPI,  2*Li, JA,
-  //                      JPO,  2*Lo, JB )
-  //       if SAV9J == 0: skip
-  //       Loop JP_cons = JPBASE .. JPMX  step 2   [conserved total J]
-  //         Loop Lx2 = triangle(Li,Lo) ∩ [|JBT-JP_cons|/2 .. (JBT+JP_cons)/2]
-  //           TEMP = sqrt((JPI+1)(JPO+1)(2*Lx2+1)(JP_cons+1))
-  //                  * W9J( JBT,  2*Lx2, JP_cons,
-  //                         JPI,  2*Li,  JA,
-  //                         JPO,  2*Lo,  JB )
-  //           if LX2==LXP && JP==JBP && LASI==LI && LASO==LO: TEMP=SAV9J (skip 2nd 9J)
-  //           if (Lx2+Lx) odd: TEMP = -TEMP
-  //           S(JP_cons, JT, Lx2, LDEL=Lo-Li) += SAV9J * TEMP * I_phased
-  //
-  // BETCAL (Ptolemy ~3480):
-  //   For each (JP_cons, JT, Lx2, LDEL) KOFFS entry:
-  //     Li = Lo - LDEL  (LDEL = Lo - Li)
-  //     MXZ_second = Lx2 + LDEL   (NOT parity-based!)
-  //     For Mx = max(0,MXZ_second) .. Lx2:
-  //       cg = CG(Li, 0; Lx2, Mx | Lo, Mx)
-  //       BETAS(JP_cons, Lx2, Mx, Lo) += FACTOR_BET*(2Li+1)*cg * S_phased * e^i(sigma_Li+sigma_Lo)
-  //
-  // AMPCAL + XSECTN:
-  //   F(JP_cons, Lx2, Mx, theta) = sum_Lo BETAS(...,Lo) * sf(Lo,Mx) * P_Lo^Mx(cos_theta)
-  //   dSigma = 10 * sum_{JP_cons,Lx2,Mx} FMNEG(Mx) * |F|^2
+  // ── Quantum numbers ──────────────────────────────────────────────────
+  const int JA  = Incoming.JSPS;                          // 2*j_proj  (deuteron=2)
+  const int JB  = Outgoing.JSPS;                          // 2*j_eject (proton=1)
+  const int JBT = (int)std::round(2.0 * TargetBS.j);     // 2*j_neutron_in_target (5 for 17O g.s.)
+  const int JBP = (int)std::round(2.0 * ProjectileBS.j); // 2*j_neutron_in_proj   (1 for d)
+  const int JPBASE = std::abs(JA - JB);                  // min 2*J_cons (=1)
+  const int JPMX   = JA + JB;                             // max 2*J_cons (=3)
+  const int JTBASE = JBT;                                 // only one JT for transfer
+  const int NJP    = (JPMX - JPBASE)/2 + 1;              // # JP values (=2: JP=1,3)
+  const int NLX    = JBT/2 + 1;                           // # LX values (0..JBT/2)
 
-  double ka    = Incoming.k;
-  double kb    = Outgoing.k;
-  (void)kb;  // used in cross-section formula via kinematic prefactor (absorbed in FACTOR_BET)
+  const int lT = TargetBS.l;     // neutron l in target (=2)
+  const int lP = ProjectileBS.l; // neutron l in proj   (=0)
+  const int LxMin_bs = std::abs(lT - lP);
+  const int LxMax_bs = lT + lP;
 
-  // -----------------------------------------------
-  // Reaction-generic doubled quantum numbers (read from DWBA object)
-  //   JA  = 2*spin(projectile)    e.g. deuteron=2, proton=1
-  //   JB  = 2*spin(ejectile)      e.g. proton=1, deuteron=2
-  //   JBT = 2*j(neutron in target bound state)
-  //   JBP = 2*j(neutron in projectile bound state)
-  //   JT  = 2*J(target nucleus)
-  // -----------------------------------------------
-  const int JA  = Incoming.JSPS;                             // 2*j_projectile
-  const int JB  = Outgoing.JSPS;                             // 2*j_ejectile
-  const int JBT = (int)std::round(2.0 * TargetBS.j);        // 2*j_neutron_in_target
-  const int JBP = (int)std::round(2.0 * ProjectileBS.j);    // 2*j_neutron_in_proj
-  const int JT  = (int)std::round(2.0 * SpinTarget);        // 2*J_target_nucleus
-  (void)JT;
+  const double ka  = Incoming.k;
 
-  // JP_conserved (2*J_total) runs from |JA-JB| to JA+JB (Ptolemy ANGSET line ~28894)
-  // JPBASE = |JA - JB| = |2 - 1| = 1
-  // JPMX   = JA + JB   = 2 + 1   = 3
-  const int JPBASE = std::abs(JA - JB);  // = 1
-  const int JPMX   = JA + JB;            // = 3
+  // ── LINTRP: With TRANSW=true, LIMOST=LMAX (no extrapolation beyond computed range)
+  // C++ computes all Li from LMIN..LMAX directly in InelDc.
+  // We use LMIN=LminSet, LMAX=LmaxSet.
+  const int LMIN_dc = (LminSet >= 0) ? LminSet : 0;
+  const int LMAX_dc = (LmaxSet >= 0) ? LmaxSet : 40;
+  const int LIMOST  = LMAX_dc;  // Fortran: LIMOST=LMAX for transfer with TRANSW
+  const int NUMLIS  = (LMAX_dc - LMIN_dc) / 1 + 1;  // LSTEP=1
 
-  // -----------------------------------------------
-  // SFROMI: build S_koffs(JP_cons, Lx2, Lo, Li) via double 9-J
-  // -----------------------------------------------
-  using KOFFS_key = std::tuple<int,int,int,int>; // (JP_cons, Lx2, Lo, Li)
-  std::map<KOFFS_key, std::complex<double>> S_koffs;
+  // LOMOST = LIMOST + LXMAX (from Fortran line 11643)
+  const int LOMOST = LIMOST + LxMax_bs;
 
-  int lT = TargetBS.l;
-  int lP = ProjectileBS.l;
-  int LxMax_bs = lT + lP;
+  // ── Step 1: ANGSET — build JTOCS table ───────────────────────────────
+  // JTOCS[KOFFS] = {LDEL=Lo-Li, LX, JP, JT}
+  // Valid entries: JP in [JPBASE..JPMX], JT=JBT, LX in [LxMin_bs..LxMax_bs],
+  //   LDEL s.t. parity OK and triangle(Li,Lo,LX) can be satisfied for some Li
+  // Fortran ANGSET scans all (JP, JBT, LX, LDEL) combinations.
+  // For transfer: LDELMX = LXMAX (= LxMax_bs = lT+lP = 2)
+  // LDEL ranges from -LDELMX to +LDELMX step 2 (same parity as LX)
+  // But actually: NDEL = LX + 1 - MOD(LX + lP + lT, 2)
+  //               LDELMN = 1 - NDEL
+  //               LDEL = LDELMN, LDELMN+2, ..., LDELMN+2*(NDEL-1)
+  struct KoffsEntry {
+    int LDEL;  // Lo - Li
+    int LX;
+    int JP;
+    int JT;    // = JBT always for transfer
+    int MX;    // = (LDEL+LX+1)/2
+  };
+  std::vector<KoffsEntry> JTOCS;  // index 0-based (Fortran 1-based)
 
-  // Determine whether spin-orbit coupling is active
+  // Build JTOCS in same order as Fortran ANGSET (JP outer, JT, LX, LDEL inner)
+  for (int JP = JPBASE; JP <= JPMX; JP += 2) {
+    int JT = JBT;  // only one residual state
+    // JTOCS LX range from J-conservation triangle only (NOT limited by bound state)
+    // The first 9-J LXP (= lT+lP range) is separate from the JTOCS LX
+    int LXmn = std::abs(JT - JP) / 2;
+    int LXmx = (JT + JP) / 2;
+    for (int LX = LXmn; LX <= LXmx; LX++) {
+      // NDEL/LDELMN from Ptolemy SETSPT
+      int NDEL   = LX + 1 - ((LX + lP + lT) % 2);
+      int LDELMN = 1 - NDEL;
+      if (NDEL <= 0) continue;
+      for (int id = 0; id < NDEL; id++) {
+        int LDEL = LDELMN + 2 * id;
+        int MX   = (LDEL + LX + 1) / 2;
+        if (MX < 0 || MX > LX) continue;
+        JTOCS.push_back({LDEL, LX, JP, JT, MX});
+      }
+    }
+  }
+  int NSPL = (int)JTOCS.size();
+
+  // SMAG(KOFFS, Li_idx) and SPHASE(KOFFS, Li_idx)
+  // Li_idx = Li - LMIN_dc  (0-based), Li from LMIN_dc..LMAX_dc
+  // Fortran: SMAG(KOFFS, I) where I = Li - LBASE + 1, LBASE = LMIN
+  std::vector<std::vector<double>> SMAG  (NSPL, std::vector<double>(NUMLIS, 0.0));
+  std::vector<std::vector<double>> SPHASE(NSPL, std::vector<double>(NUMLIS, 0.0));
+
+  // Map (LDEL, LX, JP, JT) → KOFFS index
+  auto koffs_index = [&](int LDEL, int LX, int JP, int JT) -> int {
+    for (int k = 0; k < NSPL; k++) {
+      if (JTOCS[k].LDEL==LDEL && JTOCS[k].LX==LX && JTOCS[k].JP==JP && JTOCS[k].JT==JT)
+        return k;
+    }
+    return -1;
+  };
+
+  // ── Step 2: SFROMI ────────────────────────────────────────────────────
+  // For each TransferSMatrix entry (I_accum channel: Li, Lo=LASI, JPI, JPO, LXP):
+  //   Apply ATERM spectroscopic factor and phase → SR, SI
+  //   Then double 9-J loop → accumulate into SMAG/SPHASE
+
+  // ATERM(LXP) = spectroscopic amplitude for this LX
+  // Fortran: ATERM = SPFACT * sqrt(2*lT+1) * CG(lT,0; lP,0 | LXP,0) * ... (from BSSET)
+  // In our C++ setup: SPAMP = AV18 spectroscopic factor ≈ 0.97069
+  // ATERM(LXP+1) = SPAMP * sqrt(2*LXP+1) * ... (from bound state coupling)
+  // For lP=0, lT=2, LXP=2: CG(2,0;0,0|2,0)=1 → ATERM ≈ SPAMP * sqrt(5)
+  // Let's use the same formula as the existing code used:
+  // ATERM[lx] = SpectroscopicAmplitude for lx (precomputed from bound state)
+  // We'll compute it the same way: SPAMP * sqrt(2*lx+1) * CG
+  std::vector<double> ATERM(LxMax_bs + 2, 0.0);
+  for (int lx = LxMin_bs; lx <= LxMax_bs; lx++) {
+    double cg = ClebschGordan((double)lT, 0.0, (double)lP, 0.0, (double)lx, 0.0);
+    double SPAMP_val = ProjectileWFLoaded ? ProjectileWFSpam : 0.97069;
+    ATERM[lx] = SPAMP_val * std::sqrt(2.0 * lx + 1.0) * cg;
+  }
+
   bool SOSWT = (Incoming.Pot.VSO != 0.0 || Outgoing.Pot.VSO != 0.0);
 
-  if (!SOSWT) {
-    // Simple case: no spin-orbit; S stored directly without 9-J coupling
-    for (const auto &elem : TransferSMatrix) {
-      int Lx = elem.Lx;
-      int Li = elem.Li;
-      int Lo = elem.Lo;
-      if ((Li + Lo + Lx) % 2 != 0) continue;
-      if (Lx != LxMax_bs) continue;
-      S_koffs[{JBP, LxMax_bs, Lo, Li}] += elem.S;
+  for (const auto& elem : TransferSMatrix) {
+    int LXP = elem.Lx;
+    int Li  = elem.Li;   // = LASI in Fortran
+    int Lo  = elem.Lo;   // = LASO in Fortran
+    int JPI = elem.JPI;  // 2*J_incoming
+    int JPO = elem.JPO;  // 2*J_outgoing
+
+    if (LXP < LxMin_bs || LXP > LxMax_bs) continue;
+    if (Li < LMIN_dc || Li > LMAX_dc) continue;
+    int Li_idx = Li - LMIN_dc;
+
+    // Parity check: Li + Lo + LXP must be even
+    if ((Li + Lo + LXP) % 2 != 0) continue;
+
+    // SFROMI TEMP and phase (Ptolemy source lines 29110-29130):
+    // TEMP = FACTOR * ATERM(LXP+1) / sqrt(2*LASI+1)
+    // ITEST = LASI + LASO + 2*LXP + 1
+    // if ITEST%4 >= 2: TEMP = -TEMP
+    // Then: if ITEST%2 == 0: SR=TEMP*Ire, SI=TEMP*Iim (even power of i)
+    //        else:            SR=-TEMP*Iim, SI=TEMP*Ire (odd power → multiply by i)
+    double FACTOR_sfromi = 2.0 * std::sqrt(ka * Outgoing.k / (Incoming.Ecm * Outgoing.Ecm));
+    double TEMP = FACTOR_sfromi * ATERM[LXP] / std::sqrt(2.0 * Li + 1.0);
+    int ITEST = Li + Lo + 2 * LXP + 1;
+    if (ITEST % 4 >= 2) TEMP = -TEMP;
+
+    double I_re = elem.S.real();
+    double I_im = elem.S.imag();
+    double SR, SI;
+    if (ITEST % 2 == 0) {
+      SR = TEMP * I_re;
+      SI = TEMP * I_im;
+    } else {
+      SR = -TEMP * I_im;
+      SI =  TEMP * I_re;
     }
-  } else {
-    for (const auto &elem : TransferSMatrix) {
-      int Lx  = elem.Lx;
-      int Li  = elem.Li;
-      int Lo  = elem.Lo;
-      int JPI = elem.JPI;   // 2*J_incoming (already J-split in InelDc)
-      int JPO = elem.JPO;   // 2*J_outgoing
 
-      // Parity filter: (Li + Lo + Lx) must be even
-      if ((Li + Lo + Lx) % 2 != 0) continue;
+    if (!SOSWT) {
+      // No spin-orbit: store directly (simplified path, no 9-J)
+      int LDEL = Lo - Li;
+      int k = koffs_index(LDEL, LXP, JBP, JBT);
+      if (k < 0) continue;
+      double mag = std::sqrt(SR*SR + SI*SI);
+      double ph  = std::atan2(SI, SR);
+      // Accumulate (add complex SR+iSI to existing, then recompute mag/phase)
+      // Better: accumulate complex, convert at end
+      // Use a temporary complex accumulator
+      // (We'll do this in a second pass — for now mark as TODO)
+      // For now: overwrite (assumes no repeated (Li,Lo,Lx) channels)
+      if (k >= 0 && Li_idx >= 0 && Li_idx < NUMLIS) {
+        SMAG  [k][Li_idx] = mag;
+        SPHASE[k][Li_idx] = ph;
+      }
+    } else {
+      // Spin-orbit: double 9-J loop
+      int JPIMN = JPI, JPIMX = JPI;
+      if ((Incoming.Pot.VSO == 0.0)) { JPIMN = std::abs(2*Li - JA); JPIMX = 2*Li + JA; }
+      int JPOMN = JPO, JPOMX = JPO;
+      if ((Outgoing.Pot.VSO == 0.0)) { JPOMN = std::abs(2*Lo - JB); JPOMX = 2*Lo + JB; }
 
-      // First 9-J: W9J(JBT, 2*Lx, JBP, JPI, 2*Li, JA, JPO, 2*Lo, JB)
-      double w9j1 = NineJ(JBT/2.0, (double)Lx,  JBP/2.0,
-                          JPI/2.0, (double)Li,   JA/2.0,
-                          JPO/2.0, (double)Lo,   JB/2.0);
+      for (int jpi = JPIMN; jpi <= JPIMX; jpi += 2) {
+        for (int jpo = JPOMN; jpo <= JPOMX; jpo += 2) {
+          // First 9-J
+          double SAV9J = std::sqrt(double((jpi+1)*(jpo+1)*(2*LXP+1)*(JBP+1)))
+            * NineJ(JBT/2.0, (double)LXP, JBP/2.0,
+                    jpi/2.0, (double)Li,  JA/2.0,
+                    jpo/2.0, (double)Lo,  JB/2.0);
+          if (std::abs(SAV9J) < 1e-14) continue;
+          double TEMPR = SAV9J * SR;
+          double TEMPI = SAV9J * SI;
 
-      if (std::abs(w9j1) < 1e-14) continue;
+          // Loop over conserved J (JP) and LX
+          for (int JP = JPBASE; JP <= JPMX; JP += 2) {
+            int LXmn2 = std::max({std::abs(JBT-JP)/2, std::abs(Lo-Li)});
+            int LXmx2 = std::min((JBT+JP)/2, Lo+Li);
+            if (LXmn2 > LXmx2) continue;
+            for (int LX = LXmn2; LX <= LXmx2; LX++) {
+              // Parity filter: LDEL = Lo-Li, LX must have same parity as LXP+LDEL
+              int LDEL = Lo - Li;
+              // Check JTOCS has this entry
+              int k = koffs_index(LDEL, LX, JP, JBT);
+              if (k < 0) continue;
 
-      double stat1 = std::sqrt(double((JPI+1)*(JPO+1)*(2*Lx+1)*(JBP+1)));
-      double SAV9J = stat1 * w9j1;
-      if (std::abs(SAV9J) < 1e-14) continue;
+              double TEMP2;
+              if (LX == LXP && JP == JBP && Li == Li && Lo == Lo) {
+                TEMP2 = SAV9J;
+              } else {
+                TEMP2 = std::sqrt(double((jpi+1)*(jpo+1)*(2*LX+1)*(JP+1)))
+                  * NineJ(JBT/2.0, (double)LX, JP/2.0,
+                          jpi/2.0, (double)Li,  JA/2.0,
+                          jpo/2.0, (double)Lo,  JB/2.0);
+              }
+              if (std::abs(TEMP2) < 1e-14) continue;
+              if ((LX + LXP) % 2 != 0) TEMP2 = -TEMP2;
 
-      // Second 9-J loop: over conserved total J (JP_cons) and transfer multipolarity (Lx2)
-      for (int JP_cons = JPBASE; JP_cons <= JPMX; JP_cons += 2) {
-        // Triangle constraints for Lx2:
-        //   from row (JBT, 2*Lx2, JP_cons): |JBT-JP_cons|/2 <= Lx2 <= (JBT+JP_cons)/2
-        //   from triangle(Li, Lo, Lx2):      |Li-Lo| <= Lx2 <= Li+Lo
-        int Lx2_mn_jbt = std::abs(JBT - JP_cons) / 2;
-        int Lx2_mx_jbt = (JBT + JP_cons) / 2;
-        int Lx2_mn_lo  = std::abs(Li - Lo);
-        int Lx2_min = std::max(Lx2_mn_jbt, Lx2_mn_lo);
-        int Lx2_max = std::min(Lx2_mx_jbt, Li + Lo);
-        if (Lx2_min > Lx2_max) continue;
-
-        for (int Lx2 = Lx2_min; Lx2 <= Lx2_max; Lx2++) {
-          // ANGSET parity restriction (Ptolemy SETSPT formula):
-          //   NDEL = Lx2 + 1 - MOD(Lx2, 2)
-          int NDEL_ang = Lx2 + 1 - (Lx2 % 2);
-          if (NDEL_ang <= 0) continue;
-
-          double TEMP;
-          // Diagonal shortcut: if second 9-J matches first exactly
-          if (Lx2 == Lx && JP_cons == JBP) {
-            TEMP = SAV9J;
-          } else {
-            // Second 9-J: W9J(JBT, 2*Lx2, JP_cons, JPI, 2*Li, JA, JPO, 2*Lo, JB)
-            double w9j2 = NineJ(JBT/2.0, (double)Lx2, JP_cons/2.0,
-                                JPI/2.0, (double)Li,   JA/2.0,
-                                JPO/2.0, (double)Lo,   JB/2.0);
-            double stat2 = std::sqrt(double((JPI+1)*(JPO+1)*(2*Lx2+1)*(JP_cons+1)));
-            TEMP = stat2 * w9j2;
+              // Accumulate complex S into a temporary, convert to mag+phase at end
+              // For now: use a separate complex accumulator per (k, Li_idx)
+              // We'll do this properly below using a pre-accumulation map
+              // Temporary: mark for later
+              (void)TEMPR; (void)TEMPI; (void)TEMP2; (void)k;
+            }
           }
-          if (std::abs(TEMP) < 1e-14) continue;
-
-          // Phase factor: (-1)^(Lx + Lx2)
-          if ((Lx + Lx2) % 2 != 0) TEMP = -TEMP;
-
-          // Accumulate S_koffs
-          auto contrib = SAV9J * TEMP * elem.S;
-          S_koffs[{JP_cons, Lx2, Lo, Li}] += contrib;
         }
       }
     }
-  } // end SOSWT block
-
-  fprintf(stderr, "XSectn: S_koffs.size=%zu  JA=%d JB=%d JBT=%d JBP=%d lT=%d lP=%d LxMax=%d JPBASE=%d JPMX=%d\n",
-          S_koffs.size(), JA, JB, JBT, JBP, lT, lP, LxMax_bs, JPBASE, JPMX);
-  // Print first few S_koffs entries
-  int dbgn = 0;
-  for (auto &[k,v] : S_koffs) {
-      if (dbgn++ >= 5) break;
-      auto [jp,lx2,lo,li] = k;
-      fprintf(stderr, "  S_koffs JP=%d Lx2=%d Lo=%d Li=%d  re=%.6e im=%.6e\n",
-              jp,lx2,lo,li,v.real(),v.imag());
   }
 
-  // -----------------------------------------------
-  // Coulomb phases sigma_L  (cumulative Coulomb phase shifts)
-  // -----------------------------------------------
-  int Lmax_col = 25;
-  std::vector<double> sig_a(Lmax_col + 1, 0.0);
-  std::vector<double> sig_b(Lmax_col + 1, 0.0);
-  for (int L = 1; L <= Lmax_col; L++) {
-    sig_a[L] = sig_a[L-1] + std::atan2(Incoming.eta, (double)L);
-    sig_b[L] = sig_b[L-1] + std::atan2(Outgoing.eta, (double)L);
-  }
-  auto get_sig_a = [&](int L) { return sig_a[std::min(L, Lmax_col)]; };
-  auto get_sig_b = [&](int L) { return sig_b[std::min(L, Lmax_col)]; };
+  // ── SFROMI proper implementation using complex accumulator ────────────
+  // Reset SMAG/SPHASE and redo with complex accumulation
+  std::vector<std::vector<std::complex<double>>> S_acc(NSPL,
+    std::vector<std::complex<double>>(NUMLIS, {0.0, 0.0}));
 
-  // -----------------------------------------------
-  // BETCAL — build BETAS array
-  //
-  // For each (JP_cons, Lx2, Lo, Li) in S_koffs:
-  //   LDEL = Lo - Li
-  //   NDEL = Lx2 + 1 - MOD(Lx2 + LBP + LBT, 2)   [Ptolemy SETSPT]
-  //   LDELMN = 1 - NDEL
-  //   MXZ_loop = Lx2 + LDEL   (starting Mx_loop)
-  //   For Mx_loop = max(0, MXZ_loop) .. Lx2:
-  //     official_Mx = Mx_loop   (direct from Ptolemy AMPCAL MX formula)
-  //     cg = CG(Li, 0; Lx2, Mx_loop | Lo, Mx_loop)
-  //     BETAS[JP_cons, Lx2, official_Mx, Lo] += FACTOR_BET*(2Li+1)*cg * e^i(sig_a(Li)+sig_b(Lo)) * S_val
-  //
-  // FACTOR_BET = 0.5/ka  (positive, since LDELMN=-2 → IODD=0 for 33Si case)
-  // -----------------------------------------------
+  for (const auto& elem : TransferSMatrix) {
+    int LXP = elem.Lx;
+    int Li  = elem.Li;
+    int Lo  = elem.Lo;
+    int JPI = elem.JPI;
+    int JPO = elem.JPO;
 
-  // Compute LDELMN_primary dynamically from quantum numbers
-  int NDEL_primary = LxMax_bs + 1 - ((LxMax_bs + lP + lT) % 2);
-  int LDELMN_primary = 1 - NDEL_primary;
-  int IODD_global = std::abs(LDELMN_primary) % 2;
-  double FACTOR_BET = (IODD_global != 0) ? (-0.5 / ka) : (0.5 / ka);  // = +0.5/ka
+    if (LXP < LxMin_bs || LXP > LxMax_bs) continue;
+    if (Li < LMIN_dc || Li > LMAX_dc) continue;
+    int Li_idx = Li - LMIN_dc;
+    if ((Li + Lo + LXP) % 2 != 0) continue;
 
-  using BETA_key = std::tuple<int,int,int,int>; // (JP_cons, Lx2, official_Mx, Lo)
-  std::map<BETA_key, std::complex<double>> BETAS;
+    // InelDcFaithful2 already computed:
+    //   S_val = phase_factor * FACTOR_sf * ATERM * I_accum / sqrt(2*Li+1)
+    // So elem.S IS the (SR + i*SI) ready for the 9-J loop.
+    double SR = elem.S.real();
+    double SI = elem.S.imag();
 
-  for (auto &[k, S_val] : S_koffs) {
-    auto [JP_cons, Lx2, Lo, Li] = k;
-    int LDEL = Lo - Li;
+    if (!SOSWT) {
+      int LDEL = Lo - Li;
+      int k = koffs_index(LDEL, LXP, JBP, JBT);
+      if (k < 0 || Li_idx >= NUMLIS) continue;
+      S_acc[k][Li_idx] += std::complex<double>(SR, SI);
+    } else {
+      int JPIMN = JPI, JPIMX = JPI;
+      if ((Incoming.Pot.VSO == 0.0)) { JPIMN = std::abs(2*Li-JA); JPIMX = 2*Li+JA; }
+      int JPOMN = JPO, JPOMX = JPO;
+      if ((Outgoing.Pot.VSO == 0.0)) { JPOMN = std::abs(2*Lo-JB); JPOMX = 2*Lo+JB; }
 
-    // Per-Lx2 NDEL/LDELMN from Ptolemy SETSPT formula:
-    //   NDEL = Lx2 + 1 - MOD(Lx2 + LBP + LBT, 2)
-    //   LDELMN = 1 - NDEL
-    int LBP_bc = lP;
-    int LBT_bc = lT;
-    int NDEL_lx   = Lx2 + 1 - ((Lx2 + LBP_bc + LBT_bc) % 2);
-    int LDELMN_lx = 1 - NDEL_lx;
+      for (int jpi = JPIMN; jpi <= JPIMX; jpi += 2) {
+        for (int jpo = JPOMN; jpo <= JPOMX; jpo += 2) {
+          double SAV9J = std::sqrt(double((jpi+1)*(jpo+1)*(2*LXP+1)*(JBP+1)))
+            * NineJ(JBT/2.0,(double)LXP,JBP/2.0,
+                    jpi/2.0,(double)Li, JA/2.0,
+                    jpo/2.0,(double)Lo, JB/2.0);
+          if (std::abs(SAV9J) < 1e-14) continue;
+          double TEMPR = SAV9J * SR, TEMPI = SAV9J * SI;
 
-    if (NDEL_lx <= 0) continue;
+          for (int JP = JPBASE; JP <= JPMX; JP += 2) {
+            int LXmn2 = std::max({std::abs(JBT-JP)/2, std::abs(Lo-Li)});
+            int LXmx2 = std::min((JBT+JP)/2, Lo+Li);
+            for (int LX = LXmn2; LX <= LXmx2; LX++) {
+              int LDEL = Lo - Li;
+              int k = koffs_index(LDEL, LX, JP, JBT);
+              if (k < 0 || Li_idx >= NUMLIS) continue;
 
-    // Range check
-    if (LDEL < LDELMN_lx || LDEL > LDELMN_lx + 2*(NDEL_lx-1)) continue;
-    if ((LDEL - LDELMN_lx) % 2 != 0) continue;
+              double TEMP2;
+              if (LX==LXP && JP==JBP) {
+                TEMP2 = SAV9J;
+              } else {
+                TEMP2 = std::sqrt(double((jpi+1)*(jpo+1)*(2*LX+1)*(JP+1)))
+                  * NineJ(JBT/2.0,(double)LX,JP/2.0,
+                          jpi/2.0,(double)Li, JA/2.0,
+                          jpo/2.0,(double)Lo, JB/2.0);
+              }
+              if (std::abs(TEMP2) < 1e-14) continue;
+              if ((LX + LXP) % 2 != 0) TEMP2 = -TEMP2;
 
-    // Coulomb phase factor: e^i(sigma_Li + sigma_Lo), then divide by i
-    // Ptolemy BETCAL source.mor ~3527: "DIVIDE BY I"
-    //   PHASE = SPHASE + SIGIN(Li) + SIGOT(Lo)
-    //   SMATR = AMAG * sin(PHASE) = Im(S * e^iφ)
-    //   SMATI = -AMAG * cos(PHASE) = -Re(S * e^iφ)
-    // => stores (S * e^iφ) / i   [since 1/i = -i, and (a+ib)/i = b - ia]
-    double phase_angle = get_sig_a(Li) + get_sig_b(Lo);
-    std::complex<double> phase_fac(std::cos(phase_angle), std::sin(phase_angle));
-    std::complex<double> S_eiph = phase_fac * S_val;
-    // divide by i: (re + i*im) / i = im - i*re
-    std::complex<double> S_phased(S_eiph.imag(), -S_eiph.real());
-
-    // BETCAL Mx_loop range: Fortran MXZ = MOD(Lx + Li - Lo, 2) → start Mx at 0 or 1
-    // C++ was wrong: used Lx2 + LDEL which overflows for Lo > Li
-    // Correct: MXZ = (Lx + Li - Lo) % 2  (always 0 or 1)
-    int MXZ_loop = (Lx2 + Li - Lo) % 2;  // same as MOD(LX+LI-LO, 2) in Fortran
-    if (MXZ_loop < 0) MXZ_loop += 2;     // ensure non-negative
-
-    for (int Mx_loop = MXZ_loop; Mx_loop <= Lx2; Mx_loop++) {
-      if (Lo < Mx_loop) continue;  // CG vanishes: m cannot exceed L
-
-      // official_Mx = Mx_loop (see Ptolemy AMPCAL line ~389 derivation in header)
-      int official_Mx = Mx_loop;
-      if (official_Mx < 0 || official_Mx > Lx2) continue;
-
-      // Clebsch-Gordan coefficient: CG(Li, 0; Lx2, Mx_loop | Lo, Mx_loop)
-      double cg = ClebschGordan((double)Li,  0.0,
-                                (double)Lx2, (double)Mx_loop,
-                                (double)Lo,  (double)Mx_loop);
-      if (!std::isfinite(cg)) continue;
-      if (std::abs(cg) < 1e-14) continue;
-
-      double TEMPS = FACTOR_BET * (2.0*Li + 1.0) * cg;
-      BETAS[{JP_cons, Lx2, official_Mx, Lo}] += TEMPS * S_phased;
+              S_acc[k][Li_idx] += std::complex<double>(TEMP2*TEMPR, TEMP2*TEMPI);
+            }
+          }
+        }
+      }
     }
   }
 
-  // -----------------------------------------------
-  // AMPCAL + XSECTN — angular distribution
-  //
-  // F(JP_cons, Lx2, Mx, theta) = sum_Lo BETAS[JP_cons,Lx2,Mx,Lo]
-  //                               * sf(Lo,Mx) * P_Lo^Mx(cos_theta)
-  //
-  // sf(Lo, Mx) = prod_{n=1}^{Mx} 1/sqrt((Lo+n)(Lo-n+1))
-  //   [sqrt_factorial correction for Mx>0 amplitudes; see AGENT_FINDINGS.md]
-  //
-  // PLM: Ptolemy PLMSUB uses Condon-Shortley phase convention.
-  //   std::assoc_legendre(l, m, x) also includes (-1)^m — same convention.
-  //   std::legendre(l, x) = P_l(x) for m=0 (no phase).
-  //
-  // dSigma/dOmega = 10 * sum_{JP_cons,Lx2,Mx} FMNEG(Mx) * |F(theta)|^2
-  //   Factor 10 converts fm^2 -> mb (1 fm^2 = 10 mb).
-  //   FMNEG = 1 for Mx=0; FMNEG = 2 for Mx>0 (time-reversal degeneracy).
-  // -----------------------------------------------
-  // ── Pre-index BETAS by (JP_cons, Lx2, Mx) for O(N) angle loop ──
-  // koffs_map[{jp,lx2,mx}] = vector of {Lo, beta_val * sf(Lo,Mx)}
-  // sf is Lo/Mx-dependent but not angle-dependent → precompute here
-  using KoffsKey = std::tuple<int,int,int>;
-  std::map<KoffsKey, std::vector<std::pair<int, std::complex<double>>>> koffs_map;
-
-  for (auto &[k, b] : BETAS) {
-    auto [jp, lx2, mx, lo] = k;
-    if (lo < mx) continue;
-    double sf = 1.0;
-    for (int n = 1; n <= mx; n++) {
-      double denom = double(lo + n) * double(lo - n + 1);
-      if (denom <= 0.0) { sf = 0.0; break; }
-      sf /= std::sqrt(denom);
+  // Convert S_acc to SMAG/SPHASE
+  for (int k = 0; k < NSPL; k++) {
+    for (int idx = 0; idx < NUMLIS; idx++) {
+      double re = S_acc[k][idx].real(), im = S_acc[k][idx].imag();
+      SMAG  [k][idx] = std::sqrt(re*re + im*im);
+      SPHASE[k][idx] = std::atan2(im, re);
     }
-    if (sf == 0.0 || !std::isfinite(sf)) continue;
-    koffs_map[{jp,lx2,mx}].emplace_back(lo, b * sf);
   }
+
+
+  // Debug: count non-zero SMAG entries
+  {
+    int dbg_n = 0;
+    double dbg_max = 0;
+    for (int k=0;k<NSPL;k++) for(int i=0;i<NUMLIS;i++) {
+      if(SMAG[k][i]>0) dbg_n++;
+      dbg_max = std::max(dbg_max, SMAG[k][i]);
+    }
+    fprintf(stderr, "XSectn_debug: nonzero SMAG=%d max=%.4e TransferSMatrix=%zu\n",
+            dbg_n, dbg_max, TransferSMatrix.size());
+  }
+
+  // Debug: print specific SMAG entry
+  for (int k=0; k<NSPL; k++) {
+    if (JTOCS[k].LDEL==-2 && JTOCS[k].LX==2 && JTOCS[k].JP==1 && JTOCS[k].MX==0) {
+      fprintf(stderr, "SMAG[LDEL=-2,LX=2,JP=1,MX=0][Li_idx=3] = %.6e phase=%.4f\n",
+              SMAG[k][3], SPHASE[k][3]);
+      // Print first 10 Li values
+      for (int i=0; i<std::min(NUMLIS,10); i++) {
+        fprintf(stderr, "  Li=%d: SMAG=%.4e SPHASE=%.4f\n", i+LMIN_dc, SMAG[k][i], SPHASE[k][i]);
+      }
+    }
+  }
+  // ── Coulomb phases sig_in(Li), sig_out(Lo) ────────────────────────────
+  int Lcol = std::max(LOMOST, LIMOST) + 5;
+  std::vector<double> sig_in (Lcol+1, 0.0);
+  std::vector<double> sig_out(Lcol+1, 0.0);
+  for (int L = 1; L <= Lcol; L++) {
+    sig_in [L] = sig_in [L-1] + std::atan2(Incoming.eta, (double)L);
+    sig_out[L] = sig_out[L-1] + std::atan2(Outgoing.eta, (double)L);
+  }
+  auto sigin  = [&](int L) { return sig_in [std::min(L, Lcol)]; };
+  auto sigout = [&](int L) { return sig_out[std::min(L, Lcol)]; };
+
+  // ── Step 3: BETCAL ────────────────────────────────────────────────────
+  // BETAS[2][NSPL][Lo-LMIN+1]  (2 for real/imag, NSPL channels, Lo range)
+  // LOMN = LMIN_dc (= LBASE for reactions), LOMX = LIMOST = LMAX_dc
+  int LOMN   = LMIN_dc;
+  int LOMX   = LIMOST;
+  int NLO    = LOMX - LOMN + 1;  // number of Lo values
+
+  // LDELMX = max |LDEL| across all JTOCS entries
+  int LDELMX = 0;
+  for (auto& e : JTOCS) LDELMX = std::max(LDELMX, std::abs(e.LDEL));
+
+  // LXMN, LXMX from JTOCS
+  int LXMN = 1000, LXMX = -1;
+  for (auto& e : JTOCS) { LXMN = std::min(LXMN, e.LX); LXMX = std::max(LXMX, e.LX); }
+  int NMLX = LXMX - LXMN + 1;
+  int NMX  = LXMX + 1;  // Fortran: NMX = LXMX+1
+
+  // BETAS[k][ilo] where ilo = Lo - LOMN (0-based)
+  std::vector<std::vector<std::complex<double>>> BETAS(NSPL,
+    std::vector<std::complex<double>>(NLO, {0.0, 0.0}));
+
+  // IODD from LDELMX
+  int IODD = std::abs(LDELMX) % 2;
+  double FACTOR_bet = 0.5 / ka;
+  if (IODD != 0) FACTOR_bet = -FACTOR_bet;
+
+  // Outer loop: Lo
+  for (int Lo = LOMN; Lo <= LOMX; Lo++) {
+    double DLO  = Lo;
+    int    ILO  = Lo - LOMN;  // 0-based index into BETAS second dim
+
+    // Precompute TEMPS[LX-LXMN][Li_offset][MX] = FACTOR*(2Li+1)*CG
+    // Fortran: DO 189 LI=LIMN,LIMX,2; DO 179 LX=LX1,LXMX; DO 169 MX=MXZ,LX
+    //   TEMPS(I+MX) = FACTOR*(2LI+1)*CG(2LI,2LX,0,2MX,2Lo,2MX)
+    // I = 1 + NMX*(LX-LXMN + NMLX*(LI-LIMN)/2)
+    int LIMN_bet = Lo - LDELMX;
+    int LIMX_bet = Lo + LDELMX;
+
+    // Build TEMPS array (flattened: [LX-LXMN, (Li-LIMN)/2, MX])
+    // We use a map for simplicity; LIMN_bet can be negative
+    std::map<std::tuple<int,int,int>, double> TEMPS_map;  // (LX, Li, MX) -> value
+
+    for (int Li = LIMN_bet; Li <= LIMX_bet; Li += 2) {
+      if (Li < 0) continue;
+      int LX1 = std::max(std::abs(Li - Lo), LXMN);
+      for (int LX = LX1; LX <= LXMX; LX++) {
+        // Fortran BETCAL line 3958: MXZ = MOD(LX+LI-LO, 2) — PARITY ONLY (0 or 1)
+        // This is the starting MX for the TEMPS CG precomputation.
+        // CG(Li,0;LX,MX|Lo,MX) is zero for wrong parity, so starting from 0 or 1 is fine.
+        int MXZ_start = ((LX + Li - Lo) % 2 + 2) % 2;  // 0 or 1
+        for (int MX = MXZ_start; MX <= LX; MX++) {
+          if (Lo < MX) continue;
+          double cg = ClebschGordan((double)Li, 0.0, (double)LX, (double)MX,
+                                    (double)Lo, (double)MX);
+          if (!std::isfinite(cg) || std::abs(cg) < 1e-14) continue;
+          TEMPS_map[{LX, Li, MX}] = FACTOR_bet * (2.0*Li + 1.0) * cg;
+        }
+      }
+    }
+
+    // Inner loop: KOFFS
+    for (int k = 0; k < NSPL; k++) {
+      int LDEL = JTOCS[k].LDEL;
+      int LX   = JTOCS[k].LX;
+      int Li   = Lo - LDEL;  // Li = Lo - (Lo-Li) = Li ✓
+
+      if (Li < LMIN_dc || Li > LMAX_dc) continue;
+      int Li_idx = Li - LMIN_dc;
+
+      double amag = SMAG[k][Li_idx];
+      if (amag == 0.0) continue;
+
+      // Coulomb phase: PHASE = SPHASE(k,Li_idx) + sig_in(Li) + sig_out(Lo)
+      double phase = SPHASE[k][Li_idx] + sigin(Li) + sigout(Lo);
+      // S*e^{i*phase} / i: SMATR = amag*sin(phase), SMATI = -amag*cos(phase)
+      double SMATR = amag * std::sin(phase);
+      double SMATI =-amag * std::cos(phase);
+
+      // MXZ = LX + LDEL (Fortran line 3520)
+      int MXZ = LX + LDEL;
+      // KOFFZ = KOFFS - MXZ (Fortran line 3521, KOFFS is 1-based there)
+      // In Fortran: BETAS(1, KOFFZ+MX, ILO) where KOFFZ+MX = KOFFS (when MX steps from MXZ)
+      // So the BETAS index for Mx=MXZ is KOFFZ+MXZ = KOFFS (same KOFFS!)
+      // This means BETAS[k][ILO] is indexed by KOFFS directly when MX=MXZ
+      // For MX > MXZ: index is KOFFS+(MX-MXZ)... but in C++ we use k as KOFFS directly
+      // PROBLEM: the Fortran BETAS array uses a single index that spans all KOFFS+Mx combinations
+      // KOFFZ = KOFFS - MXZ, so KOFFZ + MX = KOFFS + (MX - MXZ)
+      // When MX = MXZ: slot = KOFFS
+      // When MX = MXZ+1: slot = KOFFS+1
+      // This means Fortran BETAS uses KOFFS as the Mx=MXZ slot and KOFFS+1 as Mx=MXZ+1 slot
+      // The JTOCS ordering guarantees that KOFFS, KOFFS+1, ..., KOFFS+LX-MXZ are all
+      // the Mx=MXZ,MXZ+1,...,LX entries for the SAME (LDEL, LX, JP, JT)
+      // In our C++ JTOCS, we store each (LDEL, LX, JP, JT, MX) as a SEPARATE entry!
+      // So JTOCS[k] already has a specific MX. We just add to BETAS[k][ILO].
+
+      // The Fortran TEMPS loop: for MX = MXZ..LX, store into BETAS[KOFFZ+MX]
+      // which is BETAS[KOFFS + (MX-MXZ)] = BETAS at the slot for Mx=MX
+      // In our C++ JTOCS, k already encodes a specific Mx. So:
+      int MX = JTOCS[k].MX;
+      if (MX < MXZ || MX > LX) continue;  // loop condition MX=MXZ..LX
+
+      auto it = TEMPS_map.find({LX, Li, MX});
+      if (it == TEMPS_map.end()) continue;
+      double T = it->second;
+
+      BETAS[k][ILO] += std::complex<double>(T * SMATR, T * SMATI);
+    }
+
+    // sqrt-factorial pass: multiply BETAS by TEMPS_fact(MX)
+    // TEMPS_fact(MX=0) = 1, TEMPS_fact(MX) = prod_{n=1}^{MX} 1/sqrt((Lo+n)(Lo-n+1))
+    int MXMX = std::min((int)LXMX, Lo);
+    std::vector<double> TEMPS_fact(MXMX+2, 0.0);
+    TEMPS_fact[0] = 1.0;  // MX=0 slot
+    for (int MX = 1; MX <= MXMX; MX++) {
+      double denom = (DLO + MX) * (DLO - MX + 1.0);
+      if (denom <= 0.0) { TEMPS_fact[MX] = 0.0; break; }
+      TEMPS_fact[MX] = TEMPS_fact[MX-1] / std::sqrt(denom);
+    }
+    for (int k = 0; k < NSPL; k++) {
+      int MX = JTOCS[k].MX;
+      if (MX > MXMX || MX < 0) continue;
+      BETAS[k][ILO] *= TEMPS_fact[MX];
+    }
+  }
+
+
+  // Debug BETAS
+  {
+    int dbg_n = 0;
+    double dbg_max = 0;
+    for (int k=0;k<NSPL;k++) for(int i=0;i<NLO;i++) {
+      double v = std::abs(BETAS[k][i]);
+      if(v>0) dbg_n++;
+      dbg_max = std::max(dbg_max, v);
+    }
+    fprintf(stderr, "XSectn_betcal: nonzero BETAS=%d max=%.4e\n", dbg_n, dbg_max);
+  }
+  // ── Step 4: AMPCAL ────────────────────────────────────────────────────
+  // F[k] = sum_Lo BETAS[k][ilo] * PLM(Lo, MX, cos_theta) * FACMBL
+  // DCS(theta) = 10 * sum_k FMNEG(MX) * |F[k]|^2
 
   std::cout << "\nAngle (deg)    dSigma/dOmega (mb/sr)\n";
 
   for (double theta_deg = AngleMin; theta_deg <= AngleMax + 1e-9; theta_deg += AngleStep) {
-    double theta_rad = theta_deg * M_PI / 180.0;
-    double cos_theta = std::cos(theta_rad);
+    double cos_theta = std::cos(theta_deg * M_PI / 180.0);
+
+    // Compute PLM(Lo, MX, cos_theta) for Lo=LOMN..LOMX, MX=0..LXMX
+    // Fortran: PLM(LO+LPLM) where LPLM = MX*(2*LMX+1-MX)/2+1
+    // Storage: P(L,M) = PLM[L + 1 + M*(2*LMX+1-M)/2]  (1-based in Fortran)
+    // We use a 2D array: plm[Lo][MX]
+    int LMX_plm = LOMX;
+    int MMAX_plm = LXMX;
+    // PLM array: plm_arr[L*(MMAX+1) + M] but use Fortran layout
+    // P(L,M) is stored at index L+1 + M*(2*LMX+1-M)/2 in Fortran (1-based)
+    // → 0-based: L + M*(2*LMX+1-M)/2
+    int plm_size = (LMX_plm+1) + MMAX_plm*(2*LMX_plm+1-MMAX_plm)/2 + 2;
+    std::vector<double> PLM_arr(plm_size+1, 0.0);
+
+    // Fill PLM using same recursion as Fortran PLMSUB
+    // P(0,0)=1, P(L+1,M) = ((2L+1)*x*P(L,M) - (L+M)*P(L-1,M))/(L-M+1)
+    // P(M,M) = -(2M-1)*ROOT*P(M-1,M-1), ROOT=sqrt(1-x^2)
+    // Index: P(L,M) → PLM_arr[L + M*(2*LMX_plm+1-M)/2]
+    double ROOT = std::sqrt(std::max(0.0, 1.0 - cos_theta*cos_theta));
+
+    // Initialize
+    PLM_arr[0] = 1.0;  // P(0,0)
+    // Build for M=0 first: P(L,0) = Legendre polynomial
+    {
+      if (LMX_plm >= 1) PLM_arr[1] = cos_theta;
+      for (int L = 2; L <= LMX_plm; L++) {
+        PLM_arr[L] = ((2*L-1)*cos_theta*PLM_arr[L-1] - (L-1)*PLM_arr[L-2]) / L;
+      }
+    }
+    // Build for M=1,2,...,MMAX_plm
+    // P(M,M) starts from P(0,0)=1
+    double PMM = 1.0;
+    for (int M = 1; M <= MMAX_plm; M++) {
+      PMM = -(2*M-1) * ROOT * PMM;  // P(M,M) from P(M-1,M-1)
+      int base = M * (2*LMX_plm+1-M) / 2;
+      PLM_arr[base + M] = PMM;      // P(M,M)
+      if (M+1 <= LMX_plm) {
+        PLM_arr[base + M+1] = (2*M+1) * cos_theta * PMM;  // P(M+1,M)
+      }
+      for (int L = M+2; L <= LMX_plm; L++) {
+        int prev_base = (M > 0 ? M*(2*LMX_plm+1-M)/2 : 0);
+        // Recursion: P(L,M) = ((2L-1)*x*P(L-1,M) - (L+M-1)*P(L-2,M))/(L-M)
+        double Pm2 = PLM_arr[base + L-2];
+        double Pm1 = PLM_arr[base + L-1];
+        PLM_arr[base + L] = ((2.0*L-1)*cos_theta*Pm1 - (L+M-1)*Pm2) / (L-M);
+        (void)prev_base;
+      }
+    }
+
+    auto get_PLM = [&](int L, int M) -> double {
+      if (L < 0 || M < 0 || M > L || M > MMAX_plm || L > LMX_plm) return 0.0;
+      int base = M * (2*LMX_plm+1-M) / 2;
+      return PLM_arr[base + L];
+    };
 
     double dSigma = 0.0;
 
-    for (auto &[key, entries] : koffs_map) {
-      auto [jp, lx2, mx] = key;
-      double FMNEG = (mx == 0) ? 1.0 : 2.0;
+    for (int k = 0; k < NSPL; k++) {
+      int MX = JTOCS[k].MX;
+      int LOMNMX = std::max(LOMN, MX);
 
       std::complex<double> F_amp(0.0, 0.0);
-      for (auto &[lo, bsf] : entries) {
-        double PLo_Mx;
-        if (mx == 0) {
-          PLo_Mx = std::legendre(lo, cos_theta);
-        } else if (mx > lo) {
-          continue;
-        } else {
-          PLo_Mx = std::assoc_legendre(lo, mx, cos_theta);
-        }
-        auto contrib = bsf * PLo_Mx;
-        if (std::isfinite(contrib.real()) && std::isfinite(contrib.imag()))
-          F_amp += contrib;
+      for (int Lo = LOMNMX; Lo <= LOMX; Lo++) {
+        int ILO = Lo - LOMN;
+        double plmval = get_PLM(Lo, MX);
+        F_amp += BETAS[k][ILO] * plmval;
       }
+
+      double FMNEG = (MX == 0) ? 1.0 : 2.0;
       dSigma += 10.0 * FMNEG * std::norm(F_amp);
     }
 
@@ -343,4 +571,7 @@ void DWBA::XSectn() {
               << "           " << std::scientific << std::setprecision(4)
               << dSigma << "\n";
   }
+
+  fprintf(stderr, "XSectn: NSPL=%d LIMOST=%d LOMOST=%d LMIN=%d LMAX=%d\n",
+          NSPL, LIMOST, LOMOST, LMIN_dc, LMAX_dc);
 }
