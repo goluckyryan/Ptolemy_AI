@@ -4,6 +4,8 @@ CMakeFiles
 
 # Compiled binaries (rebuild with g++ as needed)
 fr_o16dp
+fr_o16dp_*
+!fr_o16dp.cpp
 smat_compare
 a12_validate
 aterm_test
