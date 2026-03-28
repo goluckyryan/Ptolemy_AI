@@ -30,8 +30,9 @@ static double log_delta2(double a, double b, double c) {
 }
 
 static bool triangle(double a, double b, double c) {
+    double sum = a + b + c;
     return c >= std::abs(a-b) - 1e-9 && c <= a+b + 1e-9 &&
-           std::round(2*(a+b+c)) == 2*(a+b+c); // integer sum test
+           std::abs(std::round(sum) - sum) < 1e-9; // a+b+c must be integer
 }
 
 double SixJSymbol_Racah(double J1, double J2, double J3, double J4, double J5, double J6) {

@@ -1,5 +1,6 @@
 #include "math_utils.h"
 #include "JSymbols.h"
+#include "wig9j.h"
 #include <cmath>
 #include <iostream>
 
@@ -20,7 +21,11 @@ double SixJ(double J1, double J2, double J3, double J4, double J5, double J6) {
 
 double NineJ(double J1, double J2, double J3, double J4, double J5, double J6,
              double J7, double J8, double J9) {
-  return NineJSymbol(J1, J2, J3, J4, J5, J6, J7, J8, J9);
+  // Use the Pieper/Wills fused Racah sum (ported from Ptolemy's WIG9J).
+  // The old NineJSymbol decomposition into 3 separate SixJ calls had a bug:
+  // it failed triangle checks (triad sum must be integer) for half-integer cases
+  // that the fused algorithm handles correctly.
+  return WIG9J(J1, J2, J3, J4, J5, J6, J7, J8, J9);
 }
 
 // Factorial function (exposed from JSymbols.h if needed, or re-implemented)
