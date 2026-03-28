@@ -1273,14 +1273,15 @@ void DWBA::InelDcFaithful2()
                     }
                     double RI = U + VVAL * SYNE_eff;
                     double RO = U - VVAL * SYNE_eff;
-                    if (RI <= 0.0 || RO <= 0.0) { VVAL -= DV_scan; continue; }
+                    // Fortran does NOT skip RO=0 or RI=0 — BSPROD handles it
+                    // (phi(0) ≈ 0, chi(0) = 0, but ULIM = RVRLIM/max(1e-2, RI*RO) is large)
+                    if (RI < 0.0 || RO < 0.0) { VVAL -= DV_scan; continue; }
                     double ULIM2 = RVRLIM / std::max(1e-2, RI * RO);
                     bool above = false;
                     for (int ix = 0; ix < 2; ++ix) {
                         double FIFO2, RP2, RT2;
                         bool ok = bsp_ISCTMN(2, RI, RO, XS[ix], FIFO2, RP2, RT2);
-                        if (IU >= 4 && IU <= 6 && VVAL > 0.95 && ix == 0) {
-                        }
+                        
                         if (ok && std::fabs(FIFO2) > ULIM2) { above = true; break; }
                     }
                     if (above) {
