@@ -355,15 +355,51 @@ void DWBA::XSectn() {
     }
   }
   // ── Coulomb phases sig_in(Li), sig_out(Lo) ────────────────────────────
+  // σ_L = Im(ln(Γ(L+1+iη))) — exact Coulomb phase shift
+  // Compute via Stirling approximation for complex log-gamma
+  auto loggamma_imag = [](double L_plus_1, double eta) -> double {
+    // Im(ln(Γ(z))) where z = L_plus_1 + i*eta
+    // Shift z up until Re(z) > 15 for Stirling convergence
+    double result = 0.0;
+    double x = L_plus_1;
+    while (x < 15.0) {
+      result -= std::atan2(eta, x);
+      x += 1.0;
+    }
+    // Stirling series: ln(Γ(z)) ≈ (z-0.5)*ln(z) - z + 0.5*ln(2π) + Σ B_{2n}/(2n(2n-1)*z^(2n-1))
+    // Im part:
+    double r2 = x*x + eta*eta;
+    double theta = std::atan2(eta, x);
+    // (z-0.5)*ln(z): Im = (x-0.5)*theta + eta*0.5*log(r2)
+    // But we need to be more careful with the log(z) = 0.5*ln(r2) + i*theta
+    result += (x - 0.5) * theta + eta * 0.5 * std::log(r2);
+    // -z: Im = -eta
+    result -= eta;
+    // Stirling correction terms (first few):
+    // B2=1/6: 1/(12*z) → Im(-1/(12*z)) = Im(-1/(12*(x+iy))) = eta/(12*r2)
+    result += eta / (12.0 * r2);
+    // B4=-1/30: -1/(360*z^3) → need Im(-1/(360*z^3))
+    // z^3 has Im = 3x^2*eta - eta^3 = eta*(3x^2-eta^2)
+    // 1/z^3 = conj(z^3)/|z|^6 → Im = -Im(z^3)/|z|^6 = -eta*(3x^2-eta^2)/(r2^3)
+    // -1/360 × that = eta*(3x^2-eta^2)/(360*r2^3)
+    double r4 = r2*r2;
+    result -= eta * (3.0*x*x - eta*eta) / (360.0 * r4 * r2);
+    return result;
+  };
+
   int Lcol = std::max(LOMOST, LIMOST) + 5;
   std::vector<double> sig_in (Lcol+1, 0.0);
   std::vector<double> sig_out(Lcol+1, 0.0);
-  for (int L = 1; L <= Lcol; L++) {
-    sig_in [L] = sig_in [L-1] + std::atan2(Incoming.eta, (double)L);
-    sig_out[L] = sig_out[L-1] + std::atan2(Outgoing.eta, (double)L);
+  for (int L = 0; L <= Lcol; L++) {
+    sig_in [L] = loggamma_imag((double)(L+1), Incoming.eta);
+    sig_out[L] = loggamma_imag((double)(L+1), Outgoing.eta);
   }
   auto sigin  = [&](int L) { return sig_in [std::min(L, Lcol)]; };
   auto sigout = [&](int L) { return sig_out[std::min(L, Lcol)]; };
+  // Debug Coulomb phases
+  for (int L = 0; L <= 5; L++) {
+    fprintf(stderr, "CPP_SIG L=%d sigin=%.8f sigout=%.8f\n", L, sig_in[L], sig_out[L]);
+  }
 
   // ── Step 3: BETCAL ────────────────────────────────────────────────────
   // BETAS[2][NSPL][Lo-LMIN+1]  (2 for real/imag, NSPL channels, Lo range)
@@ -606,6 +642,60 @@ void DWBA::XSectn() {
 
     double dSigma = 0.0;
 
+    // Lab-to-CM angle conversion and Jacobian (labangles mode)
+    // Fortran: TAU = sqrt(AMA*AMB*(AMB+AMBIGB)*Ecm / (AMBIGA*AMBIGB*(AMA+AMBIGA)*(Ecm+Q)))
+    double AMA_mass = Incoming.Target.A;   // target mass number (16)
+    double AMB_mass = Outgoing.Projectile.A; // ejectile mass number (1)
+    double AMBIGA_mass = Incoming.Projectile.A; // projectile mass number (2)
+    double AMBIGB_mass = Outgoing.Target.A;   // residual mass number (17)
+    double Ecm_in = Incoming.Ecm;
+    double Q_val = Outgoing.Ecm - Incoming.Ecm;  // Q = Ecm_out - Ecm_in
+    
+    double TAU_lab = std::sqrt(AMA_mass * AMB_mass * (AMB_mass + AMBIGB_mass) * Ecm_in /
+                               (AMBIGA_mass * AMBIGB_mass * (AMA_mass + AMBIGA_mass) * (Ecm_in + Q_val)));
+    
+    double theta_rad = theta_deg * M_PI / 180.0;
+    double angcm_rad = theta_rad;  // default: CM = lab
+    double AJACOB = 1.0;
+    
+    if (true) {  // labangles mode
+      double sin_lab = std::sin(theta_rad);
+      double cos_lab = std::cos(theta_rad);
+      double temp = 1.0 - std::pow(TAU_lab * sin_lab, 2);
+      if (temp < 0) temp = 0;
+      temp = cos_lab * std::sqrt(temp);
+      angcm_rad = std::acos(temp - TAU_lab * sin_lab * sin_lab);
+      
+      double temp2 = TAU_lab * (TAU_lab + 2.0*std::cos(angcm_rad)) + 1.0;
+      if (temp2 < 0) temp2 = 0;
+      AJACOB = temp2 * std::sqrt(temp2) / std::fabs(TAU_lab * std::cos(angcm_rad) + 1.0);
+      
+      cos_theta = std::cos(angcm_rad);  // use CM angle for PLM!
+    }
+
+    // Recompute PLM at CM angle
+    ROOT = std::sqrt(std::max(0.0, 1.0 - cos_theta*cos_theta));
+    PLM_arr.assign(plm_size+1, 0.0);
+    PLM_arr[0] = 1.0;
+    if (LMX_plm >= 1) PLM_arr[1] = cos_theta;
+    for (int L = 2; L <= LMX_plm; L++) {
+      PLM_arr[L] = ((2*L-1)*cos_theta*PLM_arr[L-1] - (L-1)*PLM_arr[L-2]) / L;
+    }
+    PMM = 1.0;
+    for (int M = 1; M <= MMAX_plm; M++) {
+      PMM = -(2*M-1) * ROOT * PMM;
+      int base = M * (2*LMX_plm+1-M) / 2;
+      PLM_arr[base + M] = PMM;
+      if (M+1 <= LMX_plm) {
+        PLM_arr[base + M+1] = (2*M+1) * cos_theta * PMM;
+      }
+      for (int L = M+2; L <= LMX_plm; L++) {
+        double Pm2 = PLM_arr[base + L-2];
+        double Pm1 = PLM_arr[base + L-1];
+        PLM_arr[base + L] = ((2.0*L-1)*cos_theta*Pm1 - (L+M-1)*Pm2) / (L-M);
+      }
+    }
+
     for (int k = 0; k < NSPL; k++) {
       int MX = JTOCS[k].MX;
       int LOMNMX = std::max(LOMN, MX);
@@ -618,7 +708,11 @@ void DWBA::XSectn() {
       }
 
       double FMNEG = (MX == 0) ? 1.0 : 2.0;
-      dSigma += 10.0 * FMNEG * std::norm(F_amp);
+      dSigma += 10.0 * FMNEG * std::norm(F_amp);  // CM frame, no AJACOB
+    }
+
+    if (theta_deg < 0.01) {
+      fprintf(stderr, "CPP_DCS0 TAU=%.6f AJACOB=%.6f DCS=%.4f\n", TAU_lab, AJACOB, dSigma);
     }
 
     std::cout << std::fixed << std::setprecision(1) << theta_deg
