@@ -833,17 +833,18 @@ void DWBA::InelDcFaithful2()
     int LMIN_scat = lT + lP + 1;  // minimum LI (first odd transfer) — matches Fortran lmin=3
     int L_ISCTMN = std::max(0, LMIN_scat - LxMax_bs);
     int JPI_ISCTMN = 2*L_ISCTMN + JSPS1;  // Fortran: 2*L + JSPS(1)
-    // LCRIT = (LMIN_scat + LMAX_scat)/2 in Fortran WAVESET (LCRITS = (LMIN+LMAX)/2 when both defined)
-    // For lmin=lmax=3: LCRIT = (3+3)/2 = 3 = LMIN_scat
-    // For general: LCRIT ≈ LMIN_scat (simplest correct approximation for the test case)
-    // Fortran: LCRITS(1) = (LMIN_keyword + LMAX_keyword)/2 when both are defined.
-    // Since we use LMIN_scat=lT+lP+1=3 and lmax_keyword=lmax_effective=LMIN_scat (for lmin=lmax=3):
-    // LCRIT = LMIN_scat.
-    // For a full calculation (lmin=0, lmax=40): LCRIT ≈ 20, not 3.
-    // To handle both: use LCRIT = (LMIN_scat + LMAX) / 2, where LMAX comes from the LI loop limit.
-    // For the test: LMAX ← LMIN_scat (only one LI computed). Set LCRIT = LMIN_scat.
-    int LCRIT = LMIN_scat;
+    // LCRIT = (LMIN + LMAX) / 2 — Fortran LCRITL computes this from the keyword LMIN/LMAX
+    // For lmin=0, lmax=40: LCRIT = (0+40)/2 = 20
+    // For lmin=lmax=3:     LCRIT = (3+3)/2 = 3
+    int LMIN_kw = (LminSet >= 0) ? LminSet : 0;
+    int LMAX_kw = (LmaxSet >= 0) ? LmaxSet : 40;
+    int LCRIT = (LMIN_kw + LMAX_kw) / 2;
+    // Fortran: IF (LC < LMIN .OR. LC > LMAX) LC = (LMIN+LMAX)/2
+    // where LMIN/LMAX here are the incoming partial wave L range used for GRDSET.
+    // For DWBA, the GRDSET L range = [L_ISCTMN, LMAX_kw], so LCRIT should be within that.
+    if (LCRIT < L_ISCTMN || LCRIT > LMAX_kw) LCRIT = (L_ISCTMN + LMAX_kw) / 2;
     int JPI_ISCTCR = 2*LCRIT + JSPS1;  // Fortran: CALL WAVELJ(LC, 2*LC+JSPS(1),...)
+    fprintf(stderr, "LCRIT=%d L_ISCTMN=%d LMIN_kw=%d LMAX_kw=%d\n", LCRIT, L_ISCTMN, LMIN_kw, LMAX_kw);
 
     double ROFMAX = 0.0;  // Fortran: set to R where |psi| is maximum (during ISCTMN chi build)
     auto build_rpsi_table = [&](int L, int JPI, bool update_rofmax) -> std::vector<double> {
@@ -2025,12 +2026,12 @@ void DWBA::InelDcFaithful2()
                 }
             }
 
-            // Dump I_accum for LI=3
-            if (LI == 3) {
-                for (auto& [key, val] : I_accum) {
-                    fprintf(stderr, "CPP_IACC3 IH=%d JPI=%d JPO=%d re=%.6e im=%.6e\n",
-                        key.IH, key.JPI, key.JPO, val.first, val.second);
-                }
+            // Dump I_accum (before-9J radial integrals) for ALL LI
+            for (auto& [key, val] : I_accum) {
+                double mag = std::sqrt(val.first*val.first + val.second*val.second);
+                fprintf(stderr, "CPP_B9J LI=%d IH=%d Lo=%d LXP=%d JPI=%d JPO=%d SR=%.8e SI=%.8e MAG=%.8e\n",
+                    LI, key.IH, lolx_pairs[key.IH].Lo, lolx_pairs[key.IH].Lx,
+                    key.JPI, key.JPO, val.first, val.second, mag);
             }
 
             // ── SFROMI: convert I_accum → S-matrix elements ──────────────────
