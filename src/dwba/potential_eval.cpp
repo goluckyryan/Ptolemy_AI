@@ -61,13 +61,14 @@ void EvaluatePotential(double r, const ChannelPotential& pot, double& V_real, do
     // In WAVELJ: SDOTL * LSOR = SDOTL * (-H²/12E) * WOODSX(type=2)
     // SDOTL = 2*<L·S> for proton (JSPS=1). Physical: 4*<L·S>*VSO/r*d(WS)/dr.
     // So SDOTL * WOODSX = 2*<L·S> * 2*VSO/r*d(WS)/dr = 4*<L·S>*VSO/r*d(WS)/dr. ✓
-    // C++ SDOTL (spin_dot_L) = 2*<L·S>. So Vso must = 2*VSO/r*d(WS)/dr (factor 2, not 4).
+    // Ptolemy convention: V_SO(r) = VSO * (1/r) * d(WS)/dr  (Thomas form, negative at surface)
+    // In f(r): f_so = L·S * f_conv * V_SO(r)  where L·S = SDOTL computed in wavelj.cpp
     if (pot.VSO != 0.0 && r > 0.001) {
         double R_so = pot.RSO0 * R0MASS;
         double ex_so = std::exp((r - R_so) / pot.ASO);
         double denom_so = 1.0 + ex_so;
         double deriv = - (1.0 / pot.ASO) * ex_so / (denom_so * denom_so);
-        V_so_real = -pot.VSO * 2.0 * (1.0/r) * deriv;  // = +2*VSO/r * |d(WS)/dr|
+        V_so_real = pot.VSO * 2.0 * (1.0/r) * deriv;  // 2*VSO*Thomas(r), matches WOODSX ITYPE=2
     } else {
         V_so_real = 0.0;
     }
@@ -78,7 +79,7 @@ void EvaluatePotential(double r, const ChannelPotential& pot, double& V_real, do
         double ex_soi = std::exp((r - R_soi) / pot.ASOI);
         double denom_soi = 1.0 + ex_soi;
         double deriv = - (1.0 / pot.ASOI) * ex_soi / (denom_soi * denom_soi);
-        V_so_imag = -pot.VSOI * 2.0 * (1.0/r) * deriv;
+        V_so_imag = pot.VSOI * 2.0 * (1.0/r) * deriv;  // 2*VSOI*Thomas(r), matches WOODSX ITYPE=2
     } else {
         V_so_imag = 0.0;
     }

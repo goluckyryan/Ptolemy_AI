@@ -236,6 +236,37 @@ void DWBA::Calculate() {
   const int STEPSPER = 8;
   Incoming.StepSize = std::min(2.0 * M_PI / Incoming.k, 1.0) / STEPSPER;
   Outgoing.StepSize = std::min(2.0 * M_PI / Outgoing.k, 1.0) / STEPSPER;
+
+  // Ptolemy WAVSET: extend asymptopia to classical turning point for large L
+  // RMAX = max(ASYMPT, (eta + sqrt(eta^2 + LMAX*(LMAX+1))) / k)
+  // Condition: NUMFIT==0 && LMAX!=NOTDEF && SCTASY<0 (always true for DWBA with set LMAX)
+  {
+    double ASYMPT = 30.0;  // from input asymptopia=30 (or default |SCTASY|=20)
+    int LMAX_eff = (LmaxSet >= 0) ? LmaxSet : 40;
+
+    // Incoming channel turning point
+    double tp_in = (Incoming.eta + std::sqrt(Incoming.eta * Incoming.eta
+                    + (double)LMAX_eff * (LMAX_eff + 1))) / Incoming.k;
+    Incoming.MaxR = std::max(ASYMPT, tp_in);
+    // Snap to grid: NSTEP = RMAX/h + 0.5, then RMAX = NSTEP*h
+    int nstep_in = static_cast<int>(Incoming.MaxR / Incoming.StepSize + 0.5);
+    Incoming.MaxR = nstep_in * Incoming.StepSize;
+
+    // Outgoing channel turning point
+    double tp_out = (Outgoing.eta + std::sqrt(Outgoing.eta * Outgoing.eta
+                     + (double)LMAX_eff * (LMAX_eff + 1))) / Outgoing.k;
+    Outgoing.MaxR = std::max(ASYMPT, tp_out);
+    int nstep_out = static_cast<int>(Outgoing.MaxR / Outgoing.StepSize + 0.5);
+    Outgoing.MaxR = nstep_out * Outgoing.StepSize;
+
+    std::cout << "[WAVSET] Incoming: ASYMPTOPIA = " << Incoming.MaxR
+              << " fm, NSTEP = " << nstep_in
+              << ", StepSize = " << Incoming.StepSize << " fm\n";
+    std::cout << "[WAVSET] Outgoing: ASYMPTOPIA = " << Outgoing.MaxR
+              << " fm, NSTEP = " << nstep_out
+              << ", StepSize = " << Outgoing.StepSize << " fm\n";
+  }
+
   WavSet(Incoming);
   WavSet(Outgoing);
 

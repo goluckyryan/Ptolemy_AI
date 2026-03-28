@@ -61,8 +61,11 @@ void DWBA::WavSet(Channel &ch) {
   // Scattering channels call WavSet with ch.k already set → caller can pre-set StepSize.
   // Bound state channels override StepSize in InelDc before calling WavSet.
   if (ch.StepSize <= 0.0) ch.StepSize = 0.1;
-  ch.MaxR = 30.0;
-  ch.NSteps = static_cast<int>(ch.MaxR / ch.StepSize) + 1;
+  // Use caller-set MaxR if > 0 (setup.cpp computes it from turning point);
+  // otherwise default to 30.0 fm (bound state channels).
+  if (ch.MaxR <= 0.0) ch.MaxR = 30.0;
+  // Ptolemy: NSTEP = RMAX/STEPSZ + 0.5  (Fortran integer truncation = rounding)
+  ch.NSteps = static_cast<int>(ch.MaxR / ch.StepSize + 0.5);
 
   ch.RGrid.resize(ch.NSteps);
   ch.V_real.resize(ch.NSteps);
@@ -178,11 +181,28 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     double LL1  = (double)L * (L + 1);
 
     double f_re = k2 - LL1 / (r * r) - f_conv * Vc + f_conv * Vr
-                  + spin_dot_L * f_conv * Vso;
-    double f_im = f_conv * Wi + spin_dot_L * f_conv * Vsoi;
+                  - spin_dot_L * f_conv * Vso;
+    double f_im = f_conv * Wi - spin_dot_L * f_conv * Vsoi;
     f[i] = std::complex<double>(f_re, f_im);
 
-    // Debug: print W(i) = 1 + h²/12·f(i) for L=1, JP=4 (NWP=1 incoming, ISCTMN)
+    // Debug: print f(r) for L=3, incoming channel
+    if (L == 3 && i <= 5) {
+      double f_nuclear = f_conv * Vr;
+      double f_coulomb = f_conv * Vc;
+      double f_so = -spin_dot_L * f_conv * Vso;
+      double f_cent = LL1 / (r * r);
+      fprintf(stderr, "DBG_FR3 L=%d JP=%d i=%d r=%.4f f_re=%.6e f_im=%.6e | k2=%.6e -cent=%.6e +nucl=%.6e -coul=%.6e +so=%.6e sdotL=%.3f Vso=%.6e\n",
+        L, Jp, i, r, f_re, f_im, k2, f_cent, f_nuclear, f_coulomb, f_so, spin_dot_L, Vso);
+    }
+    // Debug: print f(r) at key radii for L=1, all JPs, incoming
+    if (L == 1 && (i == 24 || i == 16 || i == 40)) {
+      double f_nuclear = f_conv * Vr;
+      double f_coulomb = f_conv * Vc;
+      double f_so = -spin_dot_L * f_conv * Vso;
+      double f_cent = LL1 / (r * r);
+      fprintf(stderr, "DBG_FR L=%d JP=%d i=%d r=%.4f f_re=%.6e f_im=%.6e | k2=%.6e -cent=%.6e +nucl=%.6e -coul=%.6e +so=%.6e sdotL=%.3f Vso=%.6e\n",
+        L, Jp, i, r, f_re, f_im, k2, f_cent, f_nuclear, f_coulomb, f_so, spin_dot_L, Vso);
+    }
     // Fortran stores W(I) in WAVR(I+4)/WAVI(I+4) before integration
     if (L == 1 && Jp == 4 && r >= 0.125 && r <= 6.0) {
       double Wr = 1.0 + h2_12 * f_re;
@@ -313,9 +333,13 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
   if (ch.SMatrix.size() <= (size_t)L) ch.SMatrix.resize(L + 1);
   ch.SMatrix[L] = std::complex<double>(SJR, SJI);
 
-  // Debug: print S-matrix for L=1 (ISCTMN)
-  if (L == 1) {
-    double phase_S = std::atan2(SJI, SJR) * 180.0 / M_PI;
+  // Debug: print ALL elastic S-matrices
+  {
+    double mag_S = std::sqrt(SJR*SJR + SJI*SJI);
+    double phase_S = std::atan2(SJI, SJR);
+    bool is_in = (&ch == &Incoming);
+    fprintf(stderr, "SMAT_%s L=%2d JP=%2d |S|=%.6f phase=%.4f SJR=%.6f SJI=%.6f\n",
+      is_in ? "IN" : "OUT", L, Jp, mag_S, phase_S, SJR, SJI);
   }
 
   // --- Normalization (Ptolemy source.mor lines 30913–30916) ---

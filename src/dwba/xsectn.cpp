@@ -108,6 +108,30 @@ void DWBA::XSectn() {
     return -1;
   };
 
+  // Debug: summary of TransferSMatrix per Li
+  {
+    std::map<int, int> tsm_nonzero_per_li;
+    std::map<int, int> tsm_zero_per_li;
+    std::map<int, double> tsm_max_mag_per_li;
+    for (const auto& e : TransferSMatrix) {
+      double mag = std::abs(e.S);
+      if (mag > 1e-30) {
+        tsm_nonzero_per_li[e.Li]++;
+        tsm_max_mag_per_li[e.Li] = std::max(tsm_max_mag_per_li[e.Li], mag);
+      } else {
+        tsm_zero_per_li[e.Li]++;
+      }
+    }
+    fprintf(stderr, "TSM Summary: total=%zu\n", TransferSMatrix.size());
+    for (int li = 0; li <= LMAX_dc; li++) {
+      int nz = tsm_nonzero_per_li.count(li) ? tsm_nonzero_per_li[li] : 0;
+      int z  = tsm_zero_per_li.count(li) ? tsm_zero_per_li[li] : 0;
+      double mx = tsm_max_mag_per_li.count(li) ? tsm_max_mag_per_li[li] : 0;
+      if (nz + z > 0)
+        fprintf(stderr, "  Li=%2d: %3d nonzero (max=%.3e), %3d zero\n", li, nz, mx, z);
+    }
+  }
+
   // ── Step 2: SFROMI ────────────────────────────────────────────────────
   // For each TransferSMatrix entry (I_accum channel: Li, Lo=LASI, JPI, JPO, LXP):
   //   Apply ATERM spectroscopic factor and phase → SR, SI
@@ -317,21 +341,16 @@ void DWBA::XSectn() {
   }
 
 
-  // Debug: count non-zero SMAG entries
+  // Debug: dump ALL SMAG/SPHASE for Li=3 (LI_idx = 3 - LMIN_dc)
   {
-    int dbg_n = 0;
-    double dbg_max = 0;
-    for (int k=0;k<NSPL;k++) for(int i=0;i<NUMLIS;i++) {
-      if(SMAG[k][i]>0) dbg_n++;
-      dbg_max = std::max(dbg_max, SMAG[k][i]);
-    }
-  }
-
-  // Debug: print specific SMAG entry
-  for (int k=0; k<NSPL; k++) {
-    if (JTOCS[k].LDEL==-2 && JTOCS[k].LX==2 && JTOCS[k].JP==1 && JTOCS[k].MX==0) {
-      // Print first 10 Li values
-      for (int i=0; i<std::min(NUMLIS,10); i++) {
+    int li3_idx = 3 - LMIN_dc;
+    if (li3_idx >= 0 && li3_idx < NUMLIS) {
+      for (int k = 0; k < NSPL; k++) {
+        if (SMAG[k][li3_idx] > 1e-15) {
+          fprintf(stderr, "CPP_SMAT Li=3 k=%2d LDEL=%2d LX=%d JP=%d JT=%d  SMAG=%.6e SPHASE=%.6f\n",
+            k, JTOCS[k].LDEL, JTOCS[k].LX, JTOCS[k].JP, JTOCS[k].JT,
+            SMAG[k][li3_idx], SPHASE[k][li3_idx]);
+        }
       }
     }
   }
@@ -406,52 +425,87 @@ void DWBA::XSectn() {
       }
     }
 
-    // Inner loop: KOFFS
+    // Inner loop: faithful Fortran BETCAL scatter.
+    // Fortran loops over KOFFS sequentially. When Li increases or stays same,
+    // it starts a new (LX, JP, JT) group and sets MXZ, KOFFZ.
+    // Then it uses SMAG[KOFFS] for that one Li and scatters into
+    // BETAS[KOFFZ+MX] for ALL MX = MXZ..LX in that group.
+    //
+    // In C++ JTOCS, each k has a unique (LDEL, LX, JP, JT, MX).
+    // We need to: for each k, compute Li = Lo - LDEL.
+    // Then scatter this k's S-matrix into ALL MX channels of the same
+    // (LX, JP, JT) group, using the CG for (Li, LX, each MX).
+    //
+    // Build a lookup: for each (LX, JP, JT), find all k indices and their MX values.
+    // Then for each unique (Li, LX, JP, JT), get the S-matrix from ANY k in that group
+    // (they all share the same SMAG for that Li), and scatter to all MX channels.
+
+    // Build group lookup: (LX, JP, JT) → list of (k, MX)
+    // Only needs to be built once per angle loop — but we rebuild per Lo since
+    // the groups don't change. Actually, build once outside the Lo loop.
+    // For now, do it inline for correctness.
+
+    // Identify unique (LX, JP, JT) groups
+    struct GroupKey { int LX, JP, JT; bool operator<(const GroupKey& o) const {
+      if (LX != o.LX) return LX < o.LX;
+      if (JP != o.JP) return JP < o.JP;
+      return JT < o.JT;
+    }};
+    std::map<GroupKey, std::vector<std::pair<int,int>>> groups; // (LX,JP,JT) → [(k, MX)]
     for (int k = 0; k < NSPL; k++) {
-      int LDEL = JTOCS[k].LDEL;
-      int LX   = JTOCS[k].LX;
-      int Li   = Lo - LDEL;  // Li = Lo - (Lo-Li) = Li ✓
+      GroupKey gk = {JTOCS[k].LX, JTOCS[k].JP, JTOCS[k].JT};
+      groups[gk].push_back({k, JTOCS[k].MX});
+    }
 
-      if (Li < LMIN_dc || Li > LMAX_dc) continue;
-      int Li_idx = Li - LMIN_dc;
+    // For each group, find all unique Li values (from all LDEL values in the group)
+    for (auto& [gk, members] : groups) {
+      int LX = gk.LX;
+      // Collect unique Li values from all members
+      std::set<int> li_set;
+      for (auto& [k, mx] : members) {
+        int Li = Lo - JTOCS[k].LDEL;
+        if (Li >= LMIN_dc && Li <= LMAX_dc) li_set.insert(Li);
+      }
 
-      double amag = SMAG[k][Li_idx];
-      if (amag == 0.0) continue;
+      for (int Li : li_set) {
+        int Li_idx = Li - LMIN_dc;
+        int LDEL_for_Li = Lo - Li;
 
-      // Coulomb phase: PHASE = SPHASE(k,Li_idx) + sig_in(Li) + sig_out(Lo)
-      double phase = SPHASE[k][Li_idx] + sigin(Li) + sigout(Lo);
-      // S*e^{i*phase} / i: SMATR = amag*sin(phase), SMATI = -amag*cos(phase)
-      double SMATR = amag * std::sin(phase);
-      double SMATI =-amag * std::cos(phase);
+        // Find any k in this group that has this LDEL (to get SMAG/SPHASE)
+        int k_src = -1;
+        for (auto& [k, mx] : members) {
+          if (JTOCS[k].LDEL == LDEL_for_Li) { k_src = k; break; }
+        }
+        if (k_src < 0) continue;
 
-      // MXZ = LX + LDEL (Fortran line 3520)
-      int MXZ = LX + LDEL;
-      // KOFFZ = KOFFS - MXZ (Fortran line 3521, KOFFS is 1-based there)
-      // In Fortran: BETAS(1, KOFFZ+MX, ILO) where KOFFZ+MX = KOFFS (when MX steps from MXZ)
-      // So the BETAS index for Mx=MXZ is KOFFZ+MXZ = KOFFS (same KOFFS!)
-      // This means BETAS[k][ILO] is indexed by KOFFS directly when MX=MXZ
-      // For MX > MXZ: index is KOFFS+(MX-MXZ)... but in C++ we use k as KOFFS directly
-      // PROBLEM: the Fortran BETAS array uses a single index that spans all KOFFS+Mx combinations
-      // KOFFZ = KOFFS - MXZ, so KOFFZ + MX = KOFFS + (MX - MXZ)
-      // When MX = MXZ: slot = KOFFS
-      // When MX = MXZ+1: slot = KOFFS+1
-      // This means Fortran BETAS uses KOFFS as the Mx=MXZ slot and KOFFS+1 as Mx=MXZ+1 slot
-      // The JTOCS ordering guarantees that KOFFS, KOFFS+1, ..., KOFFS+LX-MXZ are all
-      // the Mx=MXZ,MXZ+1,...,LX entries for the SAME (LDEL, LX, JP, JT)
-      // In our C++ JTOCS, we store each (LDEL, LX, JP, JT, MX) as a SEPARATE entry!
-      // So JTOCS[k] already has a specific MX. We just add to BETAS[k][ILO].
+        double amag = SMAG[k_src][Li_idx];
+        // Debug: check Lo=3 contributions
+        if (Lo == 3 && LX == 2 && gk.JP == 1) {
+          fprintf(stderr, "DBG_GROUP Lo=3 LX=2 JP=1 Li=%d LDEL=%d k_src=%d SMAG=%.6e\n",
+            Li, LDEL_for_Li, k_src, amag);
+        }
+        if (amag == 0.0) continue;
 
-      // The Fortran TEMPS loop: for MX = MXZ..LX, store into BETAS[KOFFZ+MX]
-      // which is BETAS[KOFFS + (MX-MXZ)] = BETAS at the slot for Mx=MX
-      // In our C++ JTOCS, k already encodes a specific Mx. So:
-      int MX = JTOCS[k].MX;
-      if (MX < MXZ || MX > LX) continue;  // loop condition MX=MXZ..LX
+        double phase = SPHASE[k_src][Li_idx] + sigin(Li) + sigout(Lo);
+        double SMATR = amag * std::sin(phase);
+        double SMATI =-amag * std::cos(phase);
 
-      auto it = TEMPS_map.find({LX, Li, MX});
-      if (it == TEMPS_map.end()) continue;
-      double T = it->second;
+        // Scatter to ALL MX channels in this group
+        for (auto& [k_dst, mx_dst] : members) {
+          auto it = TEMPS_map.find({LX, Li, mx_dst});
+          if (it == TEMPS_map.end()) continue;
+          double T = it->second;
+          BETAS[k_dst][ILO] += std::complex<double>(T * SMATR, T * SMATI);
 
-      BETAS[k][ILO] += std::complex<double>(T * SMATR, T * SMATI);
+          // Debug: trace k=0 Lo=3
+          if (k_dst == 0 && Lo == 3) {
+            fprintf(stderr, "DBG_SCATTER k_dst=0 Lo=3 Li=%d LX=%d LDEL=%d SMAG=%.6e SPHASE=%.6f "
+              "SMATR=%.6e SMATI=%.6e T=%.6e mx=%d\n",
+              Li, LX, LDEL_for_Li, amag, SPHASE[k_src][Li_idx]+sigin(Li)+sigout(Lo),
+              SMATR, SMATI, T, mx_dst);
+          }
+        }
+      }
     }
 
     // sqrt-factorial pass: multiply BETAS by TEMPS_fact(MX)
@@ -472,14 +526,20 @@ void DWBA::XSectn() {
   }
 
 
-  // Debug BETAS
-  {
-    int dbg_n = 0;
-    double dbg_max = 0;
-    for (int k=0;k<NSPL;k++) for(int i=0;i<NLO;i++) {
-      double v = std::abs(BETAS[k][i]);
-      if(v>0) dbg_n++;
-      dbg_max = std::max(dbg_max, v);
+  // Debug BETAS — dump all non-zero entries
+  for (int k = 0; k < NSPL; k++) {
+    for (int i = 0; i < NLO; i++) {
+      double br = BETAS[k][i].real();
+      double bi = BETAS[k][i].imag();
+      if (std::abs(br) > 1e-20 || std::abs(bi) > 1e-20) {
+        int MX = JTOCS[k].MX;
+        int LX = JTOCS[k].LX;
+        int LDEL = JTOCS[k].LDEL;
+        int JP = JTOCS[k].JP;
+        int Lo = LOMN + i;
+        fprintf(stderr, "CPP_BETAS k=%2d Lo=%2d LDEL=%2d LX=%d JP=%d MX=%d BR=%12.5e BI=%12.5e\n",
+                k+1, Lo, LDEL, LX, JP, MX, br, bi);
+      }
     }
   }
   // ── Step 4: AMPCAL ────────────────────────────────────────────────────

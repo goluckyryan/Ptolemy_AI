@@ -538,6 +538,19 @@ void DWBA::InelDcFaithful2()
                             ProjectileBS.j, ProjectileBS.BindingEnergy);
     }
 
+    // Dump both bound states for validation
+    {
+        double h_t = TgtBS_ch.StepSize;
+        fprintf(stderr, "CPP_BSWF_T h=%.6f NSTEPS=%d\n", h_t, TgtBS_ch.NSteps);
+        for (int I = 0; I < TgtBS_ch.NSteps && I * h_t <= 20.0; I++)
+            fprintf(stderr, "CPP_BSWF_T %4d %.6f %.12e\n", I, I*h_t, TgtBS_ch.WaveFunction[I].real());
+
+        double h_p = PrjBS_ch.StepSize;
+        fprintf(stderr, "CPP_BSWF_P h=%.6f NSTEPS=%d\n", h_p, PrjBS_ch.NSteps);
+        for (int I = 0; I < PrjBS_ch.NSteps && I * h_p <= 20.0; I++)
+            fprintf(stderr, "CPP_BSWF_P %4d %.6f %.12e\n", I, I*h_p, PrjBS_ch.WaveFunction[I].real());
+    }
+
     // Rebuild V_real for PrjBS_ch after bound state solve
     // (Only if NOT loaded from AV18 — AV18 LoadDeuteronWavefunction fills V_real directly)
     if (!reidLoaded) {
@@ -635,6 +648,19 @@ void DWBA::InelDcFaithful2()
     bs.alphap = ALPHAP;
     bs.alphat = ALPHAT;
     bs.s1 = S1; bs.t1 = T1; bs.s2 = S2; bs.t2 = T2;
+
+    // Dump vertex tables for validation
+    fprintf(stderr, "CPP_VERTEX VPMAX=%.8e RLPMAX=%.6f VTMAX=%.8e RLTMAX=%.6f\n",
+            VPMAX, RLPMAX, VTMAX, RLTMAX);
+    fprintf(stderr, "CPP_VERTEX VPPMAX=%.8e RLPPMAX=%.6f\n", VPPMAX, RLPPMAX);
+    fprintf(stderr, "CPP_VERTEX h_P=%.6f N_P=%d h_T=%.6f N_T=%d\n",
+            h_P, N_P, h_T, N_T);
+    // Dump vphi_P (V×phi_P) for projectile
+    for (int i = 0; i < N_P && i * h_P <= 20.0; i++)
+        fprintf(stderr, "CPP_VPHIP %4d %.6f %.12e\n", i, i*h_P, vphi_P_tab[i]);
+    // Dump phi_T for target
+    for (int i = 0; i < N_T && i * h_T <= 20.0; i++)
+        fprintf(stderr, "CPP_PHIT %4d %.6f %.12e\n", i, i*h_T, phi_T_tab[i]);
 
     // ── NUCONL=3 FACTOR parameters (Fortran BSSET stripping, IVRTEX=1) ─────
     // This is for STRIPPING (PHISGN=+1), projectile vertex (IVRTEX=1):
@@ -1691,13 +1717,26 @@ void DWBA::InelDcFaithful2()
         for (int LI = LIMIN; LI <= LMAX; LI += 2) {
 
             // ── chi_a wavefunctions for all JPI ──────────────────────────────
-            int JPI_min = std::max(1, std::abs(2*LI - JSPS1));
+            int JPI_min = std::abs(2*LI - JSPS1);  // Fortran: JPMN = |2*LI - JA|, no clamping
             int JPI_max = 2*LI + JSPS1;
             std::map<int, std::vector<std::complex<double>>> chi_a_map;
             double h_a = Incoming.StepSize;
             for (int JPI = JPI_min; JPI <= JPI_max; JPI += 2) {
                 WavElj(Incoming, LI, JPI);
                 chi_a_map[JPI] = Incoming.WaveFunction;
+
+                // Dump incoming chi for all LI, JP
+                {
+                    int N = (int)Incoming.WaveFunction.size();
+                    double h = Incoming.StepSize;
+                    fprintf(stderr, "CPP_CHI_IN LI=%d JPI=%d h=%.6f N=%d\n", LI, JPI, h, N);
+                    for (int ii = 0; ii < N && ii*h <= 20.0; ii++) {
+                        double re = Incoming.WaveFunction[ii].real();
+                        double im = Incoming.WaveFunction[ii].imag();
+                        fprintf(stderr, "CPP_CHI_IN %d %d %4d %.6f %.12e %.12e\n",
+                                LI, JPI, ii, ii*h, re, im);
+                    }
+                }
             }
 
             // ── (Lo, Lx) pairs for this LI ───────────────────────────────────
@@ -1734,7 +1773,7 @@ void DWBA::InelDcFaithful2()
             for (auto& [Lo, Lx] : lolx_pairs) {
                 if (lo_seen.count(Lo)) continue;
                 lo_seen.insert(Lo);
-                int JPO_min = std::max(1, std::abs(2*Lo - JSPS2));
+                int JPO_min = std::abs(2*Lo - JSPS2);  // no clamping
                 int JPO_max = 2*Lo + JSPS2;
                 for (int JPO = JPO_min; JPO <= JPO_max; JPO += 2) {
                     auto key = std::make_pair(Lo, JPO);
@@ -1903,7 +1942,7 @@ void DWBA::InelDcFaithful2()
                         // Loop over (IH, JPO)
                         for (int IH = 0; IH < IHMAX; ++IH) {
                             int Lo = lolx_pairs[IH].Lo;
-                            int JPO_min = std::max(1, std::abs(2*Lo - JSPS2));
+                            int JPO_min = std::abs(2*Lo - JSPS2);  // no clamping
                             int JPO_max = 2*Lo + JSPS2;
 
                             for (int JPO = JPO_min; JPO <= JPO_max; JPO += 2) {
@@ -1956,6 +1995,44 @@ void DWBA::InelDcFaithful2()
 
             }  // End IV loop (DO 859)
 
+            // Debug: dump I_accum for LI=1
+            if (LI == 1) {
+                fprintf(stderr, "DBG_LI1_IACCUM LI=%d IHMAX=%d lolx_pairs:", LI, IHMAX);
+                for (int ih = 0; ih < IHMAX; ih++)
+                    fprintf(stderr, " (%d,%d)", lolx_pairs[ih].Lo, lolx_pairs[ih].Lx);
+                fprintf(stderr, "\n");
+                
+                if (I_accum.empty()) {
+                    fprintf(stderr, "DBG_LI1_IACCUM: EMPTY — no entries!\n");
+                } else {
+                    for (auto& [key, val] : I_accum) {
+                        fprintf(stderr, "DBG_LI1_IACCUM IH=%d JPI=%d JPO=%d re=%.6e im=%.6e\n",
+                            key.IH, key.JPI, key.JPO, val.first, val.second);
+                    }
+                }
+
+                // Also check: how many IU points had non-zero chi_a?
+                for (auto& [jpi, wf] : chi_a_map) {
+                    int nz = 0;
+                    double maxmag = 0;
+                    for (size_t i = 0; i < wf.size(); i++) {
+                        double m = std::abs(wf[i]);
+                        if (m > 1e-30) nz++;
+                        if (m > maxmag) maxmag = m;
+                    }
+                    fprintf(stderr, "DBG_LI1_CHIA JPI=%d npts=%zu nonzero=%d maxmag=%.6e h=%.6f\n",
+                        jpi, wf.size(), nz, maxmag, h_a);
+                }
+            }
+
+            // Dump I_accum for LI=3
+            if (LI == 3) {
+                for (auto& [key, val] : I_accum) {
+                    fprintf(stderr, "CPP_IACC3 IH=%d JPI=%d JPO=%d re=%.6e im=%.6e\n",
+                        key.IH, key.JPI, key.JPO, val.first, val.second);
+                }
+            }
+
             // ── SFROMI: convert I_accum → S-matrix elements ──────────────────
             for (int IH = 0; IH < IHMAX; ++IH) {
                 int Lo = lolx_pairs[IH].Lo;
@@ -1998,7 +2075,7 @@ void DWBA::InelDcFaithful2()
                 double FACTOR_sf = 2.0 * std::sqrt(AKI * AKO / (ECM1 * ECM2));
 
                 for (auto& [JPI_v, chi_a] : chi_a_map) {
-                    int JPO_min = std::max(1, std::abs(2*Lo - JSPS2));
+                    int JPO_min = std::abs(2*Lo - JSPS2);  // no clamping
                     int JPO_max = 2*Lo + JSPS2;
                     for (int JPO = JPO_min; JPO <= JPO_max; JPO += 2) {
                         AccKey acc_key = {IH, JPI_v, JPO};
@@ -2007,7 +2084,10 @@ void DWBA::InelDcFaithful2()
 
                         std::complex<double> I_raw(it->second.first,
                                                    it->second.second);
-                        if (LI == 3) {
+                        if (LI == 1 && Lo == 3 && Lx == 2) {
+                          fprintf(stderr, "DBG_LI1 Lo=%d Lx=%d JPI=%d JPO=%d ATERM=%.6e I_raw=(%.6e,%.6e) phase=(%.6e,%.6e)\n",
+                            Lo, Lx, JPI_v, JPO, ATERM_val, I_raw.real(), I_raw.imag(),
+                            phase_factor.real(), phase_factor.imag());
                         }
 
                         std::complex<double> Integral = I_raw * phase_factor;

@@ -425,6 +425,19 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
   for (int I = 0; I < NSTEPS; I++)
     maxAmp = std::max(maxAmp, std::abs(ch.WaveFunction[I].real()));
   std::cout << "  BS: maxAmp=" << maxAmp << "  kappa=" << kappa << " fm^-1" << std::endl;
+
+  // Dump bound state WF for validation (every point up to 15 fm, then every 10th)
+  bool is_proj = (l == 0);  // projectile is S-state (l=0), target is D-state (l=2)
+  const char* label = is_proj ? "P" : "T";
+  fprintf(stderr, "CPP_BS_%s L=%d j=%.1f kappa=%.6f V=%.6f h=%.6f NSTEPS=%d\n",
+          label, l, j, kappa, V_sol, h, NSTEPS);
+  for (int I = 0; I < NSTEPS; I++) {
+    double r = I * h;
+    if (r > 20.0) break;
+    // Print every point for thorough comparison
+    fprintf(stderr, "CPP_BS_%s %4d %.6f %.12e\n",
+            label, I, r, ch.WaveFunction[I].real());
+  }
 }
 
 // ---------------------------------------------------------------

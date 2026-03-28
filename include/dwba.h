@@ -47,9 +47,9 @@ struct Channel {
   std::vector<double> VPhiProduct; // V(r)*phi(r) on the calculation grid
 
   // Grid parameters
-  double StepSize;
-  double MaxR;
-  int NSteps;
+  double StepSize = 0.0;
+  double MaxR = 0.0;
+  int NSteps = 0;
 
   // S-matrix elements
   std::vector<std::complex<double>> SMatrix;

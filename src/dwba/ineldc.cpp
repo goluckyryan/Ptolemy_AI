@@ -197,6 +197,20 @@ void DWBA::InelDc() {
                         ProjectileBS.j, ProjectileBS.BindingEnergy);
   }
 
+  // Dump projectile bound state WF
+  {
+    double h_p = PrjBS_ch.StepSize;
+    int nsteps_p = PrjBS_ch.NSteps;
+    fprintf(stderr, "CPP_BS_P L=%d j=%.1f h=%.6f NSTEPS=%d\n",
+            ProjectileBS.l, ProjectileBS.j, h_p, nsteps_p);
+    for (int I = 0; I < nsteps_p; I++) {
+      double r = I * h_p;
+      if (r > 20.0) break;
+      fprintf(stderr, "CPP_BS_P %4d %.6f %.12e\n",
+              I, r, PrjBS_ch.WaveFunction[I].real());
+    }
+  }
+
   // Rebuild PrjBS_ch.V_real using the solved potential depth V_sol (set by CalculateBoundState).
   // WavSet filled V_real with the initial pot.V; after bound state solve, pot.V = V_sol.
   // We need the correct V_np(r) for the POST form vertex.
