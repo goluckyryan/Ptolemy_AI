@@ -292,13 +292,8 @@ static bool bsprod_faithful(
     // where DELV = Coulomb correction (core-core vs scatter) + nuclear WS correction
     // Skip if FPFT is too small (Fortran: IF(ABS(FPFT).LT.SMLNUM) GO TO 200)
     //
-    // IMPORTANT: Skip NUCONL correction for ITYPE=2 (V-scan in GRDSET).
-    // Fortran uses VPHI = phi × LVOUT (transition operator fixed part ≈ 0 for neutron transfer),
-    // so FPFT ≈ 0 → correction is automatically skipped (|FPFT| < SMLNUM).
-    // Our C++ uses VPHI = phi × V_AV18 (nonzero at large R due to OPE tail),
-    // so the correction would blow up (FACTOR = 1 + DELV/VEFF diverges when VEFF → 0).
-    // The correction is only physically meaningful during the actual integration (ITYPE=1,3,4).
-    if (ITYPE != 2 && std::abs(FPFT) >= 1e-30 && !bs.jpot.empty()) {
+    // Skip if FPFT is too small (Fortran: IF(ABS(FPFT).LT.SMLNUM) GO TO 200)
+    if (std::abs(FPFT) >= 1e-30 && !bs.jpot.empty()) {
         // Determine RSCAT (Fortran: RSCAT = RA or RB depending on IOUTSW)
         double RSCAT = bs.nuconl_IOUTSW ? RB : RA;
 
@@ -318,6 +313,7 @@ static bool bsprod_faithful(
         // Nuclear WS correction: DELVNU = VOPT*(WS(RCORE) - WS(RSCAT))
         // Fortran: XCORE=(RCORE-RNCORE)/AOPT; FCORE=WS(XCORE); etc.
         // Skip if NAIT==2 (Fortran: IF((NUCONL.NE.3).OR.(NAIT.EQ.2)) GO TO 8)
+        double DELVNU = 0.0;
         if (NAIT != 2) {
             auto ws = [](double r, double R0, double a) -> double {
                 const double BIGLOG = 174.0;
@@ -328,7 +324,7 @@ static bool bsprod_faithful(
             };
             double FCORE = ws(RCORE, bs.nuconl_RNCORE, bs.nuconl_AOPT);
             double FSCAT = ws(RSCAT, bs.nuconl_RNSCAT, bs.nuconl_AOPT);
-            double DELVNU = bs.nuconl_VOPT * (FCORE - FSCAT);
+            DELVNU = bs.nuconl_VOPT * (FCORE - FSCAT);
             DELV += DELVNU;
         }
 
@@ -348,6 +344,8 @@ static bool bsprod_faithful(
         }
 
         double FACTOR = (std::abs(VEFF) > 1e-30) ? (1.0 + DELV/VEFF) : 1.0;
+        if (ITYPE == 1 && RA > 0.19 && RA < 0.21 && RB > 2.8) {
+        }
         FPFT *= FACTOR;
 
 
@@ -547,16 +545,7 @@ void DWBA::InelDcFaithful2()
 
     // Dump both bound states for validation
     {
-        double h_t = TgtBS_ch.StepSize;
-        fprintf(stderr, "CPP_BSWF_T h=%.6f NSTEPS=%d\n", h_t, TgtBS_ch.NSteps);
-        for (int I = 0; I < TgtBS_ch.NSteps && I * h_t <= 20.0; I++)
-            fprintf(stderr, "CPP_BSWF_T %4d %.6f %.12e\n", I, I*h_t, TgtBS_ch.WaveFunction[I].real());
-
-        double h_p = PrjBS_ch.StepSize;
-        fprintf(stderr, "CPP_BSWF_P h=%.6f NSTEPS=%d\n", h_p, PrjBS_ch.NSteps);
-        for (int I = 0; I < PrjBS_ch.NSteps && I * h_p <= 20.0; I++)
-            fprintf(stderr, "CPP_BSWF_P %4d %.6f %.12e\n", I, I*h_p, PrjBS_ch.WaveFunction[I].real());
-    }
+            }
 
     // Rebuild V_real for PrjBS_ch after bound state solve
     // (Only if NOT loaded from AV18 — AV18 LoadDeuteronWavefunction fills V_real directly)
@@ -604,6 +593,10 @@ void DWBA::InelDcFaithful2()
     } else {
         for (int i = 0; i < N_P; ++i)
             vphi_P_tab[i] = PrjBS_ch.WaveFunction[i].real() * PrjBS_ch.V_real[i];
+    }
+
+    // Debug: dump vphi_P comparison
+    for (int i = 0; i < std::min(N_P, 20); ++i) {
     }
 
     // Build pure phi_P table (no V) — used by BSPROD ITYPE=3,4 (JBDP = pure BS wavefunction)
@@ -658,16 +651,10 @@ void DWBA::InelDcFaithful2()
     bs.s1 = S1; bs.t1 = T1; bs.s2 = S2; bs.t2 = T2;
 
     // Dump vertex tables for validation
-    fprintf(stderr, "CPP_VERTEX VPMAX=%.8e RLPMAX=%.6f VTMAX=%.8e RLTMAX=%.6f\n",
-            VPMAX, RLPMAX, VTMAX, RLTMAX);
-    fprintf(stderr, "CPP_VERTEX VPPMAX=%.8e RLPPMAX=%.6f\n", VPPMAX, RLPPMAX);
-    fprintf(stderr, "CPP_VERTEX h_P=%.6f N_P=%d h_T=%.6f N_T=%d\n",
-            h_P, N_P, h_T, N_T);
     // Dump vphi_P (V×phi_P) for projectile
     for (int i = 0; i < N_P && i * h_P <= 20.0; i++)
     // Dump phi_T for target
     for (int i = 0; i < N_T && i * h_T <= 20.0; i++)
-        fprintf(stderr, "CPP_PHIT %4d %.6f %.12e\n", i, i*h_T, phi_T_tab[i]);
 
     // ── NUCONL=3 FACTOR parameters (Fortran BSSET stripping, IVRTEX=1) ─────
     // This is for STRIPPING (PHISGN=+1), projectile vertex (IVRTEX=1):
@@ -849,9 +836,7 @@ void DWBA::InelDcFaithful2()
     // Fortran: IF (LC < LMIN .OR. LC > LMAX) LC = (LMIN+LMAX)/2
     // where LMIN/LMAX here are the incoming partial wave L range used for GRDSET.
     // For DWBA, the GRDSET L range = [L_ISCTMN, LMAX_kw], so LCRIT should be within that.
-    if (LCRIT < L_ISCTMN || LCRIT > LMAX_kw) LCRIT = (L_ISCTMN + LMAX_kw) / 2;
     int JPI_ISCTCR = 2*LCRIT + JSPS1;  // Fortran: CALL WAVELJ(LC, 2*LC+JSPS(1),...)
-    fprintf(stderr, "LCRIT=%d L_ISCTMN=%d LMIN_kw=%d LMAX_kw=%d\n", LCRIT, L_ISCTMN, LMIN_kw, LMAX_kw);
 
     double ROFMAX = 0.0;  // Fortran: set to R where |psi| is maximum (during ISCTMN chi build)
     auto build_rpsi_table = [&](int L, int JPI, bool update_rofmax) -> std::vector<double> {
@@ -1165,11 +1150,12 @@ void DWBA::InelDcFaithful2()
         // ─── FORCE Fortran values for diagnostic (remove after validation) ───
         // Fortran: SUMMIN=0, SUMMID=4.839, SUMMAX=30.4, NPSUMI=42
         // This tests whether matching these exactly closes the I_accum error.
-        // Fortran line 19646: RVRLIM = WVWMAX * DWCUT  (reset using exit-step WVWMAX)
-        // IHSAVE=0 → TEMP=DWCUT (no SAVEHS adjustment)
-        if (WVWMAX_exit > 0.0)
-            RVRLIM = WVWMAX_exit * DWCUT;
-        fprintf(stderr, "FINAL: SUMMIN=%.4f SUMMID=%.4f SUMMAX=%.4f RVRLIM_final=%.4e (WVWMAX_exit=%.4e)\n",
+        // NOTE: Do NOT reset RVRLIM here. The Fortran V-scan (DO 489) uses the INITIAL
+        // RVRLIM from step 1. The final RVRLIM reset (line 19511) happens AFTER the
+        // entire GRDSET is complete, for SAVEHS/USEHS purposes only.
+        // Save exit WVWMAX for potential later use.
+        double WVWMAX_final = WVWMAX_exit;
+        fprintf(stderr, "FINAL: SUMMIN=%.4f SUMMID=%.4f SUMMAX=%.4f RVRLIM=%.4e (WVWMAX_exit=%.4e)\n",
                 SUMMIN, SUMMID, SUMMAX, RVRLIM, WVWMAX_exit);
     }
 
@@ -1293,7 +1279,7 @@ void DWBA::InelDcFaithful2()
                     for (int ix = 0; ix < 2; ++ix) {
                         double FIFO2, RP2, RT2;
                         bool ok = bsp_ISCTMN(2, RI, RO, XS[ix], FIFO2, RP2, RT2);
-                        if ((IU == 4 || IU == 5 || IU == 8 || IU == 10) && ISYNE == 0 && VVAL > 0.98) {
+                        if (IU >= 4 && IU <= 6 && VVAL > 0.95 && ix == 0) {
                         }
                         if (ok && std::fabs(FIFO2) > ULIM2) { above = true; break; }
                     }
@@ -1374,6 +1360,9 @@ void DWBA::InelDcFaithful2()
 
     // Debug: print raw V-ranges before LSQPOL
     for (int k = 0; k < NPSUM; k++) {
+        double U = SMHPT[k];
+        double VMID_frac = (LVMAX_arr[k+1] - LVMIN_arr[k+1] > 1e-12) ?
+            (LVMID_arr[k+1] - LVMIN_arr[k+1]) / (LVMAX_arr[k+1] - LVMIN_arr[k+1]) : 0.5;
     }
 
     // ── Stage 3: LSQPOL polynomial smoothing of V-range ─────────────────────
@@ -1591,8 +1580,6 @@ void DWBA::InelDcFaithful2()
                 double RT_h = std::sqrt(1.0 + std::pow(S2*RI + T2*RO, 2));
                 RIOEX_tab[IPLUNK] = std::exp(ALPHAP*RP_h + ALPHAT*RT_h);
                 if (IPLUNK <= 8) {
-                    fprintf(stderr, "CPP_P1 IU=%d IV=%d IPLUNK=%d U=%.6f V=%.6f RI=%.6f RO=%.6f SYNE=%.0f RIOEX=%.6f\n",
-                            IU, IV, IPLUNK, U, VVAL*SYNE_h, RI, RO, SYNE_h, RIOEX_tab[IPLUNK]);
                 }
             }
         }
@@ -1857,12 +1844,9 @@ void DWBA::InelDcFaithful2()
                 {
                     int N = (int)Incoming.WaveFunction.size();
                     double h = Incoming.StepSize;
-                    fprintf(stderr, "CPP_CHI_IN LI=%d JPI=%d h=%.6f N=%d\n", LI, JPI, h, N);
                     for (int ii = 0; ii < N && ii*h <= 20.0; ii++) {
                         double re = Incoming.WaveFunction[ii].real();
                         double im = Incoming.WaveFunction[ii].imag();
-                        fprintf(stderr, "CPP_CHI_IN %d %d %4d %.6f %.12e %.12e\n",
-                                LI, JPI, ii, ii*h, re, im);
                     }
                 }
             }
@@ -1989,16 +1973,7 @@ void DWBA::InelDcFaithful2()
                     }
 
                     if (LI == 3 && IV == 1 && IU == 4) {
-                        fprintf(stderr, "CPP_STEPA LI3 IU=%3d U=%.5e RI=%.6f RO=%.6f RIOEX=% .5e HINT1=% .5e Npts=%d\n",
-                                IU, SMHPT[IU-1], RI, RO, RIOEX, LHINT[1], Npts);
-                        // Dump each phi point with A12
-                        for (int kp = 0; kp < Npts; ++kp) {
-                            double A12_0 = EvalA12(A12_table[0], (double)phi_pts[kp].PHIT, (double)phi_pts[kp].PHI);
-                            fprintf(stderr, "  CPP_PHI IU=4 kphi=%d PHI=%.6f PVPDX=%.6e A12[0]=%.6e prod=%.6e\n",
-                                    kp, (double)phi_pts[kp].PHI, (double)phi_pts[kp].PVPDX, A12_0, 
-                                    (double)phi_pts[kp].PVPDX * A12_0);
-                        }
-                    }
+                                            }
 
                 }  // End IU loop (DO 549)
 
@@ -2026,17 +2001,6 @@ void DWBA::InelDcFaithful2()
 
                     for (int iu2 = 0; iu2 < NPSUMI; ++iu2)
                         SMIVL[IH][iu2+1] = Y_out[iu2];
-                }
-
-                // Debug STEP_B: print SMIVL for LI=3
-                if (LI == 3 && IV <= 3) {
-                    for (int DBGIU = 1; DBGIU <= NPSUMI; ++DBGIU) {
-                        fprintf(stderr, "CPP_STEP_B LI3 IV=%d IU=%3d Usi=%10.4f SMIVL[0]=% .6e",
-                                IV, DBGIU, SMIPT[DBGIU-1], SMIVL[0][DBGIU]);
-                        if (IHMAX > 1)
-                            fprintf(stderr, " SMIVL[1]=% .6e", SMIVL[1][DBGIU]);
-                        fprintf(stderr, "\n");
-                    }
                 }
 
                 // ── DO 789 IU = 1, NPSUMI (chi integration) ──────────────────
@@ -2143,45 +2107,8 @@ void DWBA::InelDcFaithful2()
 
             }  // End IV loop (DO 859)
 
-            // Debug: dump I_accum for LI=1
-            if (LI == 1) {
-                fprintf(stderr, "DBG_LI1_IACCUM LI=%d IHMAX=%d lolx_pairs:", LI, IHMAX);
-                for (int ih = 0; ih < IHMAX; ih++)
-                    fprintf(stderr, " (%d,%d)", lolx_pairs[ih].Lo, lolx_pairs[ih].Lx);
-                fprintf(stderr, "\n");
-                
-                if (I_accum.empty()) {
-                    fprintf(stderr, "DBG_LI1_IACCUM: EMPTY — no entries!\n");
-                } else {
-                    for (auto& [key, val] : I_accum) {
-                        fprintf(stderr, "DBG_LI1_IACCUM IH=%d JPI=%d JPO=%d re=%.6e im=%.6e\n",
-                            key.IH, key.JPI, key.JPO, val.first, val.second);
-                    }
-                }
 
-                // Also check: how many IU points had non-zero chi_a?
-                for (auto& [jpi, wf] : chi_a_map) {
-                    int nz = 0;
-                    double maxmag = 0;
-                    for (size_t i = 0; i < wf.size(); i++) {
-                        double m = std::abs(wf[i]);
-                        if (m > 1e-30) nz++;
-                        if (m > maxmag) maxmag = m;
-                    }
-                    fprintf(stderr, "DBG_LI1_CHIA JPI=%d npts=%zu nonzero=%d maxmag=%.6e h=%.6f\n",
-                        jpi, wf.size(), nz, maxmag, h_a);
-                }
-            }
-
-            // Dump I_accum (before-9J radial integrals) for ALL LI
-            for (auto& [key, val] : I_accum) {
-                double mag = std::sqrt(val.first*val.first + val.second*val.second);
-                fprintf(stderr, "CPP_B9J LI=%d IH=%d Lo=%d LXP=%d JPI=%d JPO=%d SR=%.8e SI=%.8e MAG=%.8e\n",
-                    LI, key.IH, lolx_pairs[key.IH].Lo, lolx_pairs[key.IH].Lx,
-                    key.JPI, key.JPO, val.first, val.second, mag);
-            }
-
-            // ── SFROMI: convert I_accum → S-matrix elements ──────────────────
+                        // ── SFROMI: convert I_accum → S-matrix elements ──────────────────
             for (int IH = 0; IH < IHMAX; ++IH) {
                 int Lo = lolx_pairs[IH].Lo;
                 int Lx = lolx_pairs[IH].Lx;
@@ -2232,12 +2159,6 @@ void DWBA::InelDcFaithful2()
 
                         std::complex<double> I_raw(it->second.first,
                                                    it->second.second);
-                        if (LI == 1 && Lo == 3 && Lx == 2) {
-                          fprintf(stderr, "DBG_LI1 Lo=%d Lx=%d JPI=%d JPO=%d ATERM=%.6e I_raw=(%.6e,%.6e) phase=(%.6e,%.6e)\n",
-                            Lo, Lx, JPI_v, JPO, ATERM_val, I_raw.real(), I_raw.imag(),
-                            phase_factor.real(), phase_factor.imag());
-                        }
-
                         std::complex<double> Integral = I_raw * phase_factor;
                         double sf_norm = FACTOR_sf * std::fabs(ATERM_val)
                                        / std::sqrt(2.0*LI + 1.0);

@@ -108,31 +108,7 @@ void DWBA::XSectn() {
     return -1;
   };
 
-  // Debug: summary of TransferSMatrix per Li
-  {
-    std::map<int, int> tsm_nonzero_per_li;
-    std::map<int, int> tsm_zero_per_li;
-    std::map<int, double> tsm_max_mag_per_li;
-    for (const auto& e : TransferSMatrix) {
-      double mag = std::abs(e.S);
-      if (mag > 1e-30) {
-        tsm_nonzero_per_li[e.Li]++;
-        tsm_max_mag_per_li[e.Li] = std::max(tsm_max_mag_per_li[e.Li], mag);
-      } else {
-        tsm_zero_per_li[e.Li]++;
-      }
-    }
-    fprintf(stderr, "TSM Summary: total=%zu\n", TransferSMatrix.size());
-    for (int li = 0; li <= LMAX_dc; li++) {
-      int nz = tsm_nonzero_per_li.count(li) ? tsm_nonzero_per_li[li] : 0;
-      int z  = tsm_zero_per_li.count(li) ? tsm_zero_per_li[li] : 0;
-      double mx = tsm_max_mag_per_li.count(li) ? tsm_max_mag_per_li[li] : 0;
-      if (nz + z > 0)
-        fprintf(stderr, "  Li=%2d: %3d nonzero (max=%.3e), %3d zero\n", li, nz, mx, z);
-    }
-  }
-
-  // ── Step 2: SFROMI ────────────────────────────────────────────────────
+    // ── Step 2: SFROMI ────────────────────────────────────────────────────
   // For each TransferSMatrix entry (I_accum channel: Li, Lo=LASI, JPI, JPO, LXP):
   //   Apply ATERM spectroscopic factor and phase → SR, SI
   //   Then double 9-J loop → accumulate into SMAG/SPHASE
@@ -345,15 +321,7 @@ void DWBA::XSectn() {
   {
     int li3_idx = 3 - LMIN_dc;
     if (li3_idx >= 0 && li3_idx < NUMLIS) {
-      for (int k = 0; k < NSPL; k++) {
-        if (SMAG[k][li3_idx] > 1e-15) {
-          fprintf(stderr, "CPP_SMAT Li=3 k=%2d LDEL=%2d LX=%d JP=%d JT=%d  SMAG=%.6e SPHASE=%.6f\n",
-            k, JTOCS[k].LDEL, JTOCS[k].LX, JTOCS[k].JP, JTOCS[k].JT,
-            SMAG[k][li3_idx], SPHASE[k][li3_idx]);
         }
-      }
-    }
-  }
   // ── Coulomb phases sig_in(Li), sig_out(Lo) ────────────────────────────
   // σ_L = Im(ln(Γ(L+1+iη)))
   // Compute σ₀ via Stirling with large shift, then recurse: σ_L = σ_{L-1} + atan(η/L)
@@ -405,11 +373,7 @@ void DWBA::XSectn() {
   auto sigin  = [&](int L) { return sig_in [std::min(L, Lcol)]; };
   auto sigout = [&](int L) { return sig_out[std::min(L, Lcol)]; };
   // Debug Coulomb phases
-  for (int L = 0; L <= 5; L++) {
-    fprintf(stderr, "CPP_SIG L=%d sigin=%.8f sigout=%.8f\n", L, sig_in[L], sig_out[L]);
-  }
-
-  // ── Step 3: BETCAL ────────────────────────────────────────────────────
+    // ── Step 3: BETCAL ────────────────────────────────────────────────────
   // BETAS[2][NSPL][Lo-LMIN+1]  (2 for real/imag, NSPL channels, Lo range)
   // LOMN = LMIN_dc (= LBASE for reactions), LOMX = LIMOST = LMAX_dc
   int LOMN   = LMIN_dc;
@@ -523,11 +487,6 @@ void DWBA::XSectn() {
         if (k_src < 0) continue;
 
         double amag = SMAG[k_src][Li_idx];
-        // Debug: check Lo=3 contributions
-        if (Lo == 3 && LX == 2 && gk.JP == 1) {
-          fprintf(stderr, "DBG_GROUP Lo=3 LX=2 JP=1 Li=%d LDEL=%d k_src=%d SMAG=%.6e\n",
-            Li, LDEL_for_Li, k_src, amag);
-        }
         if (amag == 0.0) continue;
 
         double phase = SPHASE[k_src][Li_idx] + sigin(Li) + sigout(Lo);
@@ -728,4 +687,5 @@ void DWBA::XSectn() {
               << dSigma << "\n";
   }
 
+}
 }
