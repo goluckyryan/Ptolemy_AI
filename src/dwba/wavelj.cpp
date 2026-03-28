@@ -127,6 +127,11 @@ void DWBA::WavSet(Channel &ch) {
 void DWBA::WavElj(Channel &ch, int L, int Jp) {
   int N = ch.NSteps;
   double h = ch.StepSize;
+  bool is_in = (&ch == &Incoming);
+  if (L <= 3) {
+    fprintf(stderr, "WAVELJ %s L=%d JP=%d N=%d h=%.6f Rmax=%.3f\n",
+            is_in?"IN":"OUT", L, Jp, N, h, N*h);
+  }
   double h2 = h * h;
   double h2_12 = h2 / 12.0;
 

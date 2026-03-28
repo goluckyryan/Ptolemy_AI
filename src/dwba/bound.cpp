@@ -94,7 +94,7 @@ void DWBA::CalculateKinematics() {
     Incoming.k   = std::sqrt(2.0 * mu_in_kin * Incoming.Ecm) / HBARC_B;
     Incoming.eta = Z1 * Z2 * mu_in_kin / (137.036 * HBARC_B * Incoming.k);
 
-    Outgoing.Ecm = Incoming.Ecm + Q_calc;  // Q_calc from real masses
+    Outgoing.Ecm = Incoming.Ecm + Q_calc - Ex;  // Q_eff = Q_gs - Ex
     if (Outgoing.Ecm < 0) {
       Outgoing.Ecm = 0;
     }
