@@ -185,33 +185,24 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     double f_im = f_conv * Wi - spin_dot_L * f_conv * Vsoi;
     f[i] = std::complex<double>(f_re, f_im);
 
-    // Debug: print f(r) for L=3, incoming channel
-    if (L == 3 && i <= 5) {
-      double f_nuclear = f_conv * Vr;
-      double f_coulomb = f_conv * Vc;
-      double f_so = -spin_dot_L * f_conv * Vso;
-      double f_cent = LL1 / (r * r);
-      fprintf(stderr, "DBG_FR3 L=%d JP=%d i=%d r=%.4f f_re=%.6e f_im=%.6e | k2=%.6e -cent=%.6e +nucl=%.6e -coul=%.6e +so=%.6e sdotL=%.3f Vso=%.6e\n",
-        L, Jp, i, r, f_re, f_im, k2, f_cent, f_nuclear, f_coulomb, f_so, spin_dot_L, Vso);
-    }
-    // Debug: print f(r) at key radii for L=1, all JPs, incoming
-    if (L == 1 && (i == 24 || i == 16 || i == 40)) {
-      double f_nuclear = f_conv * Vr;
-      double f_coulomb = f_conv * Vc;
-      double f_so = -spin_dot_L * f_conv * Vso;
-      double f_cent = LL1 / (r * r);
-      fprintf(stderr, "DBG_FR L=%d JP=%d i=%d r=%.4f f_re=%.6e f_im=%.6e | k2=%.6e -cent=%.6e +nucl=%.6e -coul=%.6e +so=%.6e sdotL=%.3f Vso=%.6e\n",
-        L, Jp, i, r, f_re, f_im, k2, f_cent, f_nuclear, f_coulomb, f_so, spin_dot_L, Vso);
-    }
-    // Fortran stores W(I) in WAVR(I+4)/WAVI(I+4) before integration
-    if (L == 1 && Jp == 4 && r >= 0.125 && r <= 6.0) {
-      double Wr = 1.0 + h2_12 * f_re;
-      double Wi_nm = h2_12 * f_im;
-      // Also print individual f components for diagnosis
-      if (i == 1 || i == 24) {  // R=0.125 and 3 fm
-        // Without SO term:
-        double f_re_noSO = k2 - LL1/(r*r) - f_conv*Vc + f_conv*Vr;
-      }
+    // Fortran stores WAVR(I+4) = h²/12 × f(r) = total Numerov potential
+    // C++ f[i] = k² - L(L+1)/r² - f_conv×Vc + f_conv×Vr - sdotL×f_conv×Vso + i×(...)
+    // Fortran WAVR(I+4) = VREAL(I+1) + DLSQ×VCENT(I+1) + SDOTL×ALLOC(LSOR+I)
+    // where VREAL = -(h/ℏc)²×μ/6 × V_nuclear, VCENT = -(h/ℏc)²×μ/6 × 1/r²
+    // So WAVR(I+4) = h²/(12E) × f(r) ... but with different sign convention
+    // Actually: h²_12 = h² * μ / (6 ℏc²) = (StepSize/ℏc)² × μ_MeV / 6
+    // And WAVR(I+4) = 1 + h²_12 × f(r) in Numerov form: W_i = 1 + h²/12 × f_i
+    // No wait, Fortran WAVR = -h²/(12E) × V, so it IS h²_12 but with V/E factor
+    // Let me just print the Numerov W(r) = 1 + h²/12 × f(r) for direct comparison
+    if (L == 4 && Jp == 10 && i >= 2) {
+      // Fortran: WAVR(I+4) is stored BEFORE Numerov integration
+      // It's the quantity h²/12 × [V_nuc + L(L+1)/r² + sdotL×VSO - k²×12/h² ...]
+      // Actually Fortran stores: -h²μ/(6ℏc²) × [V(r) + L(L+1)/r² × ℏc²/μ + sdotL×Vso]
+      // = -(StepSize)²×μ/(6×ℏc²) × potentials
+      // The Numerov form is WAVR(I+4) = total potential in Numerov units
+      // In C++: h²_12 × f(r) gives the same quantity
+      double W_re = h2_12 * f_re;  // This should match Fortran WAVR(I+4)
+      double W_im = h2_12 * f_im;
     }
   }
 
@@ -241,12 +232,7 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     if (std::abs(dn) < 1e-300) dn = 1e-300;
     u[i + 1] = (t1 - t2) / dn;
 
-    if (L == 1 && Jp == 4 && i <= 25) {
-      double Wr = 1.0 + h2_12 * f[i].real();
-      double Wi_nm = h2_12 * f[i].imag();
-    }
-
-    double mag = std::abs(u[i + 1]);
+        double mag = std::abs(u[i + 1]);
     if (mag > BIGNUM) {
       // Rescale: multiply ALL stored values by 1/mag to prevent overflow.
       // DO NOT zero inner points here — that happens after normalization.
@@ -261,36 +247,9 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     }
   }
 
-  // Debug: print u at Fortran's NSTEP=160 (R=20 fm) for comparison
-  if (L == 1 && Jp == 4) {
-    int i_ftn = 160;  // Fortran NSTEP
-    int i_ftn4 = 156;  // NSTEP-NBAKCM
-  }
 
-  // --- S-matrix extraction: handbook single-point method ---
-  // Debug: also try matching at Fortran's NSTEP=160 (R=20 fm) for comparison
-  if (L == 1 && Jp == 4) {
-    int nm_ftn = 160 - 3;  // same stencil offset
-    double R_ftn = nm_ftn * h;
-    double rho_ftn = ch.k * R_ftn;
-    std::vector<double> FC_f(L+2), FCP_f(L+2), GC_f(L+2), GCP_f(L+2);
-    Rcwfn(rho_ftn, ch.eta, L, L, FC_f, FCP_f, GC_f, GCP_f);
-    double FL_f = FC_f[L], GL_f = GC_f[L];
-    double FLP_f = FCP_f[L]*ch.k, GLP_f = GCP_f[L]*ch.k;
-    std::complex<double> u_ftn4 = u[nm_ftn-2], u_ftn3 = u[nm_ftn-1],
-                         u_ftn2 = u[nm_ftn+1], u_ftn1 = u[nm_ftn+2];
-    std::complex<double> up_ftn = (u_ftn4 - 8.0*u_ftn3 + 8.0*u_ftn2 - u_ftn1)/(12.0*h);
-    std::complex<double> u_m_f = u[nm_ftn];
-    double ur_f=u_m_f.real(), ui_f=u_m_f.imag(), upr_f=up_ftn.real(), upi_f=up_ftn.imag();
-    double Ar_f=FLP_f*ur_f-upr_f*FL_f, Ai_f=FLP_f*ui_f-upi_f*FL_f;
-    double Br_f=upr_f*GL_f-GLP_f*ur_f, Bi_f=upi_f*GL_f-GLP_f*ui_f;
-    double nr_f=Br_f-Ai_f, ni_f=Bi_f+Ar_f, dr_f=Br_f+Ai_f, di_f=Bi_f-Ar_f;
-    double den_f=dr_f*dr_f+di_f*di_f;
-    double SJR_f=(den_f>1e-60)?(nr_f*dr_f+ni_f*di_f)/den_f:0;
-    double SJI_f=(den_f>1e-60)?(ni_f*dr_f-nr_f*di_f)/den_f:0;
-  }
-
-  // Match at index n_match = N-3 so 5-point stencil fits within [0..N]
+  // --- S-matrix extraction: Wronskian matching (5-point stencil) ---
+  // Match at N-3 (5-point stencil fits within [0..N])
   int n_match = N - 3;
   double R_match = n_match * h;
   double rho_match = ch.k * R_match;
@@ -343,13 +302,13 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
   }
 
   // --- Normalization (Ptolemy source.mor lines 30913–30916) ---
-  // A1n = 0.5*(F*(1+SJR) + SJI*G)
-  // A2n = 0.5*(G*(1-SJR) + SJI*F)
-  // alpha = (u[n_match] · A1n + conj-part A2n) / |u[n_match]|²
-  // Uses Coulomb functions at matching radius and u at matching point.
+  // Ptolemy normalizes at NSTEP using F, G at R_max.
+  // ALPHAR = (u_N·A1n + v_N·A2n) / (u_N² + v_N²)
+  // ALPHAI = (u_N·A2n - v_N·A1n) / (u_N² + v_N²)
+  // ur, ui already defined from u_m = u[n_match]
   double A1n  = 0.5 * (FL * (1.0 + SJR) + SJI * GL);
   double A2n  = 0.5 * (GL * (1.0 - SJR) + SJI * FL);
-  double den2 = ur * ur + ui * ui;  // |u[n_match]|²
+  double den2 = ur * ur + ui * ui;  // |u[NSTEP]|²
 
   if (den2 > 1e-60) {
     double alpha_r = (ur * A1n + ui * A2n) / den2;
