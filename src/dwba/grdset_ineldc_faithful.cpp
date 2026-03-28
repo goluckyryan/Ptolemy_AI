@@ -1132,6 +1132,7 @@ void DWBA::InelDcFaithful2()
         // Fortran: SUMMAX = ABS(SCTASY) = scattering chi grid endpoint.
         // Use scan exit U (matches edfce88 behavior):
         SUMMAX = U;
+        // DEBUG: force Fortran SUMMAX for testing
 
         // SUMMID = first moment × AMDMLT (Fortran line 16070)
         if (SUM0 > 1e-30) {
@@ -2096,6 +2097,7 @@ void DWBA::InelDcFaithful2()
                                 AccKey acc_key = {IH, JPI_v, JPO};
                                 I_accum[acc_key].first  += TERM * smivl_val * DWR;
                                 I_accum[acc_key].second += TERM * smivl_val * DWI;
+
                             }
                         }
                     }
@@ -2108,6 +2110,13 @@ void DWBA::InelDcFaithful2()
 
             }  // End IV loop (DO 859)
 
+
+                // ── Dump I_accum for comparison ──
+                for (auto& [key, val] : I_accum) {
+                    fprintf(stderr, "CPP_IACC Li=%3d JPI=%3d Lo=%3d JPO=%3d Lx=%3d Ire=%14.6e Iim=%14.6e\n",
+                            LI, key.JPI, lolx_pairs[key.IH].Lo, key.JPO, lolx_pairs[key.IH].Lx,
+                            val.first, val.second);
+                }
 
                         // ── SFROMI: convert I_accum → S-matrix elements ──────────────────
             for (int IH = 0; IH < IHMAX; ++IH) {

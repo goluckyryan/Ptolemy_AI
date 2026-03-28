@@ -444,6 +444,8 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
         ch.WaveFunction[I] = chi_ext * alpha;
       }
     }
+        }
+    }
   }
 
 }
