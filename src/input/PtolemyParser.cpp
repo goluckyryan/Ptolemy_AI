@@ -163,7 +163,8 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
                     const double mn = 939.565346;  // neutron mass in MeV
                     bs_binding = core.Mass + mn - residual.Mass - rxn_excitation;
                     std::cerr << "Auto-computed target binding energy: "
-                              << bs_binding << " MeV (Sn of " << rxn_residual << ")\n";
+                              << bs_binding << " MeV (Sn of " << rxn_residual
+                              << ", Ex=" << rxn_excitation << ")\n";
                 }
                 targetBS_n = bs_nodes; targetBS_l = bs_l; targetBS_j = bs_j;
                 targetBS_pot = bsPot;
@@ -312,9 +313,21 @@ void PtolemyParser::ParseReactionLine(const std::string &line, DWBA &dwba) {
     if (colon == std::string::npos) return;
     std::string rest = Trim(line.substr(colon + 1));
 
-    std::stringstream ss(rest);
+    // Extract everything before ELAB as the reaction string
+    // Need to handle spaces inside parens: "16O(d,p)17O(1/2+ 0.871) ELAB=10"
     std::string rxn_str;
-    ss >> rxn_str;
+    {
+        // Find ELAB (case-insensitive) to split reaction part from energy part
+        std::string rest_upper = rest;
+        std::transform(rest_upper.begin(), rest_upper.end(), rest_upper.begin(), ::toupper);
+        size_t elab_pos = rest_upper.find("ELAB");
+        if (elab_pos != std::string::npos) {
+            rxn_str = Trim(rest.substr(0, elab_pos));
+        } else {
+            rxn_str = Trim(rest);
+        }
+    }
+    std::stringstream ss(rest);
 
     // Parse reaction string: Target(proj,eject)Residual or Target(proj,eject)Residual(JP Ex)
     // Examples: 16O(d,p)17O    16O(d,p)17O(5/2+ 0.000)
