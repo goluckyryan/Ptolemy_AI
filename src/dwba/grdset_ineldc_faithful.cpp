@@ -291,7 +291,14 @@ static bool bsprod_faithful(
     //   FACTOR = 1 + DELV/VEFF
     // where DELV = Coulomb correction (core-core vs scatter) + nuclear WS correction
     // Skip if FPFT is too small (Fortran: IF(ABS(FPFT).LT.SMLNUM) GO TO 200)
-    if (std::abs(FPFT) >= 1e-30 && !bs.jpot.empty()) {
+    //
+    // IMPORTANT: Skip NUCONL correction for ITYPE=2 (V-scan in GRDSET).
+    // Fortran uses VPHI = phi × LVOUT (transition operator fixed part ≈ 0 for neutron transfer),
+    // so FPFT ≈ 0 → correction is automatically skipped (|FPFT| < SMLNUM).
+    // Our C++ uses VPHI = phi × V_AV18 (nonzero at large R due to OPE tail),
+    // so the correction would blow up (FACTOR = 1 + DELV/VEFF diverges when VEFF → 0).
+    // The correction is only physically meaningful during the actual integration (ITYPE=1,3,4).
+    if (ITYPE != 2 && std::abs(FPFT) >= 1e-30 && !bs.jpot.empty()) {
         // Determine RSCAT (Fortran: RSCAT = RA or RB depending on IOUTSW)
         double RSCAT = bs.nuconl_IOUTSW ? RB : RA;
 
@@ -587,10 +594,11 @@ void DWBA::InelDcFaithful2()
     for (int i = 0; i < N_T; ++i)
         phi_T_tab[i] = TgtBS_ch.WaveFunction[i].real();
 
-    // Build vphi_P table (V_np(r) * phi_P(r), projectile BS)
+    // Build vphi_P table (V(r) * phi_P(r), projectile BS)
+    // For AV18: use VPhiProduct (AV18 V × AV18 phi), matching Fortran phiffer linkule
+    // For standard WS: use V_real × WaveFunction
     std::vector<double> vphi_P_tab(N_P, 0.0);
     if (!PrjBS_ch.VPhiProduct.empty()) {
-        // AV18-loaded: use VPhiProduct directly
         for (int i = 0; i < N_P && i < (int)PrjBS_ch.VPhiProduct.size(); ++i)
             vphi_P_tab[i] = PrjBS_ch.VPhiProduct[i];
     } else {
@@ -657,7 +665,6 @@ void DWBA::InelDcFaithful2()
             h_P, N_P, h_T, N_T);
     // Dump vphi_P (V×phi_P) for projectile
     for (int i = 0; i < N_P && i * h_P <= 20.0; i++)
-        fprintf(stderr, "CPP_VPHIP %4d %.6f %.12e\n", i, i*h_P, vphi_P_tab[i]);
     // Dump phi_T for target
     for (int i = 0; i < N_T && i * h_T <= 20.0; i++)
         fprintf(stderr, "CPP_PHIT %4d %.6f %.12e\n", i, i*h_T, phi_T_tab[i]);
@@ -1238,45 +1245,15 @@ void DWBA::InelDcFaithful2()
     // XS[1..2] = {1.0, 1.0-DXV}  (two X values for the phi scan)
     double XS[2] = {1.0, 1.0 - DXV_scan};
 
-    // FORTRAN_OVERRIDE_VRANGE: use Fortran-extracted VMIN/VMAX/VMID directly (IHSAVE=2 bypass)
-    // Extracted from Fortran DBGV689 output for 16O(d,p) at Elab=20 MeV
-    static const double FTN_VMIN[40] = {
-        -0.01637, -0.08516, -0.20726, -0.38067, -0.60223,
-        -0.86791, -1.17289, -1.51173, -1.87854, -2.26715,
-        -2.67141, -3.08541, -3.50372, -3.92154, -4.33489,
-        -4.74059, -5.13625, -5.52003, -5.89039, -6.24568,
-        -6.58359, -6.90051, -7.19070, -7.44534, -7.65150,
-        -7.79091, -7.83900, -7.76434, -7.52919, -7.09244,
-        -6.41654, -5.48041, -4.29962, -2.95134, -1.59376,
-        -0.45710,  0.22218,  0.32918, -0.00461, -0.41321
-    };
-    static const double FTN_VMAX[40] = {
-         0.01637,  0.06495,  0.14813,  0.26645,  0.41795,
-         0.60015,  0.81003,  1.04420,  1.29895,  1.57039,
-         1.85462,  2.14789,  2.44675,  2.74816,  3.04964,
-         3.34930,  3.64580,  3.93832,  4.22634,  4.50947,
-         4.78709,  5.05798,  5.31977,  5.56839,  5.79731,
-         5.99670,  6.15264,  6.24635,  6.25403,  6.14772,
-         5.89822,  5.48140,  4.88879,  4.14210,  3.30725,
-         2.49674,  1.84506,  1.45079,  1.31164,  1.31505
-    };
-    static const double FTN_VMID[40] = {
-         0.00655,  0.01971,  0.04010,  0.06740,  0.09940,
-         0.13351,  0.16691,  0.19674,  0.22034,  0.23537,
-         0.24002,  0.23301,  0.21366,  0.18181,  0.13776,
-         0.08213,  0.01575, -0.06044, -0.14539, -0.23789,
-        -0.33647, -0.43906, -0.54260, -0.64241, -0.73152,
-        -0.79978, -0.83323, -0.81400, -0.72157, -0.53662,
-        -0.24855,  0.13311,  0.56667,  0.97447,  1.26072,
-         1.35621,  1.26715,  1.07892,  0.89711,  0.78553
-    };
-    const bool USE_FTN_VRANGE = false;  // disabled — FTN arrays are stale (from old LCRIT=3 run)
+    // (FTN_VRANGE override removed — LSQPOL Stage 3 now computes V-ranges dynamically)
+
+    // Fortran carries VMAX/VMIN across IU iterations as starting guesses
+    double VMAX_f = 1.0;  // fractional VMAX (persists across IU loop)
+    double VMIN_f = 1.0;  // fractional VMIN (persists across IU loop)
 
     for (int IU = 1; IU <= NPSUM; ++IU) {
         double U = SMHPT[IU-1];  // 0-indexed SMHPT
         double VLEN = 2.0 * U;
-        double VMAX_f = 1.0;  // fractional VMAX
-        double VMIN_f = 1.0;  // fractional VMIN (positive, stored as VMIN_abs = -VMIN_f*VLEN)
 
         if (U < 1.0) {
             // Fortran: IF (U < 1) GO TO 465  (skip scan, keep VMAX=VMIN=1)
@@ -1316,20 +1293,12 @@ void DWBA::InelDcFaithful2()
                     for (int ix = 0; ix < 2; ++ix) {
                         double FIFO2, RP2, RT2;
                         bool ok = bsp_ISCTMN(2, RI, RO, XS[ix], FIFO2, RP2, RT2);
-                        if (IU == 4 && ISYNE == 0 && VVAL > 0.98) {
-                            fprintf(stderr, "CPP_VSCAN_TOP IU=4 VVAL=%.4f ix=%d RI=%.6f RO=%.6f RP=%.6f RT=%.6f FIFO=%.6e ULIM=%.6e ok=%d above=%d\n",
-                                    VVAL, ix, RI, RO, RP2, RT2, FIFO2, ULIM2, ok, (ok && std::fabs(FIFO2)>ULIM2));
+                        if ((IU == 4 || IU == 5 || IU == 8 || IU == 10) && ISYNE == 0 && VVAL > 0.98) {
                         }
                         if (ok && std::fabs(FIFO2) > ULIM2) { above = true; break; }
                     }
                     if (above) {
                         found_in_scan = true; break;
-                    }
-                    if (IU == 4 && ISYNE == 0 && VVAL > 0.95) {
-                        double FIFO_dbg, RP_dbg, RT_dbg;
-                        bsp_ISCTMN(2, RI, RO, XS[0], FIFO_dbg, RP_dbg, RT_dbg);
-                        fprintf(stderr, "CPP_VSCAN_DBG IU=4 VVAL=%.4f RI=%.4f RO=%.4f RP=%.4f RT=%.4f FIFO=%.6e ULIM=%.6e\n",
-                                VVAL, RI, RO, RP_dbg, RT_dbg, FIFO_dbg, ULIM2);
                     }
                     VVAL -= DV_scan;
                 }
@@ -1358,9 +1327,6 @@ void DWBA::InelDcFaithful2()
                     }
                 }
                 VEND_f = VVAL;
-                if (IU <= 8) {
-                    fprintf(stderr, "CPP_VSCAN IU=%d ISYNE=%d VEND_f=%.6f U=%.4f\n", IU, ISYNE, VEND_f, U);
-                }
             }
         }
 
@@ -1369,11 +1335,6 @@ void DWBA::InelDcFaithful2()
         // ALLOC(LVMAX+IU) = VMAX_f * VLEN   (positive absolute V)
         LVMIN_arr[IU] = -VMIN_f * VLEN;
         LVMAX_arr[IU] =  VMAX_f * VLEN;
-
-        if (USE_FTN_VRANGE && IU >= 1 && IU <= 40 && SMHPT[IU-1] >= 1.0) {
-            LVMIN_arr[IU] = FTN_VMIN[IU-1];
-            LVMAX_arr[IU] = FTN_VMAX[IU-1];
-        }
     }
 
     // ── Stage 2: find VMID per H-grid IU ────────────────────────────────────
@@ -1409,10 +1370,10 @@ void DWBA::InelDcFaithful2()
         // Clip: TEMP = 0.3*(VMAX-VMIN); VMID = clamp(VMID, VMIN+TEMP, VMAX-TEMP)
         double TEMP3 = 0.3*(VMAX_abs - VMIN_abs);
         LVMID_arr[IU] = std::max(VMIN_abs + TEMP3, std::min(VMAX_abs - TEMP3, VOFMAX));
+    }
 
-        if (USE_FTN_VRANGE && IU >= 1 && IU <= 40 && SMHPT[IU-1] >= 1.0) {
-            LVMID_arr[IU] = FTN_VMID[IU-1];
-        }
+    // Debug: print raw V-ranges before LSQPOL
+    for (int k = 0; k < NPSUM; k++) {
     }
 
     // ── Stage 3: LSQPOL polynomial smoothing of V-range ─────────────────────
@@ -1421,19 +1382,24 @@ void DWBA::InelDcFaithful2()
     //   Then Y += RESID → Y = polynomial fit of original data
     // NPLYSW = (NPSUMI == NPSUM) → FALSE for us (42 != 40), so polynomial IS used
     {
-        // Build weight array (Fortran ALLOC(LVWTS+IU) — always 1.0 for standard runs)
-        std::vector<double> WVTS(NPSUM, 1.0);
+        // Build weight array: Fortran ALLOC(LVWTS+IU) = 1/(VMAX-VMIN)^2
+        std::vector<double> WVTS(NPSUM);
+        for (int k = 0; k < NPSUM; k++) {
+            double width = LVMAX_arr[k+1] - LVMIN_arr[k+1];
+            WVTS[k] = (width > 1e-12) ? 1.0 / (width * width) : 1.0;
+        }
         
         // Build Y matrix: 3 columns × NPSUM rows (column-major)
-        // Col 0 = LVMIN, Col 1 = LVMAX, Col 2 = LVMID (as fraction)
+        // Fortran layout: LVMIN, LVMID, LVMAX are contiguous
+        // Col 0 = VMIN, Col 1 = VMID (as fraction), Col 2 = VMAX
         int LSUB = 3, MSUB = 4;  // NVPOLY=3, NVTERM=4
         std::vector<double> Y(NPSUM * LSUB);
         for (int k = 0; k < NPSUM; k++) {
             Y[k + 0*NPSUM] = LVMIN_arr[k+1];
-            Y[k + 1*NPSUM] = LVMAX_arr[k+1];
             double width = LVMAX_arr[k+1] - LVMIN_arr[k+1];
             double frac = (width > 1e-12) ? (LVMID_arr[k+1] - LVMIN_arr[k+1]) / width : 0.5;
-            Y[k + 2*NPSUM] = frac;
+            Y[k + 1*NPSUM] = frac;
+            Y[k + 2*NPSUM] = LVMAX_arr[k+1];
         }
         
         // X values = SMHPT (will be scaled internally)
@@ -1523,50 +1489,40 @@ void DWBA::InelDcFaithful2()
             }
         }
         
+        // Unscale X (not needed for residuals, but clean up)
+        for (int k = 0; k < NPSUM; k++) X[k] /= xscale;
+        
         #undef FA
         #undef FB
         
-        // Unscale X
-        for (int k = 0; k < NPSUM; k++) X[k] /= xscale;
-        
-        // OVERRIDE: use exact Fortran post-polynomial V-range values (DBGV689)
-        // From ftn_v456.out (clean build with correct VMAX scan)
-        static const double FTN_VPOLY[40][3] = {
-            {-0.081670, 0.086370, 0.035960}, {-0.452320, 0.289530, 0.041040},
-            {-1.099600, 0.617150, 0.022580}, {-2.010030, 1.058960, -0.025530},
-            {-3.158710, 1.585230, -0.116330}, {-4.515560, 2.163130, -0.255580},
-            {-5.950070, 2.760040, -0.439100}, {-7.117340, 3.346470, -0.653260},
-            {-8.149580, 3.898070, -0.878130}, {-9.008860, 4.396740, -1.091800},
-            {-9.675580, 4.830760, -1.274470}, {-10.145900, 5.194260, -1.411270},
-            {-10.428050, 5.486190, -1.493450}, {-10.538240, 5.709040, -1.518150},
-            {-10.496920, 5.867610, -1.487220}, {-10.325630, 5.967850, -1.405680},
-            {-10.044800, 6.015950, -1.280200}, {-9.672380, 6.017690, -1.117950},
-            {-9.223210, 5.978010, -0.925820}, {-8.709010, 5.900800, -0.710140},
-            {-8.138940, 5.788890, -0.476610}, {-7.520290, 5.644150, -0.230610},
-            {-6.859580, 5.467710, 0.022450}, {-6.163630, 5.260280, 0.276700},
-            {-5.440640, 5.022520, 0.525420}, {-4.701250, 4.755470, 0.760940},
-            {-3.959110, 4.460960, 0.974610}, {-3.231220, 4.141980, 1.157340},
-            {-2.537460, 3.802970, 1.300280}, {-1.899480, 3.449940, 1.395990},
-            {-1.338730, 3.090390, 1.439670}, {-0.873900, 2.733010, 1.430250},
-            {-0.518020, 2.387180, 1.371210}, {-0.275750, 2.062320, 1.270680},
-            {-0.141580, 1.767210, 1.140810}, {-0.099510, 1.509400, 0.996510},
-            {-0.124570, 1.294820, 0.853760}, {-0.186320, 1.127690, 0.727820},
-            {-0.253750, 1.010700, 0.631370}, {-0.300780, 0.945290, 0.571470}
-        };
-        for (int k = 0; k < NPSUM; k++) {
-            LVMIN_arr[k+1] = FTN_VPOLY[k][0];
-            LVMAX_arr[k+1] = FTN_VPOLY[k][1];
-            LVMID_arr[k+1] = FTN_VPOLY[k][2];
-        }
-        
-        if (true) {
-            // Print raw (before polyfit) and post-polyfit
-            for (int k = 0; k < std::min(5, NPSUM); k++) {
-                double raw_vmin = Y[k + 0*NPSUM] - RESID[k + 0*NPSUM]; // Y was already modified
-                fprintf(stderr, "CPP_LSQPOL IU=%d U=%.4f raw_vmin=%.5f poly_vmin=%.5f VMAX=%.5f VMID=%.5f resid0=%.5e\n",
-                        k+1, SMHPT[k], raw_vmin, LVMIN_arr[k+1], LVMAX_arr[k+1], LVMID_arr[k+1], RESID[k]);
+        // Apply polynomial: NPLYSW = (NPSUMI == NPSUM)
+        // If NPLYSW=FALSE (NPSUMI != NPSUM), add residuals to Y → Y becomes polynomial fit
+        // Fortran DO 584: ALLOC(LVMIN+(I-1)*NPSUM+IU) += RESID
+        bool NPLYSW = (NPSUMI == NPSUM);
+        if (!NPLYSW) {
+            for (int l = 0; l < LSUB; l++) {
+                for (int k = 0; k < NPSUM; k++) {
+                    Y[k + l*NPSUM] += RESID[k + l*NPSUM];  // Y = Y + (POLY - Y) = POLY
+                }
             }
         }
+        
+        // Write back to LVMIN/LVMID/LVMAX arrays
+        // Fortran DO 589: VMIN = ALLOC(LVMIN+IU), VMAX = ALLOC(LVMAX+IU)
+        //   VMID = (VMAX-VMIN)*ALLOC(LVMID+IU) + VMIN
+        // Col 0 = VMIN, Col 1 = VMID_frac, Col 2 = VMAX
+        for (int k = 0; k < NPSUM; k++) {
+            LVMIN_arr[k+1] = Y[k + 0*NPSUM];
+            LVMAX_arr[k+1] = Y[k + 2*NPSUM];
+            double vmin = LVMIN_arr[k+1];
+            double vmax = LVMAX_arr[k+1];
+            double vmid_frac = Y[k + 1*NPSUM];
+            LVMID_arr[k+1] = (vmax - vmin) * vmid_frac + vmin;
+        }
+    }
+
+    // Debug: print post-LSQPOL V-ranges
+    for (int k = 0; k < NPSUM; k++) {
     }
 
     // ── Stage 4 (GRDSET DO 689): fill H-grid RIOEX, RIH, ROH tables ─────────
@@ -1605,10 +1561,6 @@ void DWBA::InelDcFaithful2()
                 VMID_h = -VMID_h;
             }
             SYNE_h_arr[IU] = SYNE_h;  // store for INELDC H-integral use
-            if (IU <= 8) {
-                fprintf(stderr, "CPP_V689 IU=%d U=%.4f VMIN=%.5f VMAX=%.5f VMID=%.5f SYNE=%.0f\n",
-                        IU, U, VMIN_h, VMAX_h, VMID_h, SYNE_h);
-            }
 
             // CUBMAP to get NPDIF DIF-grid points
             std::vector<double> xi_tmp(NPDIF), wi_tmp(NPDIF);
