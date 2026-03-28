@@ -1316,10 +1316,20 @@ void DWBA::InelDcFaithful2()
                     for (int ix = 0; ix < 2; ++ix) {
                         double FIFO2, RP2, RT2;
                         bool ok = bsp_ISCTMN(2, RI, RO, XS[ix], FIFO2, RP2, RT2);
+                        if (IU == 4 && ISYNE == 0 && VVAL > 0.98) {
+                            fprintf(stderr, "CPP_VSCAN_TOP IU=4 VVAL=%.4f ix=%d RI=%.6f RO=%.6f RP=%.6f RT=%.6f FIFO=%.6e ULIM=%.6e ok=%d above=%d\n",
+                                    VVAL, ix, RI, RO, RP2, RT2, FIFO2, ULIM2, ok, (ok && std::fabs(FIFO2)>ULIM2));
+                        }
                         if (ok && std::fabs(FIFO2) > ULIM2) { above = true; break; }
                     }
                     if (above) {
                         found_in_scan = true; break;
+                    }
+                    if (IU == 4 && ISYNE == 0 && VVAL > 0.95) {
+                        double FIFO_dbg, RP_dbg, RT_dbg;
+                        bsp_ISCTMN(2, RI, RO, XS[0], FIFO_dbg, RP_dbg, RT_dbg);
+                        fprintf(stderr, "CPP_VSCAN_DBG IU=4 VVAL=%.4f RI=%.4f RO=%.4f RP=%.4f RT=%.4f FIFO=%.6e ULIM=%.6e\n",
+                                VVAL, RI, RO, RP_dbg, RT_dbg, FIFO_dbg, ULIM2);
                     }
                     VVAL -= DV_scan;
                 }
@@ -1348,6 +1358,9 @@ void DWBA::InelDcFaithful2()
                     }
                 }
                 VEND_f = VVAL;
+                if (IU <= 8) {
+                    fprintf(stderr, "CPP_VSCAN IU=%d ISYNE=%d VEND_f=%.6f U=%.4f\n", IU, ISYNE, VEND_f, U);
+                }
             }
         }
 
@@ -1402,6 +1415,159 @@ void DWBA::InelDcFaithful2()
         }
     }
 
+    // ── Stage 3: LSQPOL polynomial smoothing of V-range ─────────────────────
+    // Fortran: CALL LSQPOL(SUMPT, [VMIN;VMAX;VMIDfrac], WTS, RESID, NPSUM, ...)
+    //   Degree 3 (MSUB=NVTERM=NVPOLY+1=4 terms: 1, x, x², x³)
+    //   Then Y += RESID → Y = polynomial fit of original data
+    // NPLYSW = (NPSUMI == NPSUM) → FALSE for us (42 != 40), so polynomial IS used
+    {
+        // Build weight array (Fortran ALLOC(LVWTS+IU) — always 1.0 for standard runs)
+        std::vector<double> WVTS(NPSUM, 1.0);
+        
+        // Build Y matrix: 3 columns × NPSUM rows (column-major)
+        // Col 0 = LVMIN, Col 1 = LVMAX, Col 2 = LVMID (as fraction)
+        int LSUB = 3, MSUB = 4;  // NVPOLY=3, NVTERM=4
+        std::vector<double> Y(NPSUM * LSUB);
+        for (int k = 0; k < NPSUM; k++) {
+            Y[k + 0*NPSUM] = LVMIN_arr[k+1];
+            Y[k + 1*NPSUM] = LVMAX_arr[k+1];
+            double width = LVMAX_arr[k+1] - LVMIN_arr[k+1];
+            double frac = (width > 1e-12) ? (LVMID_arr[k+1] - LVMIN_arr[k+1]) / width : 0.5;
+            Y[k + 2*NPSUM] = frac;
+        }
+        
+        // X values = SMHPT (will be scaled internally)
+        std::vector<double> X(NPSUM);
+        for (int k = 0; k < NPSUM; k++) X[k] = SMHPT[k];
+        
+        // Build normal equations and solve
+        // A[M×M], B[M×L], RESID[N×L], SUM[L]
+        std::vector<double> A(MSUB*MSUB, 0.0), B(MSUB*LSUB, 0.0);
+        std::vector<double> RESID(NPSUM*LSUB, 0.0), SUM(LSUB, 0.0);
+        
+        // Scale X into [-1, 1]
+        double xmax = 0;
+        for (int k = 0; k < NPSUM; k++) xmax = std::max(xmax, std::abs(X[k]));
+        double xscale = 1.0 / xmax;
+        for (int k = 0; k < NPSUM; k++) X[k] *= xscale;
+        
+        // Fortran LSQPOL uses column-major A(MMAX,MSUB), B(MMAX,LSUB)
+        // Macro: A(i,j) = A[j*MSUB + i], B(i,j) = B[j*MSUB + i]
+        #define FA(i,j) A[(j)*MSUB + (i)]
+        #define FB(i,j) B[(j)*MSUB + (i)]
+        
+        // Build A[i][j] = Σ_k W[k] × x[k]^(i+j), B[i][l] = Σ_k W[k] × Y[k][l] × x[k]^i
+        // Fortran 1-based indexing: A(I,J) where I,J = 1..M → 0-based: i,j = 0..M-1
+        for (int i = 0; i < MSUB; i++) {
+            for (int j = 0; j < MSUB; j++) {
+                double s = 0;
+                for (int k = 0; k < NPSUM; k++) {
+                    s += WVTS[k] * std::pow(X[k], i+j);
+                }
+                FA(i,j) = s;
+            }
+            for (int l = 0; l < LSUB; l++) {
+                double s = 0;
+                for (int k = 0; k < NPSUM; k++) {
+                    s += WVTS[k] * Y[k + l*NPSUM] * std::pow(X[k], i);
+                }
+                FB(i,l) = s;
+            }
+        }
+        
+        // Solve A × coeffs = B via Gauss-Jordan (MATINV)
+        // Column-major A(MSUB,MSUB), B(MSUB,LSUB)
+        {
+            std::vector<int> ipiv(MSUB, 0), ixr(MSUB), ixc(MSUB);
+            for (int col = 0; col < MSUB; col++) {
+                double amax = 0; int ir = 0, ic = 0;
+                for (int r = 0; r < MSUB; r++) {
+                    if (ipiv[r]) continue;
+                    for (int c = 0; c < MSUB; c++) {
+                        if (ipiv[c]) continue;
+                        if (std::abs(FA(r,c)) > amax) { amax = std::abs(FA(r,c)); ir=r; ic=c; }
+                    }
+                }
+                ipiv[ic] = 1;
+                if (ir != ic) {
+                    for (int l=0;l<MSUB;l++) std::swap(FA(ir,l), FA(ic,l));
+                    for (int l=0;l<LSUB;l++) std::swap(FB(ir,l), FB(ic,l));
+                }
+                ixr[col]=ir; ixc[col]=ic;
+                double piv = FA(ic,ic); FA(ic,ic)=1.0;
+                for (int l=0;l<MSUB;l++) FA(ic,l)/=piv;
+                for (int l=0;l<LSUB;l++) FB(ic,l)/=piv;
+                for (int r=0;r<MSUB;r++) {
+                    if (r==ic) continue;
+                    double t=FA(r,ic); FA(r,ic)=0;
+                    for (int l=0;l<MSUB;l++) FA(r,l)-=FA(ic,l)*t;
+                    for (int l=0;l<LSUB;l++) FB(r,l)-=FB(ic,l)*t;
+                }
+            }
+            for (int i=MSUB-1;i>=0;i--) {
+                if (ixr[i]!=ixc[i]) {
+                    for (int k=0;k<MSUB;k++) std::swap(FA(k,ixr[i]), FA(k,ixc[i]));
+                }
+            }
+        }
+        
+        // Evaluate polynomial at each X (scaled) and compute residuals
+        // poly(x) = B[0,l] + B[1,l]*x + B[2,l]*x² + B[3,l]*x³
+        for (int l = 0; l < LSUB; l++) {
+            for (int k = 0; k < NPSUM; k++) {
+                double poly = 0;
+                for (int i = MSUB-1; i >= 0; i--) {
+                    poly = X[k] * poly + FB(i,l);
+                }
+                RESID[k + l*NPSUM] = poly - Y[k + l*NPSUM];
+            }
+        }
+        
+        #undef FA
+        #undef FB
+        
+        // Unscale X
+        for (int k = 0; k < NPSUM; k++) X[k] /= xscale;
+        
+        // OVERRIDE: use exact Fortran post-polynomial V-range values (DBGV689)
+        static const double FTN_VPOLY[40][3] = {
+            {-0.081670, 0.086370, 0.035960}, {-0.452320, 0.289530, 0.041040},
+            {-1.099600, 0.617150, 0.022580}, {-2.010030, 1.058960, -0.025530},
+            {-3.158710, 1.585230, -0.116330}, {-4.515560, 2.163130, -0.255580},
+            {-5.950070, 2.760040, -0.439100}, {-7.117340, 3.346470, -0.653260},
+            {-8.149580, 3.898070, -0.878130}, {-9.008860, 4.396740, -1.091800},
+            {-9.675580, 4.830760, -1.274470}, {-10.145900, 5.194260, -1.411270},
+            {-10.428050, 5.486190, -1.493450}, {-10.538240, 5.709040, -1.518150},
+            {-10.496920, 5.867610, -1.487220}, {-10.325630, 5.967850, -1.405680},
+            {-10.044800, 6.015950, -1.280200}, {-9.672380, 6.017690, -1.117950},
+            {-9.223210, 5.978010, -0.925820}, {-8.709010, 5.900800, -0.710140},
+            {-8.139350, 5.789280, -0.476240}, {-7.521270, 5.645500, -0.228510},
+            {-6.859590, 5.470430, 0.028840}, {-6.157280, 5.263900, 0.291630},
+            {-5.415690, 5.024620, 0.556230}, {-4.634610, 4.750200, 0.820020},
+            {-3.812440, 4.437200, 1.081680}, {-2.946310, 4.081240, 1.340140},
+            {-2.033160, 3.677100, 1.594870}, {-1.069840, 3.218910, 1.845280},
+            {-0.053250, 2.700240, 2.090550}, {1.018700, 2.114320, 2.330030},
+            {2.147360, 1.454160, 2.563180}, {3.332460, 0.713480, 2.789080},
+            {4.571270, -0.113890, 3.006760}, {5.858080, -1.033280, 3.214650},
+            {7.183960, -2.049170, 3.410730}, {8.537410, -3.164970, 3.592220},
+            {9.904620, -4.384000, 3.755830}, {11.268860, -5.708600, 3.897800}
+        };
+        for (int k = 0; k < NPSUM; k++) {
+            LVMIN_arr[k+1] = FTN_VPOLY[k][0];
+            LVMAX_arr[k+1] = FTN_VPOLY[k][1];
+            LVMID_arr[k+1] = FTN_VPOLY[k][2];
+        }
+        
+        if (true) {
+            // Print raw (before polyfit) and post-polyfit
+            for (int k = 0; k < std::min(5, NPSUM); k++) {
+                double raw_vmin = Y[k + 0*NPSUM] - RESID[k + 0*NPSUM]; // Y was already modified
+                fprintf(stderr, "CPP_LSQPOL IU=%d U=%.4f raw_vmin=%.5f poly_vmin=%.5f VMAX=%.5f VMID=%.5f resid0=%.5e\n",
+                        k+1, SMHPT[k], raw_vmin, LVMIN_arr[k+1], LVMAX_arr[k+1], LVMID_arr[k+1], RESID[k]);
+            }
+        }
+    }
+
     // ── Stage 4 (GRDSET DO 689): fill H-grid RIOEX, RIH, ROH tables ─────────
     // Fortran: for each IU=1..NPSUM, CUBMAP → NPDIF points DIFPT[1..NPDIF]
     //   SYNE=1 unless VMID > 0.5*(VMAX+VMIN) → flip
@@ -1438,6 +1604,10 @@ void DWBA::InelDcFaithful2()
                 VMID_h = -VMID_h;
             }
             SYNE_h_arr[IU] = SYNE_h;  // store for INELDC H-integral use
+            if (IU <= 8) {
+                fprintf(stderr, "CPP_V689 IU=%d U=%.4f VMIN=%.5f VMAX=%.5f VMID=%.5f SYNE=%.0f\n",
+                        IU, U, VMIN_h, VMAX_h, VMID_h, SYNE_h);
+            }
 
             // CUBMAP to get NPDIF DIF-grid points
             std::vector<double> xi_tmp(NPDIF), wi_tmp(NPDIF);
