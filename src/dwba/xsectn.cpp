@@ -355,44 +355,52 @@ void DWBA::XSectn() {
     }
   }
   // ── Coulomb phases sig_in(Li), sig_out(Lo) ────────────────────────────
-  // σ_L = Im(ln(Γ(L+1+iη))) — exact Coulomb phase shift
-  // Compute via Stirling approximation for complex log-gamma
-  auto loggamma_imag = [](double L_plus_1, double eta) -> double {
-    // Im(ln(Γ(z))) where z = L_plus_1 + i*eta
-    // Shift z up until Re(z) > 15 for Stirling convergence
+  // σ_L = Im(ln(Γ(L+1+iη)))
+  // Compute σ₀ via Stirling with large shift, then recurse: σ_L = σ_{L-1} + atan(η/L)
+  // This matches the Fortran DSGMAL approach.
+  auto sigma0_stirling = [](double eta) -> double {
+    // Compute σ₀ = Im(ln(Γ(1+iη))) by shifting up to large Re(z), applying Stirling,
+    // then subtracting the recursion shifts.
+    // ln(Γ(z)) = ln(Γ(z+N)) - Σ_{k=0}^{N-1} ln(z+k)
+    // Im part: σ₀ = Im(ln(Γ(1+iη+N))) - Σ_{k=0}^{N-1} atan2(η, 1+k)
+    const int NSHIFT = 200;  // shift far enough for Stirling convergence
+    double x = 1.0 + NSHIFT;  // Re(z+N) = 1+N
     double result = 0.0;
-    double x = L_plus_1;
-    while (x < 15.0) {
-      result -= std::atan2(eta, x);
-      x += 1.0;
+    // Subtract recursion shifts
+    for (int k = 0; k < NSHIFT; k++) {
+      result -= std::atan2(eta, 1.0 + k);
     }
-    // Stirling series: ln(Γ(z)) ≈ (z-0.5)*ln(z) - z + 0.5*ln(2π) + Σ B_{2n}/(2n(2n-1)*z^(2n-1))
-    // Im part:
+    // Stirling for z = x + i*eta (x = 1+NSHIFT)
     double r2 = x*x + eta*eta;
     double theta = std::atan2(eta, x);
     // (z-0.5)*ln(z): Im = (x-0.5)*theta + eta*0.5*log(r2)
-    // But we need to be more careful with the log(z) = 0.5*ln(r2) + i*theta
     result += (x - 0.5) * theta + eta * 0.5 * std::log(r2);
     // -z: Im = -eta
     result -= eta;
-    // Stirling correction terms (first few):
-    // B2=1/6: 1/(12*z) → Im(-1/(12*z)) = Im(-1/(12*(x+iy))) = eta/(12*r2)
+    // Bernoulli corrections:
+    // 1/(12z): Im = eta/(12*r2)
     result += eta / (12.0 * r2);
-    // B4=-1/30: -1/(360*z^3) → need Im(-1/(360*z^3))
-    // z^3 has Im = 3x^2*eta - eta^3 = eta*(3x^2-eta^2)
-    // 1/z^3 = conj(z^3)/|z|^6 → Im = -Im(z^3)/|z|^6 = -eta*(3x^2-eta^2)/(r2^3)
-    // -1/360 × that = eta*(3x^2-eta^2)/(360*r2^3)
+    // -1/(360*z^3): Im = eta*(3x²-η²)/(360*r2³)
     double r4 = r2*r2;
     result -= eta * (3.0*x*x - eta*eta) / (360.0 * r4 * r2);
+    // 1/(1260*z^5)
+    double r6 = r4*r2;
+    double x2 = x*x, e2 = eta*eta;
+    double im_z5 = eta*(5*x2*x2 - 10*x2*e2 + e2*e2); // Im(z^5) terms
+    result += im_z5 / (1260.0 * r6 * r4);
     return result;
   };
 
   int Lcol = std::max(LOMOST, LIMOST) + 5;
   std::vector<double> sig_in (Lcol+1, 0.0);
   std::vector<double> sig_out(Lcol+1, 0.0);
-  for (int L = 0; L <= Lcol; L++) {
-    sig_in [L] = loggamma_imag((double)(L+1), Incoming.eta);
-    sig_out[L] = loggamma_imag((double)(L+1), Outgoing.eta);
+  // σ₀
+  sig_in [0] = sigma0_stirling(Incoming.eta);
+  sig_out[0] = sigma0_stirling(Outgoing.eta);
+  // Recurse: σ_L = σ_{L-1} + atan(η/L)
+  for (int L = 1; L <= Lcol; L++) {
+    sig_in [L] = sig_in [L-1] + std::atan2(Incoming.eta,  (double)L);
+    sig_out[L] = sig_out[L-1] + std::atan2(Outgoing.eta, (double)L);
   }
   auto sigin  = [&](int L) { return sig_in [std::min(L, Lcol)]; };
   auto sigout = [&](int L) { return sig_out[std::min(L, Lcol)]; };
@@ -658,7 +666,7 @@ void DWBA::XSectn() {
     double angcm_rad = theta_rad;  // default: CM = lab
     double AJACOB = 1.0;
     
-    if (true) {  // labangles mode
+    if (false) {  // labangles mode — disabled for CM frame input
       double sin_lab = std::sin(theta_rad);
       double cos_lab = std::cos(theta_rad);
       double temp = 1.0 - std::pow(TAU_lab * sin_lab, 2);
