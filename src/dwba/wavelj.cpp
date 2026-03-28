@@ -353,6 +353,20 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
   if (ch.SMatrix.size() <= (size_t)L) ch.SMatrix.resize(L + 1);
   ch.SMatrix[L] = std::complex<double>(SJR, SJI);
 
+  // --- Elastic S-matrix override ---
+  // If external S-matrices are loaded (e.g., from Fortran), replace our computed S
+  // and use the external values for normalization. This changes chi(r) globally.
+  if (hasElasticOverride) {
+    bool is_in = (&ch == &Incoming);
+    auto& override_map = is_in ? elasticSMatOverride_in : elasticSMatOverride_out;
+    auto it = override_map.find({L, Jp});
+    if (it != override_map.end()) {
+      SJR = it->second.real();
+      SJI = it->second.imag();
+      ch.SMatrix[L] = std::complex<double>(SJR, SJI);
+    }
+  }
+
   // Print S-matrix
   {
     double mag_S = std::sqrt(SJR*SJR + SJI*SJI);

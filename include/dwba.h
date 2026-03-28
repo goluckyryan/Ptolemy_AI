@@ -5,6 +5,7 @@
 #include "Potentials.h"
 #include <complex>
 #include <string>
+#include <map>
 #include <tuple>
 #include <vector>
 
@@ -80,6 +81,15 @@ public:
   void SetRelativisticKinematics(bool use_rel) { useRelativisticKinematics = use_rel; }
   void SetUseTMATCH(bool use_tmatch) { useTMATCH = use_tmatch; }
 
+  // Override elastic S-matrices with external values (e.g., from Fortran)
+  void SetElasticSMatrixOverride(
+      const std::map<std::pair<int,int>, std::complex<double>>& in_smat,
+      const std::map<std::pair<int,int>, std::complex<double>>& out_smat) {
+    elasticSMatOverride_in = in_smat;
+    elasticSMatOverride_out = out_smat;
+    hasElasticOverride = true;
+  }
+
   void SetIncomingPotential(const ChannelPotential &pot);
   void SetOutgoingPotential(const ChannelPotential &pot);
 
@@ -122,6 +132,10 @@ private:
   // Kinematics mode flag
   bool useRelativisticKinematics = false;  // false = NR (Ptolemy default), true = relativistic
   bool useTMATCH = false;  // false = 5-point Wronskian, true = Fortran 2-point TMATCH
+
+  std::map<std::pair<int,int>, std::complex<double>> elasticSMatOverride_in;
+  std::map<std::pair<int,int>, std::complex<double>> elasticSMatOverride_out;
+  bool hasElasticOverride = false;
 
   // Nuclear spins (set by parser or defaulted in Calculate/CalculateZR)
   double SpinTarget   = -1.0;   // J of target nucleus A (-1 = not set, use heuristic)

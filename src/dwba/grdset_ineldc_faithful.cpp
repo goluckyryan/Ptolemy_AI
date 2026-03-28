@@ -2160,6 +2160,9 @@ void DWBA::InelDcFaithful2()
 
                         std::complex<double> I_raw(it->second.first,
                                                    it->second.second);
+
+                        // Debug: dump raw I_accum (before phase/ATERM)
+
                         std::complex<double> Integral = I_raw * phase_factor;
                         double sf_norm = FACTOR_sf * std::fabs(ATERM_val)
                                        / std::sqrt(2.0*LI + 1.0);
