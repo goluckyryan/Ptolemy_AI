@@ -78,6 +78,7 @@ public:
   // Kinematics mode (default: non-relativistic, matching Ptolemy)
   // Set true to use relativistic 4-momentum kinematics instead.
   void SetRelativisticKinematics(bool use_rel) { useRelativisticKinematics = use_rel; }
+  void SetUseTMATCH(bool use_tmatch) { useTMATCH = use_tmatch; }
 
   void SetIncomingPotential(const ChannelPotential &pot);
   void SetOutgoingPotential(const ChannelPotential &pot);
@@ -120,6 +121,7 @@ private:
 
   // Kinematics mode flag
   bool useRelativisticKinematics = false;  // false = NR (Ptolemy default), true = relativistic
+  bool useTMATCH = false;  // false = 5-point Wronskian, true = Fortran 2-point TMATCH
 
   // Nuclear spins (set by parser or defaulted in Calculate/CalculateZR)
   double SpinTarget   = -1.0;   // J of target nucleus A (-1 = not set, use heuristic)

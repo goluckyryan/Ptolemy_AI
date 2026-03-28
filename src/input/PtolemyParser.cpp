@@ -448,6 +448,7 @@ void PtolemyParser::ParseParameterSet(const std::string &line, DWBA &dwba) {
             else if (utoken == "R0TARGET")   {} // already default behavior
             else if (utoken == "DPSB")       {} // deuteron projectile stripping/breakup — default
             else if (utoken == "NONLOCALITY") {} // ignore for now
+            else if (utoken == "TMATCH")     { dwba.SetUseTMATCH(true); }
         }
     }
 }

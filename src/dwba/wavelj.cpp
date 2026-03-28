@@ -127,11 +127,6 @@ void DWBA::WavSet(Channel &ch) {
 void DWBA::WavElj(Channel &ch, int L, int Jp) {
   int N = ch.NSteps;
   double h = ch.StepSize;
-  bool is_in = (&ch == &Incoming);
-  if (L <= 3) {
-    fprintf(stderr, "WAVELJ %s L=%d JP=%d N=%d h=%.6f Rmax=%.3f\n",
-            is_in?"IN":"OUT", L, Jp, N, h, N*h);
-  }
   double h2 = h * h;
   double h2_12 = h2 / 12.0;
 
@@ -253,46 +248,107 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
   }
 
 
-  // --- S-matrix extraction: Wronskian matching (5-point stencil) ---
-  // Match at N-3 (5-point stencil fits within [0..N])
-  int n_match = N - 3;
-  double R_match = n_match * h;
-  double rho_match = ch.k * R_match;
+  // --- S-matrix extraction ---
+  // Two methods available:
+  //   useTMATCH=true:  Fortran 2-point matching (TMATCH) at R1=N*h and R2=(N-4)*h
+  //   useTMATCH=false: 5-point Wronskian stencil at N-3
 
-  // Get Coulomb functions and derivatives at R_match
-  std::vector<double> FC(L + 2), FCP(L + 2), GC(L + 2), GCP(L + 2);
-  Rcwfn(rho_match, ch.eta, L, L, FC, FCP, GC, GCP);
-  double FL  = FC[L];
-  double GL  = GC[L];
-  double FLP = FCP[L] * ch.k;   // dF/dr = (dF/drho)*(drho/dr) = FP * k
-  double GLP = GCP[L] * ch.k;   // same for G
+  double SJR, SJI;
+  int n_match;  // matching point index for normalization
+  double FL, GL; // Coulomb functions at matching point (full, not half)
 
-  // 5-point stencil for u'(R_match)
-  std::complex<double> u_nm2 = u[n_match - 2];
-  std::complex<double> u_nm1 = u[n_match - 1];
-  std::complex<double> u_np1 = u[n_match + 1];
-  std::complex<double> u_np2 = u[n_match + 2];
-  std::complex<double> u_prime = (u_nm2 - 8.0*u_nm1 + 8.0*u_np1 - u_np2) / (12.0 * h);
+  if (useTMATCH) {
+    // ── Fortran TMATCH: 2-point matching ──────────────────────────────────
+    // Uses u at R1 = NSTEP*h and R2 = (NSTEP-NBAKCM)*h (NBAKCM=4)
+    // with Coulomb F,G at both radii. Matches Ptolemy TMATCH exactly.
+    const int NBAKCM = 4;
+    int n1 = N;           // last valid Numerov index (u[N] = value at R = N*h)
+    int n2 = N - NBAKCM;  // back point
 
-  std::complex<double> u_m = u[n_match];
-  double ur = u_m.real(), ui = u_m.imag();
-  double upr = u_prime.real(), upi = u_prime.imag();
+    double R1 = n1 * h;
+    double R2 = n2 * h;
 
-  // Wronskians: A = W(F,u), B = W(u,G)
-  double Ar = FLP * ur - upr * FL;
-  double Ai = FLP * ui - upi * FL;
-  double Br = upr * GL - GLP * ur;
-  double Bi = upi * GL - GLP * ui;
+    // Coulomb functions at both radii (full double precision)
+    std::vector<double> FC1(L+2), FCP1(L+2), GC1(L+2), GCP1(L+2);
+    std::vector<double> FC2(L+2), FCP2(L+2), GC2(L+2), GCP2(L+2);
+    Rcwfn(ch.k * R1, ch.eta, L, L, FC1, FCP1, GC1, GCP1);
+    Rcwfn(ch.k * R2, ch.eta, L, L, FC2, FCP2, GC2, GCP2);
 
-  // S = (B + iA) / (B - iA)
-  double num_r = Br - Ai;
-  double num_i = Bi + Ar;
-  double den_r = Br + Ai;
-  double den_i = Bi - Ar;
-  double den   = den_r*den_r + den_i*den_i;
+    // Fortran half-values
+    double F1h = 0.5 * FC1[L];  // F at R1 (end point)
+    double G1h = 0.5 * GC1[L];  // G at R1
+    double F2h = 0.5 * FC2[L];  // F at R2 (back point)
+    double G2h = 0.5 * GC2[L];  // G at R2
 
-  double SJR = (den > 1e-60) ? (num_r*den_r + num_i*den_i) / den : 0.0;
-  double SJI = (den > 1e-60) ? (num_i*den_r - num_r*den_i) / den : 0.0;
+    // Wavefunction at R1 and R2 (u[n] = value at step n)
+    double U1R = u[n1].real(), U1I = u[n1].imag();
+    double U2R = u[n2].real(), U2I = u[n2].imag();
+
+    // Cross-Wronskian (Fortran ABI)
+    double ABI = 2.0 * (F2h * G1h - F1h * G2h);
+
+    // BY matrix (Fortran TMATCH lines 29800-29810, uncoupled IL=1, IS=1)
+    double BYR = F2h*U1R + G2h*U1I - F1h*U2R - G1h*U2I;
+    double BYI = F2h*U1I - G2h*U1R - F1h*U2I + G1h*U2R;
+
+    // Gaussian elimination for normalization C = ABI / (BYR + i*BYI)
+    double TEMP_piv = BYR*BYR + BYI*BYI;
+    double PIVR = BYR / TEMP_piv;
+    double PIVI = -BYI / TEMP_piv;
+    double CR11 = -PIVI * ABI;  // = BYI * ABI / TEMP
+    double CI11 =  PIVR * ABI;  // = BYR * ABI / TEMP
+
+    // S-matrix from normalization (Fortran TMATCH lines 29855-29867)
+    // TR = U1*C (complex multiply), then subtract (F1h, G1h) for diagonal element
+    // Then S = (TR - i*TI) * (DENR + i*DENI)  [complex multiply with conjugate-like structure]
+    double DENA = F1h*F1h + G1h*G1h;
+    double DENR = F1h / DENA;
+    double DENI = G1h / DENA;
+    double TR = U1R*CR11 - U1I*CI11 - F1h;  // subtract F1h for diagonal (IL==ILAS)
+    double TI = U1R*CI11 + U1I*CR11 - G1h;  // subtract G1h for diagonal
+    SJR = TR*DENR - TI*DENI;
+    SJI = TR*DENI + TI*DENR;
+
+    n_match = n1;
+    FL = FC1[L];
+    GL = GC1[L];
+
+  } else {
+    // ── 5-point Wronskian stencil ─────────────────────────────────────────
+    n_match = N - 3;
+    double R_match = n_match * h;
+
+    std::vector<double> FC(L + 2), FCP(L + 2), GC(L + 2), GCP(L + 2);
+    Rcwfn(ch.k * R_match, ch.eta, L, L, FC, FCP, GC, GCP);
+    FL  = FC[L];
+    GL  = GC[L];
+    double FLP = FCP[L] * ch.k;
+    double GLP = GCP[L] * ch.k;
+
+    std::complex<double> u_nm2 = u[n_match - 2];
+    std::complex<double> u_nm1 = u[n_match - 1];
+    std::complex<double> u_np1 = u[n_match + 1];
+    std::complex<double> u_np2 = u[n_match + 2];
+    std::complex<double> u_prime = (u_nm2 - 8.0*u_nm1 + 8.0*u_np1 - u_np2) / (12.0 * h);
+
+    std::complex<double> u_m = u[n_match];
+    double ur_w = u_m.real(), ui_w = u_m.imag();
+    double upr = u_prime.real(), upi = u_prime.imag();
+
+    double Ar = FLP * ur_w - upr * FL;
+    double Ai = FLP * ui_w - upi * FL;
+    double Br = upr * GL - GLP * ur_w;
+    double Bi = upi * GL - GLP * ui_w;
+
+    double num_r = Br - Ai;
+    double num_i = Bi + Ar;
+    double den_r = Br + Ai;
+    double den_i = Bi - Ar;
+    double den   = den_r*den_r + den_i*den_i;
+
+    SJR = (den > 1e-60) ? (num_r*den_r + num_i*den_i) / den : 0.0;
+    SJI = (den > 1e-60) ? (num_i*den_r - num_r*den_i) / den : 0.0;
+  }
 
   if (ch.SMatrix.size() <= (size_t)L) ch.SMatrix.resize(L + 1);
   ch.SMatrix[L] = std::complex<double>(SJR, SJI);
@@ -306,11 +362,10 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
       is_in ? "IN" : "OUT", L, Jp, mag_S, phase_S, SJR, SJI);
   }
 
-  // --- Normalization (Ptolemy source.mor lines 30913–30916) ---
-  // Ptolemy normalizes at NSTEP using F, G at R_max.
-  // ALPHAR = (u_N·A1n + v_N·A2n) / (u_N² + v_N²)
-  // ALPHAI = (u_N·A2n - v_N·A1n) / (u_N² + v_N²)
-  // ur, ui already defined from u_m = u[n_match]
+  // --- Normalization ---
+  // Normalize at n_match using Coulomb F,G (FL, GL) at that point.
+  // n_match = N for TMATCH, N-3 for Wronskian
+  double ur = u[n_match].real(), ui = u[n_match].imag();
   double A1n  = 0.5 * (FL * (1.0 + SJR) + SJI * GL);
   double A2n  = 0.5 * (GL * (1.0 - SJR) + SJI * FL);
   double den2 = ur * ur + ui * ui;  // |u[NSTEP]|²
