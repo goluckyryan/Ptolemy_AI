@@ -743,7 +743,7 @@ void DWBA::InelDcFaithful2()
     //   DWCUT=2e-6  SUMPTS=8.0
     const int    NPSUM   = 40;
     const int    NPDIF   = 40;
-    const int    NPPHI   = 20;
+    const int    NPPHI   = 20;  // DPSB preset: IGRIDS(3,12) = 20
     const int    NPHIAD  = 4;
     const int    LOOKST  = 250;
     const int    MAPSUM  = 2;   // rational-sinh for U (sum) — Fortran MAPSUM=2 from DPSB parameterset
@@ -1270,7 +1270,7 @@ void DWBA::InelDcFaithful2()
         -0.24855,  0.13311,  0.56667,  0.97447,  1.26072,
          1.35621,  1.26715,  1.07892,  0.89711,  0.78553
     };
-    const bool USE_FTN_VRANGE = true;  // set false to use computed Stage 1
+    const bool USE_FTN_VRANGE = false;  // disabled — FTN arrays are stale (from old LCRIT=3 run)
 
     for (int IU = 1; IU <= NPSUM; ++IU) {
         double U = SMHPT[IU-1];  // 0-indexed SMHPT
@@ -1467,6 +1467,10 @@ void DWBA::InelDcFaithful2()
                 double RP_h = std::sqrt(1.0 + std::pow(S1*RI + T1*RO, 2));
                 double RT_h = std::sqrt(1.0 + std::pow(S2*RI + T2*RO, 2));
                 RIOEX_tab[IPLUNK] = std::exp(ALPHAP*RP_h + ALPHAT*RT_h);
+                if (IPLUNK <= 8) {
+                    fprintf(stderr, "CPP_P1 IU=%d IV=%d IPLUNK=%d U=%.6f V=%.6f RI=%.6f RO=%.6f SYNE=%.0f RIOEX=%.6f\n",
+                            IU, IV, IPLUNK, U, VVAL*SYNE_h, RI, RO, SYNE_h, RIOEX_tab[IPLUNK]);
+                }
             }
         }
     }
@@ -1812,7 +1816,8 @@ void DWBA::InelDcFaithful2()
                     if (RI <= 0.0 || RO <= 0.0) continue;
 
                     // ── LHINT initialization (Fortran DO 409) ────────────────
-                    std::vector<double> LHINT(IHMAX+1, 0.0);  // 1-indexed
+                    // Fortran zeros LHINT, LHABS, LHSM1 EACH IU iteration
+                    std::vector<double> LHINT(IHMAX+1, 0.0);  // 1-indexed — reset per IU
                     std::vector<double> LHABS(IHMAX+1, 0.0);
 
                     // ── DO 489 II=1,NPPHI (phi GL loop) — read from GRDSET stored table ──
@@ -1860,7 +1865,16 @@ void DWBA::InelDcFaithful2()
 
                     }
 
-                    if (LI == 3 && IV == 1) {
+                    if (LI == 3 && IV == 1 && IU == 4) {
+                        fprintf(stderr, "CPP_STEPA LI3 IU=%3d U=%.5e RI=%.6f RO=%.6f RIOEX=% .5e HINT1=% .5e Npts=%d\n",
+                                IU, SMHPT[IU-1], RI, RO, RIOEX, LHINT[1], Npts);
+                        // Dump each phi point with A12
+                        for (int kp = 0; kp < Npts; ++kp) {
+                            double A12_0 = EvalA12(A12_table[0], (double)phi_pts[kp].PHIT, (double)phi_pts[kp].PHI);
+                            fprintf(stderr, "  CPP_PHI IU=4 kphi=%d PHI=%.6f PVPDX=%.6e A12[0]=%.6e prod=%.6e\n",
+                                    kp, (double)phi_pts[kp].PHI, (double)phi_pts[kp].PVPDX, A12_0, 
+                                    (double)phi_pts[kp].PVPDX * A12_0);
+                        }
                     }
 
                 }  // End IU loop (DO 549)
@@ -1891,10 +1905,11 @@ void DWBA::InelDcFaithful2()
                         SMIVL[IH][iu2+1] = Y_out[iu2];
                 }
 
-                // Debug STEP_B: print SMIVL for LI=3, IV=1
-                if (LI == 3 && IV == 1) {
+                // Debug STEP_B: print SMIVL for LI=3
+                if (LI == 3 && IV <= 3) {
                     for (int DBGIU = 1; DBGIU <= NPSUMI; ++DBGIU) {
-                        if (DBGIU > 5 && DBGIU != 20 && DBGIU != 30) continue;
+                        fprintf(stderr, "CPP_STEP_B LI3 IV=%d IU=%3d Usi=%10.4f SMIVL[0]=% .6e SMIVL[1]=% .6e\n",
+                                IV, DBGIU, SMIPT[DBGIU-1], SMIVL[0][DBGIU], SMIVL[1][DBGIU]);
                     }
                 }
 
