@@ -317,12 +317,7 @@ void DWBA::XSectn() {
   }
 
 
-  // Debug: dump ALL SMAG/SPHASE for Li=3 (LI_idx = 3 - LMIN_dc)
-  {
-    int li3_idx = 3 - LMIN_dc;
-    if (li3_idx >= 0 && li3_idx < NUMLIS) {
-        }
-  // ── Coulomb phases sig_in(Li), sig_out(Lo) ────────────────────────────
+    // ── Coulomb phases sig_in(Li), sig_out(Lo) ────────────────────────────
   // σ_L = Im(ln(Γ(L+1+iη)))
   // Compute σ₀ via Stirling with large shift, then recurse: σ_L = σ_{L-1} + atan(η/L)
   // This matches the Fortran DSGMAL approach.
@@ -675,7 +670,12 @@ void DWBA::XSectn() {
       }
 
       double FMNEG = (MX == 0) ? 1.0 : 2.0;
-      dSigma += 10.0 * FMNEG * std::norm(F_amp);  // CM frame, no AJACOB
+      double contrib = 10.0 * FMNEG * std::norm(F_amp);
+      dSigma += contrib;
+      if (theta_deg < 0.01 && contrib > 1e-10) {
+        fprintf(stderr, "CPP_DCS0_K k=%d LX=%d MX=%d LDEL=%d JP=%d JT=%d |F|²=%.6e contrib=%.6e\n",
+                k, JTOCS[k].LX, MX, JTOCS[k].LDEL, JTOCS[k].JP, JTOCS[k].JT, std::norm(F_amp), contrib);
+      }
     }
 
     if (theta_deg < 0.01) {
@@ -687,5 +687,4 @@ void DWBA::XSectn() {
               << dSigma << "\n";
   }
 
-}
 }

@@ -292,24 +292,6 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
   if (ch.SMatrix.size() <= (size_t)L) ch.SMatrix.resize(L + 1);
   ch.SMatrix[L] = std::complex<double>(SJR, SJI);
 
-  // Debug: Coulomb functions at Fortran matching points for comparison
-  // Fortran uses F,G at R_N = NSTEP*h and F1,G1 at R_M = (NSTEP-4)*h
-  {
-    double R_N = N * h;       // Fortran NSTEP
-    double R_M = (N-4) * h;   // Fortran NSTEP-NBAKCM
-    double rho_N = ch.k * R_N;
-    double rho_M = ch.k * R_M;
-    std::vector<double> FCn(L+2), FCPn(L+2), GCn(L+2), GCPn(L+2);
-    std::vector<double> FCm(L+2), FCPm(L+2), GCm(L+2), GCPm(L+2);
-    Rcwfn(rho_N, ch.eta, L, L, FCn, FCPn, GCn, GCPn);
-    Rcwfn(rho_M, ch.eta, L, L, FCm, FCPm, GCm, GCPm);
-    bool is_in = (&ch == &Incoming);
-    int nwp = is_in ? 1 : 2;
-    // Format: NWP L JP F G F1 G1  (same as Fortran FTN_COUL)
-    fprintf(stderr, "CPP_COUL %d %2d %3d %20.12e %20.12e %20.12e %20.12e\n",
-            nwp, L, Jp, FCn[L], GCn[L], FCm[L], GCm[L]);
-  }
-
   // Print S-matrix
   {
     double mag_S = std::sqrt(SJR*SJR + SJI*SJI);
