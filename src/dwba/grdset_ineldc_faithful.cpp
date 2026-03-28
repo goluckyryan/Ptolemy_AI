@@ -2079,8 +2079,11 @@ void DWBA::InelDcFaithful2()
                 // Debug STEP_B: print SMIVL for LI=3
                 if (LI == 3 && IV <= 3) {
                     for (int DBGIU = 1; DBGIU <= NPSUMI; ++DBGIU) {
-                        fprintf(stderr, "CPP_STEP_B LI3 IV=%d IU=%3d Usi=%10.4f SMIVL[0]=% .6e SMIVL[1]=% .6e\n",
-                                IV, DBGIU, SMIPT[DBGIU-1], SMIVL[0][DBGIU], SMIVL[1][DBGIU]);
+                        fprintf(stderr, "CPP_STEP_B LI3 IV=%d IU=%3d Usi=%10.4f SMIVL[0]=% .6e",
+                                IV, DBGIU, SMIPT[DBGIU-1], SMIVL[0][DBGIU]);
+                        if (IHMAX > 1)
+                            fprintf(stderr, " SMIVL[1]=% .6e", SMIVL[1][DBGIU]);
+                        fprintf(stderr, "\n");
                     }
                 }
 
