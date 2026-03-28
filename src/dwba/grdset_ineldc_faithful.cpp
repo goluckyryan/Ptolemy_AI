@@ -2111,6 +2111,26 @@ void DWBA::InelDcFaithful2()
             }  // End IV loop (DO 859)
 
 
+                // ── Override I_accum with Fortran values for Li < 15 ──
+                #ifdef OVERRIDE_IACC_LI15
+                if (LI < 15) {
+                    #include "/tmp/ftn_iacc_override.h"
+                    for (int fi = 0; fi < N_FTN_IACC; ++fi) {
+                        if (FTN_IACC[fi].Li != LI) continue;
+                        // Find matching AccKey
+                        for (auto& [key, val] : I_accum) {
+                            int Lo = lolx_pairs[key.IH].Lo;
+                            int Lx = lolx_pairs[key.IH].Lx;
+                            if (key.JPI == FTN_IACC[fi].JPI && key.JPO == FTN_IACC[fi].JPO
+                                && Lo == FTN_IACC[fi].Lo && Lx == FTN_IACC[fi].Lx) {
+                                val.first  = FTN_IACC[fi].Ire;
+                                val.second = FTN_IACC[fi].Iim;
+                            }
+                        }
+                    }
+                }
+                #endif
+
                 // ── Dump I_accum for comparison ──
                 for (auto& [key, val] : I_accum) {
                     fprintf(stderr, "CPP_IACC Li=%3d JPI=%3d Lo=%3d JPO=%3d Lx=%3d Ire=%14.6e Iim=%14.6e\n",
