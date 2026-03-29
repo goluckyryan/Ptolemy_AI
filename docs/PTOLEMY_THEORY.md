@@ -233,7 +233,7 @@ This collapses the 6D integral to a 3D integral:
 
 $$T_{\text{ZR}} \propto \int d^3 r \, \chi_{b}^{\ast}(\beta \vec{r}) \, \phi_{Bx}^{\ast}(\vec{r}) \, \chi_{a}(\vec{r})$$
 
-Fast but inaccurate for heavy ion reactions, high energies, and states where finite size matters.
+Fast but inaccurate for heavy ion reactions, high energies, and states where finite size matters. See §8.4 for how the finite-range integral collapses to ZR.
 
 ### Finite-Range (Ptolemy)
 
@@ -251,31 +251,71 @@ Ptolemy performs the full **finite-range** calculation — double radial integra
 
 ## 6. Coordinate Geometry
 
-### 6.1 Jacobi Coordinates
+### 6.1 The Three-Body Problem
 
-For a transfer reaction, the relevant coordinates are:
-- $\vec{r}_\alpha$ = relative coordinate (entrance channel, e.g., d ↔ 16O)
-- $\vec{r}_\beta$ = relative coordinate (exit channel, e.g., p ↔ 17O)
-- $\vec{r}$ = internal coordinate (transferred particle ↔ core of projectile)
-- $\vec{R}$ = internal coordinate (transferred particle ↔ target)
+In a transfer reaction $A(a,b)B$ where $a = b + x$ and $B = A + x$, there are four particles but only two independent relative coordinates. The challenge is that the **bound state** coordinates (x relative to its core) differ from the **scattering** coordinates (projectile relative to target).
 
-These are related by:
+We define:
+- $\vec{r}_{\alpha}$ = relative coordinate between a and A (entrance channel)
+- $\vec{r}_{\beta}$ = relative coordinate between b and B (exit channel)
+- $\vec{r}_{T}$ = position of x relative to A (target bound state coordinate)
+- $\vec{r}_{P}$ = position of x relative to b (projectile bound state coordinate)
 
-$$\vec{r}_x = S_1\vec{r}_\alpha + T_1\vec{r}_\beta \quad \text{(transferred particle relative to target)}$$
-$$\vec{r}_p = S_2\vec{r}_\alpha + T_2\vec{r}_\beta \quad \text{(transferred particle relative to ejectile)}$$
+The key insight: $\vec{r}_{T}$ and $\vec{r}_{P}$ are **linear combinations** of $\vec{r}_{\alpha}$ and $\vec{r}_{\beta}$:
 
-For stripping (ISTRIP=1), coefficients from source.mor lines 15876–15882.
+$$\vec{r}_{T} = S_1 \vec{r}_{\alpha} + T_1 \vec{r}_{\beta}$$
+$$\vec{r}_{P} = S_2 \vec{r}_{\alpha} + T_2 \vec{r}_{\beta}$$
 
-### 6.2 Magnitudes
+### 6.2 Derivation of S1, T1, S2, T2
 
-$$r_x = \sqrt{S_{1}^{2} \, r_{\alpha}^{2} + T_{1}^{2} \, r_{\beta}^{2} + 2 S_1 T_1 r_{\alpha} r_{\beta} \cos\phi_{ab}}$$
-$$r_p = \sqrt{S_{2}^{2} \, r_{\alpha}^{2} + T_{2}^{2} \, r_{\beta}^{2} + 2 S_2 T_2 r_{\alpha} r_{\beta} \cos\phi_{ab}}$$
+For **stripping** ($a \to b + x$, ISTRIP=1), the coefficients follow from center-of-mass relations. Define mass ratios:
 
-### 6.3 (U,V) Coordinate Transformation
+$$\rho_1 = \frac{m_x}{m_b}, \qquad \rho_2 = \frac{m_x}{m_A}$$
 
-$$U = \frac{r_\alpha + r_\beta}{2}, \quad V = r_\alpha - r_\beta, \quad \text{Jacobian} = 1$$
+Then (Fortran source.mor lines 15876–15881):
 
-Domain: $U \in [0, U_{max}]$, $V \in [-2U, +2U]$ (ensures $r_\alpha > 0$, $r_\beta > 0$).
+$$\text{TEMP} = \frac{1}{\rho_1 + \rho_2(1 + \rho_1)}$$
+
+$$S_1 = (1 + \rho_1)(1 + \rho_2) \cdot \text{TEMP}$$
+
+$$T_1 = -(1 + \rho_2) \cdot \text{TEMP}$$
+
+$$S_2 = (1 + \rho_1) \cdot \text{TEMP}$$
+
+$$T_2 = -S_1$$
+
+**Physical meaning:**
+- $S_1$ and $T_1$ project channel coordinates onto the **target bound state** coordinate $r_T$ (x inside B)
+- $S_2$ and $T_2$ project onto the **projectile bound state** coordinate $r_P$ (x inside a)
+- $T_2 = -S_1$ is an exact identity from momentum conservation
+
+**Example:** For 16O(d,p)17O with $m_x = m_n$, $m_b = m_p$, $m_A = m_{16\text{O}}$:
+
+$$\rho_1 = \frac{m_n}{m_p} \approx 1.001, \quad \rho_2 = \frac{m_n}{m_{16\text{O}}} \approx 0.063$$
+
+$$S_1 \approx 1.887, \quad T_1 \approx -0.944, \quad S_2 \approx 0.943, \quad T_2 \approx -1.887$$
+
+For **pickup** (ISTRIP=−1), the roles of a and B are swapped, and the coefficients are rearranged (source.mor lines 15889–15896).
+
+### 6.3 Magnitudes
+
+Since $\vec{r}_{T}$ and $\vec{r}_{P}$ are vector sums, their magnitudes involve the angle $\phi_{ab}$ between $\vec{r}_{\alpha}$ and $\vec{r}_{\beta}$:
+
+$$r_T = \sqrt{S_{1}^{2} \, r_{\alpha}^{2} + T_{1}^{2} \, r_{\beta}^{2} + 2 S_1 T_1 \, r_{\alpha} \, r_{\beta} \cos\phi_{ab}}$$
+
+$$r_P = \sqrt{S_{2}^{2} \, r_{\alpha}^{2} + T_{2}^{2} \, r_{\beta}^{2} + 2 S_2 T_2 \, r_{\alpha} \, r_{\beta} \cos\phi_{ab}}$$
+
+Note that $S_1 T_1 < 0$ and $S_2 T_2 < 0$, so the cross-term reduces the magnitude — the bound state coordinates are always shorter than the scattering coordinates.
+
+### 6.4 (U,V) Coordinate Transformation
+
+For numerical integration, Ptolemy uses sum/difference coordinates:
+
+$$U = \frac{r_{\alpha} + r_{\beta}}{2}, \quad V = r_{\alpha} - r_{\beta}, \quad \text{Jacobian} = 1$$
+
+Domain: $U \in [0, U_{\max}]$, $V \in [-2U, +2U]$ (ensures $r_{\alpha} > 0$, $r_{\beta} > 0$).
+
+This is advantageous because the integrand peaks near $r_{\alpha} \approx r_{\beta}$ (i.e., $V \approx 0$), allowing efficient quadrature concentration.
 
 ---
 
@@ -310,21 +350,64 @@ For each (ri,ro) pair, Ptolemy does a 2-pass scan:
 
 ## 8. Radial Integrals (INELDC)
 
-### 8.1 Transfer Integral
+### 8.1 From 6D to the Radial-Angular Form
 
-$$I_{L_i, L_o, L_x}^{J_{\pi}, J_{\pi}'} = \int_0^\infty dr_i \int_0^\infty dr_o \int_{-1}^{1} d(\cos\phi_{ab}) \; \chi_{L_i}^{J_{\pi}}(r_i) \cdot \mathcal{K}(r_i, r_o, \phi_{ab}) \cdot \chi_{L_o}^{J_{\pi}' \ast}(r_o)$$
+The DWBA transition amplitude (§4.1) is a 6-dimensional integral over $\vec{r}_{\alpha}$ and $\vec{r}_{\beta}$. By expanding all wavefunctions in partial waves (spherical harmonics), the angular integrals can be done analytically, reducing the problem to radial integrals.
 
-where the kernel is:
+**Step 1:** Expand distorted waves in partial waves:
 
-$$\mathcal{K} = \phi_T(r_x) \cdot V(r_p) \cdot \phi_P(r_p) \cdot \mathcal{A}_{12}(r_i, r_o, \phi_{ab})$$
+$$\chi_a(\vec{r}_{\alpha}) = \sum_{L_i, M_i} \frac{u_{L_i}(r_{\alpha})}{r_{\alpha}} Y_{L_i}^{M_i}(\hat{r}_{\alpha}), \qquad \chi_b(\vec{r}_{\beta}) = \sum_{L_o, M_o} \frac{u_{L_o}(r_{\beta})}{r_{\beta}} Y_{L_o}^{M_o}(\hat{r}_{\beta})$$
 
-### 8.2 Angular Coupling Kernel (A12)
+**Step 2:** Expand bound states in spherical harmonics:
 
-$$\mathcal{A}_{12}(r_i, r_o, \phi_{ab}) = \sum_{M_T, M_U} C_{M_T, M_U} \cos(M_T \phi_T - M_U \phi_{ab})$$
+$$\phi_T(r_T) Y_{l_T}^{m_T}(\hat{r}_T), \qquad \phi_P(r_P) Y_{l_P}^{m_P}(\hat{r}_P)$$
 
-where $C_{M_T, M_U}$ involves Wigner d-matrix elements (xlam), 3j-symbols, and $\sqrt{2L_o+1}$ normalization factors.
+**Step 3:** The angular integrals over $\hat{r}_{\alpha}$ and $\hat{r}_{\beta}$ produce Clebsch-Gordan coefficients and 3j-symbols, coupling $(L_i, l_T, l_P, L_o)$ to a transferred angular momentum $L_x$. Selection rules enforce $|L_i - L_o| \leq L_x \leq L_i + L_o$ and $|l_T - l_P| \leq L_x \leq l_T + l_P$.
 
-### 8.3 INELDC Loop Structure
+**Step 4:** After angular reduction, the remaining integral is over three scalar variables $(r_{\alpha}, r_{\beta}, \phi_{ab})$:
+
+$$I_{L_i, L_o, L_x}^{J_{\pi}, J_{\pi}'} = \int_0^{\infty} dr_{\alpha} \int_0^{\infty} dr_{\beta} \int_{-1}^{1} d(\cos\phi_{ab}) \; \chi_{L_i}^{J_{\pi}}(r_{\alpha}) \cdot \mathcal{K}(r_{\alpha}, r_{\beta}, \phi_{ab}) \cdot \chi_{L_o}^{J_{\pi}' \ast}(r_{\beta})$$
+
+The angle $\phi_{ab}$ is the angle between $\vec{r}_{\alpha}$ and $\vec{r}_{\beta}$ — it survives because the bound state coordinates $r_T$ and $r_P$ depend on it through the law of cosines (§6.3).
+
+### 8.2 The Kernel
+
+$$\mathcal{K}(r_{\alpha}, r_{\beta}, \phi_{ab}) = \phi_T(r_T) \cdot V(r_P) \cdot \phi_P(r_P) \cdot \mathcal{A}_{12}(r_{\alpha}, r_{\beta}, \phi_{ab})$$
+
+where:
+- $\phi_T(r_T)$ = target bound state wavefunction, evaluated at $r_T(r_{\alpha}, r_{\beta}, \phi_{ab})$
+- $V(r_P) \cdot \phi_P(r_P)$ = interaction × projectile bound state, evaluated at $r_P(r_{\alpha}, r_{\beta}, \phi_{ab})$
+- $\mathcal{A}_{12}$ = angular coupling coefficient from the partial wave reduction
+
+The kernel is **sharply peaked** near $\cos\phi_{ab} \to +1$ (collinear geometry), because this is where $r_P \to 0$ (the transferred particle is closest to the projectile core), making $V(r_P) \cdot \phi_P(r_P)$ large.
+
+### 8.3 Angular Coupling Kernel (A12)
+
+$$\mathcal{A}_{12}(r_{\alpha}, r_{\beta}, \phi_{ab}) = \sum_{M_T, M_U} C_{M_T, M_U} \cos(M_T \phi_T - M_U \phi_{ab})$$
+
+where $C_{M_T, M_U}$ involves Wigner d-matrix elements (xlam), 3j-symbols, and $\sqrt{2L_o+1}$ normalization factors. This encodes the geometric coupling between the partial waves of the scattering and bound states.
+
+### 8.4 Connection to Zero-Range
+
+In the **zero-range limit**, the projectile bound state and interaction collapse to a delta function:
+
+$$V(r_P) \cdot \phi_P(r_P) \to D_0 \, \delta^{(3)}(\vec{r}_P)$$
+
+This forces $\vec{r}_P = 0$, which from $\vec{r}_P = S_2 \vec{r}_{\alpha} + T_2 \vec{r}_{\beta}$ implies:
+
+$$\vec{r}_{\beta} = -\frac{S_2}{T_2} \vec{r}_{\alpha} = \frac{S_2}{S_1} \vec{r}_{\alpha} \quad (\text{since } T_2 = -S_1)$$
+
+So $\vec{r}_{\beta}$ is locked to $\vec{r}_{\alpha}$ — both coordinates are proportional. The $\phi_{ab}$ integral collapses (the delta function fixes the angle), and $r_T$ becomes a function of $r_{\alpha}$ alone:
+
+$$r_T = |S_1 - T_1 S_2/S_1| \cdot r_{\alpha} = \left|S_1 + T_1 \frac{S_2}{S_1}\right| r_{\alpha}$$
+
+The 6D integral reduces to a **single radial integral**:
+
+$$T_{\text{ZR}} \propto D_0 \int_0^{\infty} dr \; \chi_{b}^{\ast}\!\left(\frac{S_2}{S_1} r\right) \phi_T(r) \, \chi_a(r)$$
+
+This is computationally trivial but ignores the finite spatial extent of the projectile — leading to 10–30% errors for (d,p) reactions where the deuteron has a large radius (~4 fm).
+
+### 8.5 INELDC Loop Structure
 
 ```
 for LI (incoming L):
