@@ -55,7 +55,7 @@ E =   -2.2246 MEV     KAPPA = 0.23161
 | Field | Meaning |
 |-------|---------|
 | E | Binding energy (negative, MeV) |
-| KAPPA | Bound state wave number $\kappa = \sqrt{2\mu \|E\| / \hbar^2}$ (fm⁻¹) |
+| KAPPA | Bound state wave number (fm⁻¹) |
 | L | Orbital angular momentum |
 | NODES | Number of radial nodes (n-1 where n is the principal quantum number) |
 | J PROJECTILE | Total angular momentum j = l ± 1/2 |
@@ -157,8 +157,8 @@ Below this:
 | E | Binding energy (MeV) |
 | Q | Reaction Q-value = E_proj + E_targ (MeV) |
 | JP | Total angular momentum of transferred particle in each vertex |
-| SPEC. AMP. | Spectroscopic amplitude $\mathcal{S}^{1/2}$ |
-| SPEC. FACTOR | Spectroscopic factor $\mathcal{S} = (\text{SPEC. AMP.})^2$ |
+| SPEC. AMP. | Spectroscopic amplitude (square root of spectroscopic factor) |
+| SPEC. FACTOR | Spectroscopic factor = (SPEC. AMP.)² |
 
 ---
 

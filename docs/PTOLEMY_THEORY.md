@@ -514,7 +514,7 @@ $$\mathcal{K}(r_{\alpha}, r_{\beta}, \phi_{ab}) = \phi_T(r_T) \cdot V(r_P) \cdot
 where:
 - $\phi_T(r_T)$ = target bound state wavefunction, evaluated at $r_T(r_\alpha, r_\beta, \phi_{ab})$
 - $V(r_P) \cdot \phi_P(r_P)$ = interaction × projectile bound state, evaluated at $r_P(r_\alpha, r_\beta, \phi_{ab})$
-- $\mathcal{A}_{12}$ = angular coupling coefficient from the partial wave reduction
+- $A_{12}$ = angular coupling coefficient from the partial wave reduction
 
 The kernel is **sharply peaked** near $\cos\phi_{ab} \to +1$ (collinear geometry), because this is where $r_P \to 0$ (the transferred particle is closest to the projectile core), making $V(r_P) \cdot \phi_P(r_P)$ large.
 
@@ -573,7 +573,7 @@ $$\text{FACTOR} = 2\sqrt{\frac{k_a k_b}{E_{\text{cm}}^{a} \, E_{\text{cm}}^{b}}}
 
 **Fortran BSSET (source.mor line 25634):**
 
-$$\text{ATERM}(L_x) = \sqrt{\frac{J_B'+1}{J_A'+1}} \cdot \sqrt{2L_x+1} \cdot \mathcal{S}_{\text{proj}} \cdot \mathcal{S}_{\text{target}} \cdot W(l_T, j_T, l_P, j_P; j_x, L_x)$$
+$$\text{ATERM}(L_x) = \sqrt{\frac{J'_B+1}{J'_A+1}} \cdot \sqrt{2L_x+1} \cdot S_{\mathrm{proj}}^{1/2} \cdot S_{\mathrm{targ}}^{1/2} \cdot W(l_T, j_T, l_P, j_P; j_x, L_x)$$
 
 where $J_A' = 2J_A$ and $J_B' = 2J_B$ are the doubled nuclear spin quantum numbers (Ptolemy convention), and $W$ is the Racah coefficient (related to 6-j by a phase).
 

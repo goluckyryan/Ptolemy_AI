@@ -199,7 +199,7 @@ FACTOR:
 $$\text{FACTOR} = 2\sqrt{\frac{k_a k_b}{E_{\text{cm}}^{(a)} \, E_{\text{cm}}^{(b)}}}$$
 
 ATERM:
-$$\text{ATERM}(L_x) = \sqrt{\frac{J_B'+1}{J_A'+1}} \cdot \sqrt{2L_x+1} \cdot \mathcal{S}_{\text{proj}} \cdot \mathcal{S}_{\text{target}} \cdot W(l_T, j_T, l_P, j_P; j_x, L_x)$$
+$$\text{ATERM}(L_x) = \sqrt{\frac{J'_B+1}{J'_A+1}} \cdot \sqrt{2L_x+1} \cdot S_{\mathrm{proj}}^{1/2} \cdot S_{\mathrm{targ}}^{1/2} \cdot W(l_T, j_T, l_P, j_P; j_x, L_x)$$
 
 Here $J_A'$ and $J_B'$ are doubled nuclear spins (Ptolemy convention: $J_A'=2J_A$, $J_B'=2J_B$), and $W$ is the Racah coefficient.
 
@@ -257,7 +257,7 @@ SUMMIN=0, SUMMID≈15.4 fm, SUMMAX≈30.8 fm
 
 ### 5.3 AV18 Spectroscopic Amplitude
 
-$\mathcal{S}_{AV18}^{1/2} = 0.97069$ (deuteron internal wavefunction)
+The AV18 spectroscopic amplitude is $S_{AV18}^{1/2} = 0.97069$ (deuteron internal wavefunction, S-state probability = 0.9422).
 
 ---
 
