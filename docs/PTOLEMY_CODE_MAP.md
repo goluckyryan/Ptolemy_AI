@@ -202,6 +202,9 @@ $$
 f(r, R, a) = \left[1 + \exp\left(\frac{r - R}{a}\right)\right]^{-1}, \quad R = r_0 \, A^{1/3}
 $$
 
+> [!WARNING]
+> **Ptolemy divides the L·S coupling by 2S** (the doubled projectile spin). For S=1/2 (protons, neutrons) this is unity and has no effect. For **S=1 (deuterons)**, VSO is effectively halved. Published OM parametrizations for deuterons (An-Cai 2006, Daehnick 1980, etc.) have this factor baked in. See [MANUAL.md §11.1](PTOLEMY_MANUAL.md).
+
 **Coulomb potential** (uniform sphere):
 
 $$

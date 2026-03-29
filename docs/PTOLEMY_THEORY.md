@@ -68,6 +68,9 @@ where:
 - $U_{opt}(r)$ = complex optical potential (nuclear + absorptive imaginary)
 - $\Lambda(L,s,J) = \frac{1}{2}[J(J+1) - L(L+1) - s(s+1)]$ is the spin-orbit coupling factor
 
+> [!WARNING]
+> **Ptolemy's VSO defect for S=1:** The Fortran code divides the L·S coupling constant by 2S (the doubled spin). For S=1/2 this is harmless (2S=1), but for **S=1 (deuteron, ³He, triton) the spin-orbit force is halved**. The effective coupling becomes $\Lambda/(2S)$ instead of $\Lambda$. Published optical model parameter sets (e.g., An-Cai 2006 for deuterons) are fitted with this defect, so their VSO values are 2× the physical value. When using these parameters in codes without the defect, divide VSO by 2. See [MANUAL.md §11.1](PTOLEMY_MANUAL.md) for the full discussion.
+
 **Normalization (boundary condition at large r):**
 
 $$\chi_{LJ}(r) \xrightarrow{r\to\infty} \frac{e^{i\sigma_L}}{2i}\left[S_{LJ}H_L^+(kr) - H_L^-(kr)\right]$$

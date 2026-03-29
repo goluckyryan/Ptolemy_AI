@@ -24,6 +24,9 @@ A C++ translation of the Fortran [Ptolemy](https://www.phy.anl.gov/theory/resear
 - ~2–8% DCS error vs Fortran, mainly from radial integral differences at intermediate partial waves
 - Large-L (>28) integrals have sub-barrier truncation errors (physically negligible: <0.1% of DCS)
 
+### ⚠️ Fortran Ptolemy VSO defect for S=1
+The original Fortran Ptolemy divides the spin-orbit coupling constant by `2S` (where S is the projectile spin). For S=1/2 (proton), this has no effect. For **S=1 (deuteron, ³He, triton)**, the spin-orbit force is **half the correct value**. Published OM parameter sets (e.g., An-Cai 2006) are fitted with this defect baked in, so their VSO values are effectively 2× the physical value. See [MANUAL.md §11.1](docs/PTOLEMY_MANUAL.md) for details.
+
 ## Build
 
 Requires a C++17 compiler. No external dependencies.
