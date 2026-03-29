@@ -482,21 +482,21 @@ where $f_{M_x} = 1$ for $M_x=0$, $f_{M_x} = 2$ for $M_x > 0$ (sum over $\pm M_x$
 
 | Aspect | Handbook | Ptolemy |
 |---|---|---|
-| **ODE** | Eq. 5: standard Schrödinger | Same in WAVELJ |
+| **ODE** | §2.1, Eq. 2.5 | Same in WAVELJ |
 | **Regular BC** | $u \sim r^{l+1}$ | `u[1] = h^{L+1}`, Numerov forward |
-| **Asymptotic BC** | Eq. 27: $\chi \to (e^{i\sigma}/2i)(S H^{+} - H^{-})$ | Same; ALPHAR/ALPHAI enforce this |
-| **S-matrix extraction** | Wronskian | Two-point Wronskian at $r_N$, $r_{N-1}$ |
-| **Coulomb phase** | $\arg\Gamma(L+1+iη)$ | SIGZRO array |
-| **Coulomb amplitude** | §2.3, Eq. 10 | AMPCAL, exact formula |
-| **Nuclear amplitude** | $f_N = \frac{1}{2ik}\sum(2L+1)e^{2i\sigma}(S-1)P_L$ | BETCAL + AMPCAL |
+| **Asymptotic BC** | §2.4, Eq. 2.27 | Same; ALPHAR/ALPHAI enforce this |
+| **S-matrix extraction** | §2.7: Wronskian | Two-point Wronskian at $r_N$, $r_{N-1}$ |
+| **Coulomb phase** | $\arg\Gamma(L+1+i\eta)$ | SIGZRO array |
+| **Coulomb amplitude** | §2.3, Eq. 2.10 | AMPCAL, exact formula |
+| **Nuclear amplitude** | §2.4: partial wave sum | BETCAL + AMPCAL |
 | **Approximation** | Both ZR and FR | Finite-range only |
-| **T-matrix form** | Eq. 33 | Same. Prior/Post form |
-| **Coordinate transforms** | Fig. 9 with S1, T1, S2, T2 | GRDSET lines 15876–15882 |
-| **Radial integral** | Eq. 5.8: $\iint \chi_{\beta}^{\ast} F \chi_{\alpha} \, dr_{\alpha} \, dr_{\beta}$ | INELDC: 2D Gauss quadrature |
-| **Kinematic factor** | $\mu_{\alpha}\mu_{\beta}/\hbar^4 \cdot k_{\beta}/k_{\alpha}$ | SFROMI: $2\sqrt{k_{\alpha} k_{\beta} / (E_{\text{cm}}^{(\alpha)} E_{\text{cm}}^{(\beta)})}$ (equivalent) |
-| **Angular coupling** | 9j-symbol + CG | A12 subroutine |
+| **T-matrix form** | §5.2, Eq. 5.33 | Same. Prior/Post form |
+| **Coordinate transforms** | §5.1, Fig. 5.1 | GRDSET lines 15876–15882 |
+| **Radial integral** | §5.8, Eq. 5.34 | INELDC: 2D Gauss quadrature |
+| **Kinematic factor** | §5.5, Eq. 5.36 | SFROMI: equivalent form |
+| **Angular coupling** | §5.3: 9j-symbol + CG | A12 subroutine |
 | **Phase convention** | $i^{L_{\alpha} - L_{\beta} - l}$ | $i^{L_a + L_o + 2 L_x + 1}$ (equivalent) |
-| **Spin-orbit** | §2.9: $\Lambda(L,s,J)$ | Same formula |
+| **Spin-orbit** | §2.9, Eq. 2.18 | Same formula |
 | **Units** | fm² | ×10 for mb/sr |
 
 ---
