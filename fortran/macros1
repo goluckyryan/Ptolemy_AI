@@ -1,0 +1,69 @@
+'com', 'csp', 'ci3e', 
+   'CNV', 'cni', 'CND', 'CNR',
+   'C4F', 'C8H', '   ',
+   ' ', ' ', ' ', ' ',
+   ' ', ' ', ' ', ' ', ' ', ' ', ' ',
+   ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '
+' ', ' ',   ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '
+$
+$        THE FOLLOWING CODES ARE USED TO INCLUDE AND EXCLUDE
+$        BLOCKS OF SOURCE
+$  
+$        C** = STUFF FOR THIS VERSION ONLY.
+$        CN* = STUFF FOR ALL VERSIONS EXCEPT THIS ONE.
+$  
+$        WHERE **, * ARE LETTERS IDENTIFYING THE VERSION:
+$  
+$    the old (not recently compiled & checked) versions:
+$        IB, I = IBM mainframes
+$        DC, D = CDC
+$        RA, R = CRAY
+$        VA, V = non-alpha VAX/vms
+$
+$    The modern IBM/RS6000 and DEC-alpha/VMS version do not have
+$    and specific machine prefix.  Both use the CI3E prefix
+$  
+$    THE FOLLOWING ARE GENERIC PREFIXES
+$
+$       COM - Fixed-size allocator in a common block version
+$       CGRAB - dynamic-sized allocator 
+$          one of these two options must be choosen in the
+$          machine-specific GRAB subroutine (RS6000STUFF, ALPHASTUFF)
+$
+$       CNOLOC - provides a dummy  LOC() .  This should be avoided
+$          because clebsch will give wrong results if the log(factorial)
+$          table has to be used.
+$
+$       CI3E - ieee arithmatic - the Dec Alpha version is made
+$               using this and  /float=ieee
+$  
+$       CSP - MACHINES WITH SPEAKEASY KEEP/GET (IBM, VAX)
+$       CAP - MACHINES WITHOUT SPEAKEASY KEEP/GET (CDC CRAY)
+$  
+$     coupled channels:
+$       C4F - C.C. F & G ARRAY IS TO BE REAL*4 (NORMAL)
+$       C8F - C.C. F & G ARRAY IS TO BE REAL*8
+$  
+$     coupled channels:
+$       C4H - C.C. HOMO & SOLN. ARRAY IS TO BE REAL*4  This
+$            might be broken by now
+$       C8H - C.C. HOMO & SOLN. ARRAY IS TO BE REAL*8 (NORMAL)
+$  
+$        THE FIRST LINE LISTS PREFIXES TO BE STRIPPED OFF OF THE SOURCE
+$        LINE, THUS ACTIVATING THE LINE OR EXPOSING THE NEXT PREFIX.
+$        THE SECOND LINE LISTS PREFIXES WHICH WILL CAUSE MORTRAN TO
+$        DELETE THE ENTIRE LINE.
+$           EXAMPLES:  THE FIRST 2 LINES FOR THE VARIOUS old VERSIONS ARE:
+$  
+$  
+$  CIB COS CND CDX CNR CNV CIE CHR CWX CSP CDO CFR C4F C4H   IBM (OS)
+$  CDE CVE
+$  
+$  CDC CDE CNI CNR CNV CWD CAP CDM ...      CDC VERSION
+$  CDX CVE CIE CWX
+$  
+$  CRA CNI CNV CDX CND CWD CAP CDO CVX CIX C8F C8H       CRAY VERSION
+$  CRX CVE CIE CDE CWX
+$  
+$  CVA CVE CNI CND CDX CNR CHR CWX CSP CDM      old DEC VAX/VMS
+$  CDE
