@@ -6,6 +6,7 @@
 
 #include "PtolemyParser.h"
 #include "Isotope.h"
+#include "ptolemy_mass_table.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -166,14 +167,22 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
                 bsPot.V = bs_v_set ? bs_v : 50.0;
                 // Auto-compute binding energy if not explicitly given
                 if (bs_binding < 1e-6 && !rxn_target.empty() && !rxn_residual.empty()) {
-                    // For (d,p): BE = M(target) + M(n) - M(residual) - Ex
+                    // Compute BE from Ptolemy mass excesses (AME2003), matching Fortran SETCHN:
+                    // E = ME(residual) - ME(transferred) - ME(core) - Ex
+                    // transferred = residual - core (e.g., neutron for d,p)
                     Isotope core(rxn_target);
                     Isotope residual(rxn_residual);
-                    const double mn = 939.565346;  // neutron mass in MeV
-                    bs_binding = core.Mass + mn - residual.Mass - rxn_excitation;
+                    int A_trans = residual.A - core.A;
+                    int Z_trans = residual.Z - core.Z;
+                    double ME_core = PtolemyMass::MassExcess_MeV(core.Z, core.A);
+                    double ME_res  = PtolemyMass::MassExcess_MeV(residual.Z, residual.A);
+                    double ME_trans = PtolemyMass::MassExcess_MeV(Z_trans, A_trans);
+                    bs_binding = -(ME_res - ME_trans - ME_core - rxn_excitation);
                     std::cerr << "Auto-computed target binding energy: "
                               << bs_binding << " MeV (Sn of " << rxn_residual
-                              << ", Ex=" << rxn_excitation << ")\n";
+                              << ", Ex=" << rxn_excitation
+                              << ") [ME: core=" << ME_core << " trans=" << ME_trans
+                              << " res=" << ME_res << "]\n";
                 }
                 targetBS_n = bs_nodes; targetBS_l = bs_l; targetBS_j = bs_j;
                 targetBS_pot = bsPot;

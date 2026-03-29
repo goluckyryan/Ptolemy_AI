@@ -22,6 +22,7 @@
 #include "math_utils.h"
 #include "spline.h"
 #include "potential_eval.h"
+#include "ptolemy_mass_table.h"
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -454,26 +455,25 @@ void DWBA::InelDcFaithful2()
     double ECM1 = Incoming.Ecm;  // MeV
     double ECM2 = Outgoing.Ecm;
 
-    // ─── Masses ──────────────────────────────────────────────────────────────
-    double mA = Incoming.Target.Mass;       // AMBIGA
-    double ma = Incoming.Projectile.Mass;   // AMA  (deuteron)
-    double mb = Outgoing.Projectile.Mass;   // AMB  (proton)
-    double mB = Outgoing.Target.Mass;       // AMBIGB (17O)
-
-    // Transferred particle mass (neutron)
-    // CRITICAL: use the free neutron mass (939.565 MeV), NOT ma - mb (which subtracts the deuteron BE).
-    // ma - mb = m(d_nuclear) - m(p_nuclear) = (m_p + m_n - BE_d) - m_p = m_n - BE_d = 937.341 MeV (wrong).
-    // Fortran: AMX = free neutron mass ≈ 939.565 MeV → KAPPA = 0.23161 fm^-1 (matches Ptolemy).
-    // Using the same value as Isotope.cpp's mn constant.
-    static const double MN_FREE = 939.565346;  // free neutron mass (MeV), same as Isotope.cpp
-    double mx = MN_FREE;  // AMX = free neutron mass (not ma-mb which gives mn-BE_d)
-    // Kinematic ratios BRATMS(1)=x/b, BRATMS(2)=x/BIGA
-    // Fortran: BRATMS(1)=AMX/AMB, BRATMS(2)=AMX/AMBIGA (x/BIGA = neutron/16O for stripping)
-    // Note: AMBIGA = initial target A (=16O), NOT residual B (=17O).
-    // "BIGA" is the large nucleus: in stripping (d,p), BIGA = A (target), not B (residual).
-    // Verified: Fortran S1=1.8868 matches with bratms2 = mx/mA (not mx/mB) and mx=free neutron mass.
-    double bratms1 = mx / mb;   // x/b = neutron/proton
-    double bratms2 = mx / mA;   // x/BIGA = neutron/16O (target nucleus receiving the neutron)
+    // ─── Masses (Ptolemy AME2003 mass excesses, matching SETCHN) ────────────
+    // Ptolemy computes nuclear mass: TMP = A + MX/AMU - Z*EMASS/AMU
+    const double EMASS = 0.511;
+    auto ptolemy_mass_MeV = [&](int Z, int A) -> double {
+        double MX = PtolemyMass::MassExcess_MeV(Z, A);
+        return (A + MX/AMU_MEV - Z*(EMASS/AMU_MEV)) * AMU_MEV;
+    };
+    double ma = ptolemy_mass_MeV((int)Incoming.Projectile.Z, Incoming.Projectile.A);
+    double mA = ptolemy_mass_MeV((int)Incoming.Target.Z, Incoming.Target.A);
+    double mb = ptolemy_mass_MeV((int)Outgoing.Projectile.Z, Outgoing.Projectile.A);
+    double mB = ptolemy_mass_MeV((int)Outgoing.Target.Z, Outgoing.Target.A);
+    // Transferred particle: x = projectile - ejectile (e.g., neutron for d,p)
+    int Zx = (int)Incoming.Projectile.Z - (int)Outgoing.Projectile.Z;
+    int Ax = Incoming.Projectile.A - Outgoing.Projectile.A;
+    double mx = ptolemy_mass_MeV(Zx, Ax);
+    // Kinematic ratios (matching Fortran SETCHN BRATMS)
+    // BRATMS(1) = AMX/AMB, BRATMS(2) = AMX/AMBIGA
+    double bratms1 = mx / mb;   // x/b
+    double bratms2 = mx / mA;   // x/A (target)
 
     // ─── Coordinate mapping coefficients (Fortran GRDSET lines 15875-15900) ─
     // STRIPPING (ISTRIP=+1):

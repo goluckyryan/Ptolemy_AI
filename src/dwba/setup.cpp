@@ -2,6 +2,7 @@
 // Extracted from dwba.cpp (lines 1–180, 249–341)
 
 #include "dwba.h"
+#include "ptolemy_mass_table.h"
 #include "math_utils.h"
 #include "potential_eval.h"
 #include <algorithm>
@@ -355,10 +356,18 @@ void DWBA::PrintParameters() {
   const double AMU_MEV = 931.5016;   // Ptolemy AMUMEV
   const double HBARC_L = 197.32858;  // Ptolemy HBARC
 
-  double ma = Incoming.Projectile.Mass;
-  double mb = Outgoing.Projectile.Mass;
-  double mA = Incoming.Target.Mass;
-  double mx = ma - mb;
+  // Masses from Ptolemy AME2003 mass excesses (matching SETCHN)
+  const double EMASS_S = 0.511;
+  auto ptolemy_mass_s = [&](int Z, int A) -> double {
+      double MX = PtolemyMass::MassExcess_MeV(Z, A);
+      return (A + MX/AMU_MEV - Z*(EMASS_S/AMU_MEV)) * AMU_MEV;
+  };
+  double ma = ptolemy_mass_s((int)Incoming.Projectile.Z, Incoming.Projectile.A);
+  double mb = ptolemy_mass_s((int)Outgoing.Projectile.Z, Outgoing.Projectile.A);
+  double mA = ptolemy_mass_s((int)Incoming.Target.Z, Incoming.Target.A);
+  int Zx_s = (int)Incoming.Projectile.Z - (int)Outgoing.Projectile.Z;
+  int Ax_s = Incoming.Projectile.A - Outgoing.Projectile.A;
+  double mx = ptolemy_mass_s(Zx_s, Ax_s);
   double mu_pbs = mb * mx / (mb + mx);
   double kappa_pbs = std::sqrt(2.0 * mu_pbs * ProjectileBS.BindingEnergy) / HBARC_L;
 

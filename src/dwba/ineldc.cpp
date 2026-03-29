@@ -5,6 +5,7 @@
 #include "dwba.h"
 #include "math_utils.h"
 #include "potential_eval.h"
+#include "ptolemy_mass_table.h"
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -96,17 +97,20 @@ void DWBA::InelDc() {
   //                 phi_T(rx) * V(rp) * phi_P(rp) * P_Lx(cos_theta)
   // ===========================================================
 
-  // Masses
-  double mA = Incoming.Target.Mass;
-  double ma = Incoming.Projectile.Mass;
-  double mb = Outgoing.Projectile.Mass;
-  double mB = Outgoing.Target.Mass;
-
+  // Masses (Ptolemy AME2003 mass excesses, matching SETCHN)
   const double AMU_MEV = 931.5016;   // Ptolemy AMUMEV
-
-  // True mass of transferred particle (recover neutron mass from binding)
-  double mx_kinematic = ma - mb;
-  double mx = mx_kinematic + ProjectileBS.BindingEnergy / AMU_MEV;
+  const double EMASS_I = 0.511;
+  auto ptolemy_mass_MeV_i = [&](int Z, int A) -> double {
+      double MX = PtolemyMass::MassExcess_MeV(Z, A);
+      return (A + MX/AMU_MEV - Z*(EMASS_I/AMU_MEV)) * AMU_MEV;
+  };
+  double ma = ptolemy_mass_MeV_i((int)Incoming.Projectile.Z, Incoming.Projectile.A);
+  double mA = ptolemy_mass_MeV_i((int)Incoming.Target.Z, Incoming.Target.A);
+  double mb = ptolemy_mass_MeV_i((int)Outgoing.Projectile.Z, Outgoing.Projectile.A);
+  double mB = ptolemy_mass_MeV_i((int)Outgoing.Target.Z, Outgoing.Target.A);
+  int Zx_i = (int)Incoming.Projectile.Z - (int)Outgoing.Projectile.Z;
+  int Ax_i = Incoming.Projectile.A - Outgoing.Projectile.A;
+  double mx = ptolemy_mass_MeV_i(Zx_i, Ax_i);
 
   // Coordinate transformation coefficients (Ptolemy GRDSET convention)
   // r_x = S1*ra + T1*rb  (coordinate of x in the target frame)
