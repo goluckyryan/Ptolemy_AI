@@ -359,7 +359,10 @@ where $J_A' = 2J_A$ and $J_B' = 2J_B$ are the doubled nuclear spin quantum numbe
 
 **Sign:** $(-1)^{(j_x - j_P + 2(l_P + l_T))/2 + 1}$ flips ATERM when this exponent is odd.
 
-> **C++ note:** The faithful path (`grdset_ineldc_faithful.cpp`) applies the full ATERM with Racah inside the SFROMI block. The `xsectn.cpp` ATERM uses a simplified CG-based formula and re-applies FACTOR — see code comments for details.
+> **⚠️ C++ code issue (potential double-count):**
+> The faithful path (`grdset_ineldc_faithful.cpp`) applies the full ATERM (with Racah), FACTOR, phase, and `1/√(2Li+1)` when building `TransferSMatrix` entries. However, `xsectn.cpp` re-applies FACTOR, a simplified CG-based ATERM, phase, and `1/√(2Li+1)` on those same values before feeding them into BETCAL. This appears to double-count these factors.
+>
+> For the SO-active path (9-J loop), the simplified ATERM × 9-J in `xsectn.cpp` combined with the full ATERM already in `TransferSMatrix` may produce the correct result for the current test case (16O(d,p)17O) by coincidence. **This should be investigated if DCS errors appear for other reactions** — the fix would be to either store raw integrals in `TransferSMatrix` (and apply SFROMI entirely in `xsectn.cpp`), or skip the SFROMI block in `xsectn.cpp` when using the faithful path.
 
 ### 9.4 Phase Sign
 

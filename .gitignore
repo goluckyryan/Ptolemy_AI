@@ -32,18 +32,9 @@ distwave_*
 test_*
 !tests/
 
-# Fortran compiled binaries
-fortran_testing/ptolemy_annotated
-fortran_testing/ptolemy_annotated_bc
-fortran_testing/test_fortran
-fortran_testing/test_racah
-fortran_testing/test_racah_*
-fortran_testing/reid_compare
-fortran_testing/reid_vertex_test
-fortran_testing/phip_test
-fortran_testing/test_bound_fortran
-fortran_testing/test_bound_cpp
-fortran_testing/*.o
+# Entire fortran_testing and tests directories (local debug artifacts)
+fortran_testing/
+tests/
 
 # ── Generated output ──
 *.png
