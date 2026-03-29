@@ -291,6 +291,32 @@ The elastic S-matrix uses `(L, L', LX)` labeling, where **LX is a spin-orbit ind
 
 For LX > 0, only the S-matrix is shown (no unitarity).
 
+### Understanding the LX Decomposition
+
+The LX=0,1,2 values are **not** independent S-matrix elements. They are a **Racah decomposition** of the physical JP-basis S-matrix. For each JP value, the code projects onto LX channels via the `JPTOLX` subroutine:
+
+$$
+S(LX) = \sum_{JP} (-1)^p \cdot \frac{JP+1}{\sqrt{(2S+1)(2L+1)}} \cdot \sqrt{2LX+1} \cdot W(L,L,S,S;LX,JP) \; S(JP)
+$$
+
+where p = (S - JP + 2L)/2 and W is a Racah coefficient.
+
+**For deuteron (S=1):** each L has three JP values (J = L-1, L, L+1) projected onto three LX channels:
+
+- **LX=0** — spin-averaged (dominant; captures central + Coulomb scattering)
+- **LX=1** — vector spin-orbit correction
+- **LX=2** — tensor correction (smallest)
+
+**Why LX>0 are small:** The optical model spin-orbit potential (VSO ~ 3–6 MeV) is much weaker than the central potential (V ~ 50–100 MeV). LX=0 captures the spin-independent scattering, while LX=1,2 encode only the spin-orbit splitting. Typical magnitude: LX=1 is ~2% of LX=0, and LX=2 is ~0.1%.
+
+**To reconstruct JP-basis elements from LX** — invert with the same Racah coefficients:
+
+$$
+S(JP) = \sum_{LX} \frac{(2LX+1)(JP+1)}{(2S+1)(2L+1)} \cdot (-1)^p \cdot W(L,L,S,S;LX,JP) \; S(LX)
+$$
+
+Alternatively, use `PRINT=1001` to get the JP-basis S-matrix directly (see §12).
+
 ---
 
 ## 9. Transfer S-Matrix Elements
