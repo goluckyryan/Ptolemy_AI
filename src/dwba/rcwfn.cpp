@@ -15,13 +15,13 @@ static const double PRECLN = 32.0;
 static const double PI = 3.141592653589793238;
 
 // Helper function for Steed's method (P + iQ)
-int SteedPQ(double RHO, double ETA, double &P, double &Q, double ACC) {
+int SteedPQ(double RHO, double ETA, int LMIN, double &P, double &Q, double ACC) {
   P = 0.0;
   Q = RHO - ETA;
   double PL = 0.0;
   double ETA2 = ETA * ETA;
-  // XLL1 is 0 for L=0 (LMIN=0 here)
-  double XLL1 = 0.0;
+  // XLL1 = LMIN*(LMIN+1) — must match Fortran (source: rcwfn.f line 264)
+  double XLL1 = (double)LMIN * (double)(LMIN + 1);
 
   double AR = -(ETA2 + XLL1);
   double AI = ETA;
@@ -376,7 +376,7 @@ int Rcwfn(double RHO, double ETA, int MINL, int MAXL, std::vector<double> &FC,
   // If Method 5, we returned already.
 
   if (Method != 5 || RHO > 0.005) {
-    int res = SteedPQ(RHO, ETA, P, Q, ACC);
+    int res = SteedPQ(RHO, ETA, LMIN, P, Q, ACC);
     if (res != 0)
       return res;
     P /= RHO;
