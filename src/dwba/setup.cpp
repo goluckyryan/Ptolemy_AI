@@ -248,11 +248,18 @@ void DWBA::Calculate() {
   // sets ASYMPT = BNDASY = 20, and subsequent calls skip (ASYMPT != UNDEF),
   // WAVSET always uses BNDASY = 20 as the base asymptopia.
   {
-    // Ptolemy WAVSET uses BNDASY=20 as the base asymptopia for DWBA.
-    // The user's 'asymptopia=X' keyword goes to SCTASY → GRDSET SUMMAX.
-    // WAVSET only extends beyond BNDASY for the classical turning point.
-    const double BNDASY = 20.0;
-    double ASYMPT = BNDASY;
+    // Ptolemy SETBNDS (source.f line 32496-32497):
+    //   ASYMPT = BNDASY           (if IBND != 0, i.e. bound state)
+    //   ASYMPT = ABS(SCTASY)      (if IBND == 0, i.e. scattering)
+    // For scattering channels, ASYMPT = user's asymptopia parameter.
+    // The BNDASY=20 value is ONLY for bound state calls.
+    // Ptolemy SETBNDS (source.f line 32496-32497):
+    //   ASYMPT = ABS(SCTASY) for scattering channels (IBND=0)
+    //   ASYMPT = BNDASY=20 for bound state channels (IBND!=0)
+    // For scattering: use user's asymptopia so Numerov covers the full range.
+    // This eliminates the need for NSTP2S Coulomb extension (which can diverge
+    // when the Wronskian S-matrix is slightly off).
+    double ASYMPT = (AsymptopiaSet > 0) ? AsymptopiaSet : 20.0;
     int LMAX_eff = (LmaxSet >= 0) ? LmaxSet : 40;
 
     // Incoming channel turning point

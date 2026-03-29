@@ -516,6 +516,9 @@ void DWBA::InelDcFaithful2()
         double A_tbs   = (TargetBS.Pot.A > 0) ? TargetBS.Pot.A : 0.65;
         TgtBS_ch.StepSize = std::min(1.0 / kappa_T, A_tbs) / STEPSPER;
     }
+    // Fortran: BNDMAX = ASYMPT (user's asymptopia). Bound state tables must extend
+    // to the same range, because BSPROD clips at BNDMXP/BNDMXT = MaxR.
+    TgtBS_ch.MaxR = (AsymptopiaSet > 0) ? AsymptopiaSet : 30.0;
     WavSet(TgtBS_ch);
     CalculateBoundState(TgtBS_ch, TargetBS.n, TargetBS.l, TargetBS.j,
                         TargetBS.BindingEnergy);
@@ -534,6 +537,7 @@ void DWBA::InelDcFaithful2()
         double A_pbs   = (ProjectileBS.Pot.A > 0) ? ProjectileBS.Pot.A : 0.5;
         PrjBS_ch.StepSize = std::min(1.0 / kappa_P, A_pbs) / STEPSPER;
     }
+    PrjBS_ch.MaxR = (AsymptopiaSet > 0) ? AsymptopiaSet : 30.0;
     WavSet(PrjBS_ch);
     // Load deuteron AV18 wavefunction if available
     bool reidLoaded = false;
@@ -627,6 +631,7 @@ void DWBA::InelDcFaithful2()
             RLTMAX = i * h_T;
         }
     }
+
 
     // BSBlk (max allowed radii = asymptopia) — Ptolemy BNDMAX
     double BNDMXP = PrjBS_ch.MaxR;
@@ -870,10 +875,10 @@ void DWBA::InelDcFaithful2()
         // For scan chi: use standard asymptopia (Fortran: ASYMPS(1) = ASYMPT + NBACK*h)
         // Fortran NSTPSS is fixed regardless of L — no turning-point extension for scan chi
         if (no_SO) {
-            double NBACK = 25.0;  // Fortran NBACK = NBAKCM
-            double std_asym = ASYMPT + NBACK * Incoming.StepSize;  // 30 + 25*0.125 = 33.125
-            int std_nsteps = static_cast<int>(std_asym / Incoming.StepSize + 0.5);
-            Incoming.MaxR = std_nsteps * Incoming.StepSize;
+            // Don't change MaxR/NSteps — the WavElj NSTP2S Coulomb extension
+            // already extends chi beyond NSteps to cover GRDSET's range.
+            // The scan chi table (rpsi) will be built from the full WaveFunction
+            // including the Coulomb-extended points.
         }
         WavElj(Incoming, L, JPI);
         if (no_SO) {
@@ -885,7 +890,7 @@ void DWBA::InelDcFaithful2()
         }
         double h = Incoming.StepSize;
         int n = (int)Incoming.WaveFunction.size();
-        std::vector<double> rpsi(n);
+                        std::vector<double> rpsi(n);
         // Fortran line 18224: ALLOC(LSCRTS+I) = RVAL * (|psi_re| + |psi_im|)
         // Fortran line 18220: IF (PSI > PSIMX) ROFMAX = RVAL  (psi=|re|+|im|)
         double PSIMX = 0.0;
@@ -896,7 +901,8 @@ void DWBA::InelDcFaithful2()
             if (update_rofmax && psi > PSIMX) { PSIMX = psi; ROFMAX = r; }
             rpsi[i] = r * psi;
         }
-        return rpsi;
+        // Debug: print rpsi at key points
+                        return rpsi;
     };
 
     // Fortran: ROFMAX is set from BOTH chi builds (II=1 and II=2).
@@ -1135,7 +1141,6 @@ void DWBA::InelDcFaithful2()
             // Used for exit test: IF (RP > RLMAXS(1) .AND. RT > RLMAXS(2)) GO TO 380
 
             if (ZEROSW) {
-                // All asymptopia violations — label375
                 U -= USTEP;
                 found_summax = true;
                 break;
@@ -1163,7 +1168,7 @@ void DWBA::InelDcFaithful2()
             // Fortran: IF (RP > RLMAXS(1) .AND. RT > RLMAXS(2)) GOTO 380 (done)
             // RP, RT = last values from DO 359 loop
             if (last_RP > RLPMAX && last_RT > RLTMAX) {
-                // label380: normal exit — RVRLIM reset uses this WVWMAX_u
+                // label380: normal exit
                 WVWMAX_exit = WVWMAX_u;
                 found_summax = true;
                 break;
@@ -1172,12 +1177,7 @@ void DWBA::InelDcFaithful2()
             if (U > ASYMPT + 5.0) { found_summax = true; break; }
         }
 
-        // SUMMAX = U  (Fortran line 16063: IF(SUMMAX.EQ.UNDEF) SUMMAX=U)
-        // Fortran: SUMMAX = ABS(SCTASY) = scattering chi grid endpoint.
-        // Use scan exit U (matches edfce88 behavior):
         SUMMAX = U;
-        // The SUMMAX scan is very sensitive to chi at the boundary.
-        // Small FIFO differences (~10%) at U≈29 cause ±1.4 fm SUMMAX shift.
 
         // SUMMID = first moment × AMDMLT (Fortran line 16070)
         if (SUM0 > 1e-30) {

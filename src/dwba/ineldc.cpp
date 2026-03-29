@@ -153,7 +153,10 @@ void DWBA::InelDc() {
     // fprintf(stderr, "TgtBS step: kappa=%.5f fm^-1, A=%.4f → h=%.5f fm\n",
     //         kappa_T, A_tbs, TgtBS_ch.StepSize);
   }
-  // WavSet will allocate NSteps and RGrid based on StepSize (≤0 uses default 0.1)
+  // Fortran BNDMAX = ASYMPT = user's asymptopia parameter.
+  // The bound state table must extend to the same range as the scattering chi,
+  // because BSPROD clips at BNDMXP/BNDMXT = MaxR of the bound state channel.
+  TgtBS_ch.MaxR = (AsymptopiaSet > 0) ? AsymptopiaSet : 30.0;
   WavSet(TgtBS_ch);
   CalculateBoundState(TgtBS_ch, TargetBS.n, TargetBS.l, TargetBS.j, TargetBS.BindingEnergy);
 
@@ -176,6 +179,7 @@ void DWBA::InelDc() {
     // fprintf(stderr, "PrjBS step: kappa=%.5f fm^-1, A=%.4f → h=%.5f fm\n",
     //         kappa_P, A_pbs, PrjBS_ch.StepSize);
   }
+  PrjBS_ch.MaxR = (AsymptopiaSet > 0) ? AsymptopiaSet : 30.0;
   WavSet(PrjBS_ch);
 
   // Projectile bound state: for the deuteron (n+p), use the tabulated Reid soft-core

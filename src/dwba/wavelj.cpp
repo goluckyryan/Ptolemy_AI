@@ -215,36 +215,27 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
   const double STEPI  = 1e-10;  // inner cutoff after rescaling
 
   std::vector<std::complex<double>> u(N + 2, 0.0);
-  // Initial conditions matching Fortran WAVELJ:
-  //   THISR = STEPI * STEPR = 1e-6 * 1 = 1e-6
+  // Fortran WAVELJ initial conditions (source.f ~35860):
+  //   STEPR = STEP1R = 1 (always)
+  //   STEPI = STEP1I (default 1e-6, or 1 mapped to 1e-6)
+  //   THISR = STEPI * STEPR = 1e-6
   //   THISI = THISR = 1e-6
-  //   u[ISTRT+1] = THISR * D^(L+1)  (both real and imag parts)
-  //   u[ISTRT+2] = THISR             (both real and imag parts)
-  // where D = ISTRT/(ISTRT+1), ISTRT=0 → D=0 → u[1]=0, u[2]=THISR
-  // Wait: for ISTRT=0, AA1=0, D=0/(0+1)=0
-  //   u[1] = THISR * 0^(L+1) = 0
-  //   u[2] = THISR = 1e-6  (both Re and Im)
-  // Then XSI computation gives u[3], u[4]
+  //   For ISTRT=0 (first L): D = 0/(0+1) = 0
+  //     u[0] = THISR * 0^(L+1) = 0     (both Re and Im)
+  //     u[1] = THISR = 1e-6             (both Re and Im)
+  //   So u[0] = 0, u[1] = 1e-6 × (1+i)
   //
-  // Actually re-reading Fortran: ISTRT=0, NFIRST=2:
-  //   WAVR(1) = THISR * 0 = 0   (I=0, ISTRT+1=1)
-  //   WAVR(2) = THISR = 1e-6    (I=1, ISTRT+2=2)
-  // These map to u[0]=0, u[1]=1e-6*(1+i)
-  //
-  // Use complex IC with equal real and imaginary parts (Ptolemy convention):
-  // Fortran WAVELJ initial conditions:
-  // THISR = STEPI*STEPR = 1e-6, THISI = 1e-6
-  // u[ISTRT+1] = THISR * D^(L+1) where D = ISTRT/(ISTRT+1)
-  // u[ISTRT+2] = THISR
-  // For ISTRT=0: D=0, u[1] = 0, u[2] = 1e-6(1+i)
-  // But C++ indexing: u[0] maps to step 0, u[1] maps to step 1 = Fortran ISTRT+2
-  // Actually: Fortran WAVR(ISTRT+1) → C++ u[0] (step ISTRT)
-  //          Fortran WAVR(ISTRT+2) → C++ u[1] (step ISTRT+1)
-  // For ISTRT=0: u[0]=0, u[1]=THISR*(1+i)=1e-6*(1+i)
-  // Use real-only IC (original C++ behavior) for now
+  // The complex (1+i) seed ensures both real and imaginary parts of the
+  // independent solutions are excited, giving a well-conditioned system
+  // for the 2-point S-matrix extraction. Real-only IC would give a
+  // different linear combination, producing different chi(r) at finite r
+  // even after normalization — which affects the transfer integral.
+  // Fortran WAVELJ initial conditions (source.f ~35860):
+  //   THISR = STEPI * STEPR = 1e-6, THISI = THISR = 1e-6
+  //   For ISTRT=0: u[0] = 0, u[1] = 1e-6 × (1+i)
+  const double THISR = 1e-6;
   u[0] = std::complex<double>(0.0, 0.0);
-  u[1] = std::complex<double>(std::pow(h, L + 1), 0.0);
-  if (std::abs(u[1]) < 1e-300) u[1] = 1e-300;
+  u[1] = std::complex<double>(THISR, THISR);
 
   int ISTRT = 0;  // first nonzero index (tracks inner zeroing after rescale)
 
@@ -446,19 +437,12 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     double alpha_r = (ur * A1n + ui * A2n) / den2;
     double alpha_i = (ur * A2n - ui * A1n) / den2;
     std::complex<double> alpha(alpha_r, alpha_i);
-
     double AA1 = std::abs(alpha_r) + std::abs(alpha_i);
-    // Fortran DO 629: after normalization, zero points where |u_norm| < STEPI
-    // BB1 = STEPI / AA1 — threshold for the UNnormalized u array
-    double BB1 = (AA1 > 1e-300) ? STEPI / AA1 : 1e300;
-
+    // No inner-region zeroing: IEEE 754 doubles handle values down to ~1e-308.
+    // Fortran zeros sub-threshold inner points (DO 629) but C++ doesn't need to —
+    // the inner wavefunction is exponentially small and contributes negligibly.
     for (int i = 0; i <= N; ++i) {
-      double ui_mag = std::abs(u[i].real()) + std::abs(u[i].imag());
-      if (ui_mag < BB1) {
-        ch.WaveFunction[i] = {0.0, 0.0};
-      } else {
-        ch.WaveFunction[i] = u[i] * alpha;
-      }
+      ch.WaveFunction[i] = u[i] * alpha;
     }
   }
 
