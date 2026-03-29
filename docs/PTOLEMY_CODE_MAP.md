@@ -153,11 +153,11 @@ flowchart TD
 
 The reaction is A(a,b)B. For 16O(d,p)17O at Elab=20 MeV:
 
-$$E_{cm}^a = E_{lab} \cdot \frac{M_A}{M_a + M_A}$$
-$$E_{cm}^b = E_{cm}^a + Q - E_x$$
+$$E_{\text{cm}}^{(a)} = E_{\text{lab}} \cdot \frac{M_A}{M_a + M_A}$$
+$$E_{\text{cm}}^{(b)} = E_{\text{cm}}^{(a)} + Q - E_x$$
 
 Wave numbers:
-$$k = \sqrt{\frac{2\mu E_{cm}}{\hbar^2}}$$
+$$k = \sqrt{\frac{2\mu E_{\text{cm}}}{\hbar^2}}$$
 
 Sommerfeld parameters:
 $$\eta = \frac{Z_1 Z_2 e^2 \mu}{\hbar^2 k}$$
@@ -165,7 +165,7 @@ $$\eta = \frac{Z_1 Z_2 e^2 \mu}{\hbar^2 k}$$
 ### 4.2 Optical Model Potentials
 
 **General Woods-Saxon form:**
-$$U(r) = -V f(r) - i W_V f(r) + i W_S \frac{d}{dr}f(r) + V_{SO} \frac{1}{r}\frac{d}{dr}f(r) \, \vec{L}\cdot\vec{S} + V_C(r)$$
+$$U(r) = -V \, f(r) - i W_V f(r) + i W_S \frac{d}{dr}f(r) + V_{\text{SO}} \frac{1}{r}\frac{d}{dr}f(r) \; \vec{L}\cdot\vec{S} + V_C(r)$$
 
 where $f(r, r_0, a) = \left[1 + \exp\!\left(\frac{r - r_0 A^{1/3}}{a}\right)\right]^{-1}$
 
@@ -178,28 +178,28 @@ $$\sigma_L = \arg\left[\Gamma(L+1+i\eta)\right] = \sum_{n=1}^{L} \arctan\!\left(
 
 ### 4.4 SFROMI Formula
 
-$$S_{SFROMI} = \text{FACTOR} \cdot \text{ATERM} \cdot \frac{i^{L_i+L_o+2L_x+1}}{\sqrt{2L_i+1}} \cdot I_{L_i L_o L_x}$$
+$$S_{\text{SFROMI}} = \text{FACTOR} \cdot \text{ATERM} \cdot \frac{i^{L_i+L_o+2L_x+1}}{\sqrt{2L_i+1}} \cdot I_{L_i, L_o, L_x}$$
 
 FACTOR:
-$$\text{FACTOR} = 2\sqrt{\frac{k_a k_b}{E_{cm}^a E_{cm}^b}}$$
+$$\text{FACTOR} = 2\sqrt{\frac{k_a k_b}{E_{\text{cm}}^{(a)} \, E_{\text{cm}}^{(b)}}}$$
 
 ATERM:
-$$\text{ATERM}(L_x) = \sqrt{\frac{2j_B+1}{2j_A+1}} \cdot \sqrt{2L_x+1} \cdot \mathcal{S}_{proj} \cdot \mathcal{S}_{target} \cdot W(j_B, l_T, j_A, l_P; j_n, L_x)$$
+$$\text{ATERM}(L_x) = \sqrt{\frac{2j_B+1}{2j_A+1}} \cdot \sqrt{2L_x+1} \cdot \mathcal{S}_{\text{proj}} \cdot \mathcal{S}_{\text{target}} \cdot W(j_B, l_T, j_A, l_P; j_n, L_x)$$
 
 ### 4.5 BETCAL Formula
 
-$$\beta(L_o, L_x, M_x) = \frac{1}{2k_a} \sum_{L_i} (2L_i+1) \cdot C^{L_i\ L_x\ L_o}_{0\ M_x\ M_x} \cdot e^{i(\sigma_{L_i} + \sigma_{L_o})} \cdot S_{SFROMI}$$
+$$\beta(L_o, L_x, M_x) = \frac{1}{2k_a} \sum_{L_i} (2L_i+1) \cdot C(L_i, 0, L_x, M_x; L_o, M_x) \cdot e^{i(\sigma_{L_i} + \sigma_{L_o})} \cdot S_{\text{SFROMI}}$$
 
 ### 4.6 Cross Section Formula
 
-$$\frac{d\sigma}{d\Omega}(\theta) = 10 \cdot \sum_{L_x, M_x} f_{M_x} \cdot \left|\sum_{L_o} \beta(L_o, M_x) \cdot P_{L_o}^{M_x}(\cos\theta)\right|^2$$
+$$\frac{d\sigma}{d\Omega}(\theta) = 10 \cdot \sum_{L_x, M_x} f_{M_x} \cdot \left|\sum_{L_o} \beta(L_o, M_x) \cdot P_{L_o}^{M_x}(\cos\theta)\right|^{2}$$
 
 ### 4.7 Angular Coupling (A12)
 
 $$\mathcal{A}_{12} = \sum_{M_T, M_U} C_{M_T, M_U} \cos(M_T \phi_T - M_U \phi_{ab})$$
 
 where:
-$$C_{M_T, M_U} = X_N \cdot d^{l_T}_{|M_T|,0}(\pi/2) \cdot d^{l_P}_{0,0}(\pi/2) \cdot \begin{pmatrix} l_T & l_P & L_x \\ M_T & 0 & -M_T \end{pmatrix} \cdot d^{L_i}_{|M_U|,0} \cdot d^{L_o}_{|M_T-M_U|,0} \cdot \sqrt{2L_o+1} \cdot \begin{pmatrix} L_i & L_o & L_x \\ M_U & M_T-M_U & -M_T \end{pmatrix}$$
+$$C_{M_T, M_U} = X_N \cdot d_{|M_T|,0}^{(l_T)}(\pi/2) \cdot d_{0,0}^{(l_P)}(\pi/2) \cdot \begin{pmatrix} l_T & l_P & L_x \\ M_T & 0 & -M_T \end{pmatrix} \cdot d_{|M_U|,0}^{(L_i)} \cdot d_{|M_T-M_U|,0}^{(L_o)} \cdot \sqrt{2L_o+1} \cdot \begin{pmatrix} L_i & L_o & L_x \\ M_U & M_T-M_U & -M_T \end{pmatrix}$$
 
 with $X_N = \frac{1}{2}\sqrt{(2L_i+1)(2l_T+1)(2l_P+1)}$
 

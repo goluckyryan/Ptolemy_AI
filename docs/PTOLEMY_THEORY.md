@@ -107,7 +107,7 @@ This works because the physical regular solution IS zero in the deep interior �
 
 At the outer boundary $r_N$ and $r_{N-1}$, match the Numerov solution to asymptotic Coulomb functions:
 
-$$S_L = \frac{u_{N-1} \cdot H^+_{L}(r_N) - u_N \cdot H^+_L(r_{N-1})}{u_{N-1} \cdot H^-_L(r_N) - u_N \cdot H^-_L(r_{N-1})}$$
+$$S_L = \frac{u_{N-1} \cdot H^{+}_{L}(r_N) - u_N \cdot H^{+}_{L}(r_{N-1})}{u_{N-1} \cdot H^{-}_{L}(r_N) - u_N \cdot H^{-}_{L}(r_{N-1})}$$
 
 where $H^\pm_L = G_L \pm iF_L$ and $F_L, G_L$ from RCWFN (Steed's method). This is exact — no approximation.
 
@@ -198,11 +198,11 @@ Iterate on potential depth $V$ to drive $\text{Diff} \to 0$:
 
 For a transfer reaction $a (= b + x) + A \to b + B (= A + x)$:
 
-$$T_{ba} = \int d^3r_b \int d^3r_a \chi_b^{(-)*}(\vec{r}_b) \langle \psi_B \psi_b | V | \psi_A \psi_a \rangle \chi_a^{(+)}(\vec{r}_a)$$
+$$T_{ba} = \int d^3 r_b \int d^3 r_a \, \chi_{b}^{(-)\ast}(\vec{r}_{b}) \langle \psi_B \psi_b | V | \psi_A \psi_a \rangle \chi_{a}^{(+)}(\vec{r}_{a})$$
 
 Separating internal states from radial motion:
 
-$$T_{ba} \propto \int d^3r_b \int d^3r_a \chi_b^*(\vec{r}_b) \phi_{Bx}^*(\vec{r}_x) V(\vec{r}_{bx}) \phi_{ax}(\vec{r}_{bx}) \chi_a(\vec{r}_a)$$
+$$T_{ba} \propto \int d^3 r_b \int d^3 r_a \, \chi_{b}^{\ast}(\vec{r}_{b}) \, \phi_{Bx}^{\ast}(\vec{r}_{x}) \, V(\vec{r}_{bx}) \, \phi_{ax}(\vec{r}_{bx}) \, \chi_{a}(\vec{r}_{a})$$
 
 - $\phi_{Bx}$: Bound state wavefunction of x in B (target bound state)
 - $\phi_{ax}$: Bound state wavefunction of x in a (projectile bound state)
@@ -211,11 +211,11 @@ $$T_{ba} \propto \int d^3r_b \int d^3r_a \chi_b^*(\vec{r}_b) \phi_{Bx}^*(\vec{r}
 
 Expanding all wavefunctions in partial waves:
 
-$$T \sim \sum_{L_a, L_b} \int r_a^2 dr_a \int r_b^2 dr_b \chi_{L_b}(r_b) K_{L_a L_b}(r_a, r_b) \chi_{L_a}(r_a)$$
+$$T \sim \sum_{L_a, L_b} \int r_{a}^{2} \, dr_a \int r_{b}^{2} \, dr_b \, \chi_{L_b}(r_b) \, K_{L_a L_b}(r_a, r_b) \, \chi_{L_a}(r_a)$$
 
 The kernel $K$ involves angular integration:
 
-$$K(r_a, r_b) = \int_{-1}^{1} d(\cos \theta) \phi_{Bx}^*(r_x) V(r_{bx}) \phi_{ax}(r_{bx}) P_L(\cos \theta)$$
+$$K(r_a, r_b) = \int_{-1}^{1} d(\cos \theta) \, \phi_{Bx}^{\ast}(r_x) \, V(r_{bx}) \, \phi_{ax}(r_{bx}) \, P_L(\cos \theta)$$
 
 where $r_x$ and $r_{bx}$ depend on $r_a, r_b, \theta$ via the law of cosines.
 
@@ -227,11 +227,11 @@ where $r_x$ and $r_{bx}$ depend on $r_a, r_b, \theta$ via the law of cosines.
 
 Assumes the interaction and projectile bound state are pointlike:
 
-$$V(\vec{r}_{bx}) \phi_{ax}(\vec{r}_{bx}) \approx D_0 \delta(\vec{r}_{bx})$$
+$$V(\vec{r}_{bx}) \, \phi_{ax}(\vec{r}_{bx}) \approx D_0 \, \delta(\vec{r}_{bx})$$
 
 This collapses the 6D integral to a 3D integral:
 
-$$T_{ZR} \propto \int d^3r \chi_b^*(\beta \vec{r}) \phi_{Bx}^*(\vec{r}) \chi_a(\vec{r})$$
+$$T_{\text{ZR}} \propto \int d^3 r \, \chi_{b}^{\ast}(\beta \vec{r}) \, \phi_{Bx}^{\ast}(\vec{r}) \, \chi_{a}(\vec{r})$$
 
 Fast but inaccurate for heavy ion reactions, high energies, and states where finite size matters.
 
@@ -268,8 +268,8 @@ For stripping (ISTRIP=1), coefficients from source.mor lines 15876–15882.
 
 ### 6.2 Magnitudes
 
-$$r_x = \sqrt{S_1^2 r_\alpha^2 + T_1^2 r_\beta^2 + 2 S_1 T_1 r_\alpha r_\beta \cos\phi_{ab}}$$
-$$r_p = \sqrt{S_2^2 r_\alpha^2 + T_2^2 r_\beta^2 + 2 S_2 T_2 r_\alpha r_\beta \cos\phi_{ab}}$$
+$$r_x = \sqrt{S_{1}^{2} \, r_{\alpha}^{2} + T_{1}^{2} \, r_{\beta}^{2} + 2 S_1 T_1 r_{\alpha} r_{\beta} \cos\phi_{ab}}$$
+$$r_p = \sqrt{S_{2}^{2} \, r_{\alpha}^{2} + T_{2}^{2} \, r_{\beta}^{2} + 2 S_2 T_2 r_{\alpha} r_{\beta} \cos\phi_{ab}}$$
 
 ### 6.3 (U,V) Coordinate Transformation
 
@@ -312,7 +312,7 @@ For each (ri,ro) pair, Ptolemy does a 2-pass scan:
 
 ### 8.1 Transfer Integral
 
-$$I_{L_i L_o L_x}^{J_\pi J_\pi'} = \int_0^\infty dr_i \int_0^\infty dr_o \int_{-1}^{1} d(\cos\phi_{ab})\ \chi_{L_i}^{J_\pi}(r_i) \cdot \mathcal{K}(r_i, r_o, \phi_{ab}) \cdot \chi_{L_o}^{J_\pi'*}(r_o)$$
+$$I_{L_i, L_o, L_x}^{J_{\pi}, J_{\pi}'} = \int_0^\infty dr_i \int_0^\infty dr_o \int_{-1}^{1} d(\cos\phi_{ab}) \; \chi_{L_i}^{J_{\pi}}(r_i) \cdot \mathcal{K}(r_i, r_o, \phi_{ab}) \cdot \chi_{L_o}^{J_{\pi}' \ast}(r_o)$$
 
 where the kernel is:
 
@@ -343,15 +343,15 @@ call SFROMI to convert I → S-matrix element
 
 ### 9.1 Assembly
 
-$$S_{SFROMI}(L_i, L_o, L_x, J_\pi, J_\pi') = \text{FACTOR} \cdot \text{ATERM} \cdot \frac{i^{L_i+L_o+2L_x+1}}{\sqrt{2L_i+1}} \cdot I_{L_i L_o L_x}^{J_\pi J_\pi'}$$
+$$S_{\text{SFROMI}}(L_i, L_o, L_x, J_{\pi}, J_{\pi}') = \text{FACTOR} \cdot \text{ATERM} \cdot \frac{i^{L_i+L_o+2L_x+1}}{\sqrt{2L_i+1}} \cdot I_{L_i, L_o, L_x}^{J_{\pi}, J_{\pi}'}$$
 
 ### 9.2 FACTOR
 
-$$\text{FACTOR} = 2\sqrt{\frac{k_a k_b}{E_{cm}^a E_{cm}^b}}$$
+$$\text{FACTOR} = 2\sqrt{\frac{k_a k_b}{E_{\text{cm}}^{a} \, E_{\text{cm}}^{b}}}$$
 
 ### 9.3 ATERM (Spectroscopic Amplitude)
 
-$$\text{ATERM}(L_x) = \sqrt{\frac{2j_B+1}{2j_A+1}} \cdot \sqrt{2L_x+1} \cdot \mathcal{S}_{proj} \cdot \mathcal{S}_{target} \cdot W(j_B, l_T, j_A, l_P; j_n, L_x)$$
+$$\text{ATERM}(L_x) = \sqrt{\frac{2j_B+1}{2j_A+1}} \cdot \sqrt{2L_x+1} \cdot \mathcal{S}_{\text{proj}} \cdot \mathcal{S}_{\text{target}} \cdot W(j_B, l_T, j_A, l_P; j_n, L_x)$$
 
 ### 9.4 Phase Sign
 
@@ -362,7 +362,7 @@ If $(L_i + L_o + 2L_x + 1) \bmod 2 = 1$: multiply by $i$.
 
 The full SFROMI includes a double 9-J symbol loop coupling spin quantum numbers of incoming/outgoing channel J-values:
 
-$$S_{SFROMI} = \text{FACTOR} \cdot \mathcal{N}_{9J} \cdot \text{SAV9J} \cdot \text{TEMP} \cdot I$$
+$$S_{\text{SFROMI}} = \text{FACTOR} \cdot \mathcal{N}_{9J} \cdot \text{SAV9J} \cdot \text{TEMP} \cdot I$$
 
 ---
 
@@ -370,15 +370,15 @@ $$S_{SFROMI} = \text{FACTOR} \cdot \mathcal{N}_{9J} \cdot \text{SAV9J} \cdot \te
 
 ### 10.1 BETCAL — Partial Wave Amplitudes
 
-$$\beta(L_o, L_x, M_x) = \frac{1}{2k_a} \sum_{L_i} (2L_i+1) \cdot C^{L_i\ L_x\ L_o}_{0\ M_x\ M_x} \cdot e^{i(\sigma_{L_i}^a + \sigma_{L_o}^b)} \cdot S_{SFROMI}(L_i, L_o, L_x)$$
+$$\beta(L_o, L_x, M_x) = \frac{1}{2k_a} \sum_{L_i} (2L_i+1) \cdot C(L_i, 0, L_x, M_x; L_o, M_x) \cdot e^{i(\sigma_{L_i}^{(a)} + \sigma_{L_o}^{(b)})} \cdot S_{\text{SFROMI}}(L_i, L_o, L_x)$$
 
 ### 10.2 AMPCAL — Scattering Amplitude
 
-$$F^{M_x}(\theta) = \sum_{L_o} \beta(L_o, L_x, M_x) \cdot P_{L_o}^{M_x}(\cos\theta)$$
+$$F^{(M_x)}(\theta) = \sum_{L_o} \beta(L_o, L_x, M_x) \cdot P_{L_o}^{M_x}(\cos\theta)$$
 
 ### 10.3 XSECTN — Differential Cross Section
 
-$$\frac{d\sigma}{d\Omega}(\theta) = 10 \cdot \sum_{L_x, M_x} f_{M_x} \cdot |F^{M_x}(\theta)|^2$$
+$$\frac{d\sigma}{d\Omega}(\theta) = 10 \cdot \sum_{L_x, M_x} f_{M_x} \cdot \left|F^{(M_x)}(\theta)\right|^{2}$$
 
 where $f_{M_x} = 1$ for $M_x=0$, $f_{M_x} = 2$ for $M_x > 0$ (sum over $\pm M_x$), and the factor 10 converts fm² to mb.
 
@@ -390,18 +390,18 @@ where $f_{M_x} = 1$ for $M_x=0$, $f_{M_x} = 2$ for $M_x > 0$ (sum over $\pm M_x$
 |---|---|---|
 | **ODE** | Eq. 5: standard Schrödinger | Same in WAVELJ |
 | **Regular BC** | $u \sim r^{l+1}$ | `u[1] = h^{L+1}`, Numerov forward |
-| **Asymptotic BC** | Eq. 27: $\chi → \frac{e^{iσ}}{2i}(SH^+ - H^-)$ | Same; ALPHAR/ALPHAI enforce this |
+| **Asymptotic BC** | Eq. 27: $\chi \to (e^{i\sigma}/2i)(S H^{+} - H^{-})$ | Same; ALPHAR/ALPHAI enforce this |
 | **S-matrix extraction** | Wronskian | Two-point Wronskian at $r_N$, $r_{N-1}$ |
 | **Coulomb phase** | $\arg\Gamma(L+1+iη)$ | SIGZRO array |
 | **Coulomb amplitude** | §2.3, Eq. 10 | AMPCAL, exact formula |
-| **Nuclear amplitude** | $f_N = \frac{1}{2ik}\sum(2L+1)e^{2iσ}(S-1)P_L$ | BETCAL + AMPCAL |
+| **Nuclear amplitude** | $f_N = \frac{1}{2ik}\sum(2L+1)e^{2i\sigma}(S-1)P_L$ | BETCAL + AMPCAL |
 | **Approximation** | Both ZR and FR | Finite-range only |
 | **T-matrix form** | Eq. 33 | Same. Prior/Post form |
 | **Coordinate transforms** | Fig. 9 with S1, T1, S2, T2 | GRDSET lines 15876–15882 |
-| **Radial integral** | Eq. 5.8: $\iint \chi_\beta^* F \chi_\alpha dr_\alpha dr_\beta$ | INELDC: 2D Gauss quadrature |
-| **Kinematic factor** | $\mu_\alpha\mu_\beta/\hbar^4 \cdot k_\beta/k_\alpha$ | SFROMI: $2\sqrt{k_\alpha k_\beta / E_{cm}^\alpha E_{cm}^\beta}$ (equivalent) |
+| **Radial integral** | Eq. 5.8: $\iint \chi_{\beta}^{\ast} F \chi_{\alpha} \, dr_{\alpha} \, dr_{\beta}$ | INELDC: 2D Gauss quadrature |
+| **Kinematic factor** | $\mu_{\alpha}\mu_{\beta}/\hbar^4 \cdot k_{\beta}/k_{\alpha}$ | SFROMI: $2\sqrt{k_{\alpha} k_{\beta} / (E_{\text{cm}}^{(\alpha)} E_{\text{cm}}^{(\beta)})}$ (equivalent) |
 | **Angular coupling** | 9j-symbol + CG | A12 subroutine |
-| **Phase convention** | $i^{L_\alpha - L_\beta - l}$ | $i^{L_a + L_o + 2L_x + 1}$ (equivalent) |
+| **Phase convention** | $i^{L_{\alpha} - L_{\beta} - l}$ | $i^{L_a + L_o + 2 L_x + 1}$ (equivalent) |
 | **Spin-orbit** | §2.9: $\Lambda(L,s,J)$ | Same formula |
 | **Units** | fm² | ×10 for mb/sr |
 
