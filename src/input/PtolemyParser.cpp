@@ -319,6 +319,9 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
                     else if (key == "ELAB")      dwba.SetEnergy(val);
                     else if (key == "LMIN")      dwba.SetLmin((int)val);
                     else if (key == "LMAX")      dwba.SetLmax((int)val);
+                    else if (key == "ASYMPTOPIA") dwba.SetAsymptopia(val);
+                    else if (key == "LSTEP")     {} // default 1
+                    else if (key == "MAXLEXTRAP") {} // ignore
                     else if (key == "PRINT")     {} // ignore for now
                 }
             } else {
@@ -499,7 +502,7 @@ void PtolemyParser::ParseParameterSet(const std::string &line, DWBA &dwba) {
             else if (key == "LMAX")        dwba.SetLmax((int)val);
             else if (key == "LSTEP")       {} // default 1, ignore for now
             else if (key == "MAXLEXTRAP")  {} // ignore for now
-            else if (key == "ASYMPTOPIA")  {} // ignore for now
+            else if (key == "ASYMPTOPIA")  dwba.SetAsymptopia(val);
             else if (key == "PRINT")       {} // ignore for now
         } else {
             // Bare keyword flags

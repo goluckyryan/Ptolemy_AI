@@ -241,7 +241,7 @@ void DWBA::Calculate() {
   // RMAX = max(ASYMPT, (eta + sqrt(eta^2 + LMAX*(LMAX+1))) / k)
   // Condition: NUMFIT==0 && LMAX!=NOTDEF && SCTASY<0 (always true for DWBA with set LMAX)
   {
-    double ASYMPT = 30.0;  // from input asymptopia=30 (or default |SCTASY|=20)
+    double ASYMPT = (AsymptopiaSet > 0) ? AsymptopiaSet : 30.0;
     int LMAX_eff = (LmaxSet >= 0) ? LmaxSet : 40;
 
     // Incoming channel turning point

@@ -115,11 +115,19 @@ public:
   void SetResidualSpin(double J);     // J of residual nucleus B (e.g. 34Si: 0, 17O: 2.5)
   void SetLmin(int lmin) { LminSet = lmin; }
   void SetLmax(int lmax) { LmaxSet = lmax; }
+  void SetAsymptopia(double a) { AsymptopiaSet = a; }
 
   // Main calculation
   void Calculate();
   void CalculateZR();  // Zero-Range DWBA
   void PrintParameters();
+
+  // Accessors for elastic driver
+  const Channel& GetIncoming() const { return Incoming; }
+  const Channel& GetOutgoing() const { return Outgoing; }
+  double GetAngleMin()  const { return AngleMin; }
+  double GetAngleMax()  const { return AngleMax; }
+  double GetAngleStep() const { return AngleStep; }
 
   friend class DWBATest;  // for wftest_main.cpp validation
 private:
@@ -142,6 +150,7 @@ private:
   double SpinResidual = -1.0;   // J of residual nucleus B (-1 = not set, use heuristic)
   int    LminSet      = -1;     // lmin for incoming partial wave (-1 = use default 0)
   int    LmaxSet      = -1;     // lmax for incoming partial wave (-1 = use default 40)
+  double AsymptopiaSet = -1.0;  // asymptopia in fm (-1 = use default 30)
 
   // Integration Grid
   std::vector<double> ThetaGrid;
