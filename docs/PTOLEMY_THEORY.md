@@ -309,7 +309,7 @@ We define:
 - $\mathbf{r}_T$ = position of x relative to A (target bound state coordinate)
 - $\mathbf{r}_P$ = position of x relative to b (projectile bound state coordinate)
 
-The key insight: $\mathbf{r}_T$ and $\mathbf{r}_P$ are **linear combinations** of $\mathbf{r}_\alpha$ and $\mathbf{r}_\beta$:
+The key insight: the bound state coordinates are **linear combinations** of the scattering coordinates:
 
 $$\mathbf{r}_T = S_1 \mathbf{r}_\alpha + T_1 \mathbf{r}_\beta$$
 $$\mathbf{r}_P = S_2 \mathbf{r}_\alpha + T_2 \mathbf{r}_\beta$$
@@ -347,7 +347,7 @@ For **pickup** (ISTRIP=−1), the roles of a and B are swapped, and the coeffici
 
 ### 6.3 Magnitudes
 
-Since $\mathbf{r}_T$ and $\mathbf{r}_P$ are vector sums, their magnitudes involve the angle $\phi_{ab}$ between $\mathbf{r}_\alpha$ and $\mathbf{r}_\beta$:
+Since the bound state coordinates are vector sums of scattering coordinates, their magnitudes involve the angle $\phi_{ab}$ between the two channel vectors:
 
 $$r_T = \sqrt{S_{1}^{2} \, r_{\alpha}^{2} + T_{1}^{2} \, r_{\beta}^{2} + 2 S_1 T_1 \, r_\alpha \, r_\beta \cos\phi_{ab}}$$
 
@@ -400,7 +400,7 @@ For each (ri,ro) pair, Ptolemy does a 2-pass scan:
 
 ### 8.1 From 6D to the Radial-Angular Form
 
-The DWBA transition amplitude (§4.1) is a 6-dimensional integral over $\mathbf{r}_\alpha$ and $\mathbf{r}_\beta$. By expanding all wavefunctions in partial waves (spherical harmonics), the angular integrals can be done analytically, reducing the problem to radial integrals.
+The DWBA transition amplitude (§4.1) is a 6-dimensional integral over the entrance and exit channel coordinates. By expanding all wavefunctions in partial waves (spherical harmonics), the angular integrals can be done analytically, reducing the problem to radial integrals.
 
 **Step 1:** Expand distorted waves in partial waves:
 
@@ -416,7 +416,7 @@ $$\phi_T(r_T) Y_{l_T}^{m_T}(\hat{r}_T), \qquad \phi_P(r_P) Y_{l_P}^{m_P}(\hat{r}
 
 $$I_{L_i, L_o, L_x}^{J_{\pi}, J_{\pi}'} = \int_0^{\infty} dr_{\alpha} \int_0^{\infty} dr_{\beta} \int_{-1}^{1} d(\cos\phi_{ab}) \; \chi_{L_i}^{J_{\pi}}(r_{\alpha}) \cdot \mathcal{K}(r_\alpha, r_{\beta}, \phi_{ab}) \cdot \chi_{L_o}^{J_{\pi}' \ast}(r_\beta)$$
 
-The angle $\phi_{ab}$ is the angle between $\mathbf{r}_\alpha$ and $\mathbf{r}_\beta$ — it survives because the bound state coordinates $r_T$ and $r_P$ depend on it through the law of cosines (§6.3).
+The angle $\phi_{ab}$ is the angle between the entrance and exit channel coordinate vectors — it survives because the bound state coordinates depend on it through the law of cosines (§6.3).
 
 ### 8.2 The Kernel
 
@@ -441,11 +441,11 @@ In the **zero-range limit**, the projectile bound state and interaction collapse
 
 $$V(r_P) \cdot \phi_P(r_P) \to D_0 \, \delta^{(3)}(\mathbf{r}_P)$$
 
-This forces $\mathbf{r}_P = 0$, which from $\mathbf{r}_P = S_2 \mathbf{r}_\alpha + T_2 \mathbf{r}_\beta$ implies:
+This forces the projectile coordinate to zero. From the mapping $\mathbf{r}_P = S_2 \mathbf{r}_\alpha + T_2 \mathbf{r}_\beta$, this implies:
 
 $$\mathbf{r}_\beta = -\frac{S_2}{T_2} \mathbf{r}_{\alpha} = \frac{S_2}{S_1} \mathbf{r}_\alpha \quad (\text{since } T_2 = -S_1)$$
 
-So $\mathbf{r}_\beta$ is locked to $\mathbf{r}_\alpha$ — both coordinates are proportional. The $\phi_{ab}$ integral collapses (the delta function fixes the angle), and $r_T$ becomes a function of $r_\alpha$ alone:
+So the exit channel coordinate is locked proportional to the entrance channel coordinate. The $\phi_{ab}$ integral collapses (the delta function fixes the angle), and the target coordinate becomes a function of a single radial variable:
 
 $$r_T = |S_1 - T_1 S_2/S_1| \cdot r_{\alpha} = \left|S_1 + T_1 \frac{S_2}{S_1}\right| r_\alpha$$
 
