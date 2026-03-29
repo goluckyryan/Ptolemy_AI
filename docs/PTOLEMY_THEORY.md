@@ -107,7 +107,7 @@ This works because the physical regular solution IS zero in the deep interior �
 
 At the outer boundary $r_N$ and $r_{N-1}$, match the Numerov solution to asymptotic Coulomb functions:
 
-$$S_L = \frac{u_{N-1} \cdot H^{+}_{L}(r_N) - u_N \cdot H^{+}_{L}(r_{N-1})}{u_{N-1} \cdot H^{-}_{L}(r_N) - u_N \cdot H^{-}_{L}(r_{N-1})}$$
+$$S_L = \frac{u_{N-1} \cdot H^{+}_{L}(r_N) - u_N \cdot H^{+}_{L}(r_{N-1})}{u_{N-1} \cdot H^{-}_{L}(r_N) - u_N \cdot H^{-}_L(r_{N-1})}$$
 
 where $H^\pm_L = G_L \pm iF_L$ and $F_L, G_L$ from RCWFN (Steed's method). This is exact — no approximation.
 
@@ -180,7 +180,7 @@ Unlike simple shooting methods (unstable for bound states), Ptolemy integrates f
 - Method: Numerov integration (backward)
 
 **Matching condition** at $R_{match}$:
-$$\text{Diff} = \left( \frac{u'}{u} \right)_{out} - \left( \frac{u'}{u} \right)_{in} \to 0$$
+$$\text{Diff} = \left( \frac{u'}{u} \right)_{\text{out}} - \left( \frac{u'}{u} \right)_{\text{in}} \to 0$$
 
 ### 3.3 Depth Search Iteration
 
@@ -198,11 +198,11 @@ Iterate on potential depth $V$ to drive $\text{Diff} \to 0$:
 
 For a transfer reaction $a (= b + x) + A \to b + B (= A + x)$:
 
-$$T_{ba} = \int d^3 r_b \int d^3 r_a \, \chi_{b}^{(-)\ast}(\mathbf{r}_{b}) \langle \psi_B \psi_b | V | \psi_A \psi_a \rangle \chi_{a}^{(+)}(\mathbf{r}_{a})$$
+$$T_{ba} = \int d^3 r_b \int d^3 r_a \, \chi_{b}^{(-)\ast}(\mathbf{r}_{b}) \langle \psi_B \psi_b | V | \psi_A \psi_a \rangle \chi_{a}^{(+)}(\mathbf{r}_a)$$
 
 Separating internal states from radial motion:
 
-$$T_{ba} \propto \int d^3 r_b \int d^3 r_a \, \chi_{b}^{\ast}(\mathbf{r}_{b}) \, \phi_{Bx}^{\ast}(\mathbf{r}_{x}) \, V(\mathbf{r}_{bx}) \, \phi_{ax}(\mathbf{r}_{bx}) \, \chi_{a}(\mathbf{r}_{a})$$
+$$T_{ba} \propto \int d^3 r_b \int d^3 r_a \, \chi_{b}^{\ast}(\mathbf{r}_{b}) \, \phi_{Bx}^{\ast}(\mathbf{r}_{x}) \, V(\mathbf{r}_{bx}) \, \phi_{ax}(\mathbf{r}_{bx}) \, \chi_{a}(\mathbf{r}_a)$$
 
 - $\phi_{Bx}$: Bound state wavefunction of x in B (target bound state)
 - $\phi_{ax}$: Bound state wavefunction of x in a (projectile bound state)
@@ -211,7 +211,7 @@ $$T_{ba} \propto \int d^3 r_b \int d^3 r_a \, \chi_{b}^{\ast}(\mathbf{r}_{b}) \,
 
 Expanding all wavefunctions in partial waves:
 
-$$T \sim \sum_{L_a, L_b} \int r_{a}^{2} \, dr_a \int r_{b}^{2} \, dr_b \, \chi_{L_b}(r_b) \, K_{L_a L_b}(r_a, r_b) \, \chi_{L_a}(r_a)$$
+$$T \sim \sum_{L_a, L_b} \int r_{a}^{2} \, dr_a \int r_b^{2} \, dr_b \, \chi_{L_b}(r_b) \, K_{L_a L_b}(r_a, r_b) \, \chi_{L_a}(r_a)$$
 
 The kernel $K$ involves angular integration:
 
@@ -279,7 +279,7 @@ $$V(\mathbf{r}_{bx}) \, \phi_{ax}(\mathbf{r}_{bx}) \approx D_0 \, \delta(\mathbf
 
 This collapses the 6D integral to a 3D integral:
 
-$$T_{\text{ZR}} \propto \int d^3 r \, \chi_{b}^{\ast}(\beta \mathbf{r}) \, \phi_{Bx}^{\ast}(\mathbf{r}) \, \chi_{a}(\mathbf{r})$$
+$$T_{\text{ZR}} \propto \int d^3 r \, \chi_{b}^{\ast}(\beta \mathbf{r}) \, \phi_{Bx}^{\ast}(\mathbf{r}) \, \chi_a(\mathbf{r})$$
 
 Fast but inaccurate for heavy ion reactions, high energies, and states where finite size matters. See §8.4 for how the finite-range integral collapses to ZR.
 
@@ -304,15 +304,15 @@ Ptolemy performs the full **finite-range** calculation — double radial integra
 In a transfer reaction $A(a,b)B$ where $a = b + x$ and $B = A + x$, there are four particles but only two independent relative coordinates. The challenge is that the **bound state** coordinates (x relative to its core) differ from the **scattering** coordinates (projectile relative to target).
 
 We define:
-- $\mathbf{r}_{\alpha}$ = relative coordinate between a and A (entrance channel)
-- $\mathbf{r}_{\beta}$ = relative coordinate between b and B (exit channel)
-- $\mathbf{r}_{T}$ = position of x relative to A (target bound state coordinate)
-- $\mathbf{r}_{P}$ = position of x relative to b (projectile bound state coordinate)
+- $\mathbf{r}_\alpha$ = relative coordinate between a and A (entrance channel)
+- $\mathbf{r}_\beta$ = relative coordinate between b and B (exit channel)
+- $\mathbf{r}_T$ = position of x relative to A (target bound state coordinate)
+- $\mathbf{r}_P$ = position of x relative to b (projectile bound state coordinate)
 
-The key insight: $\mathbf{r}_{T}$ and $\mathbf{r}_{P}$ are **linear combinations** of $\mathbf{r}_{\alpha}$ and $\mathbf{r}_{\beta}$:
+The key insight: $\mathbf{r}_T$ and $\mathbf{r}_P$ are **linear combinations** of $\mathbf{r}_\alpha$ and $\mathbf{r}_\beta$:
 
-$$\mathbf{r}_{T} = S_1 \mathbf{r}_{\alpha} + T_1 \mathbf{r}_{\beta}$$
-$$\mathbf{r}_{P} = S_2 \mathbf{r}_{\alpha} + T_2 \mathbf{r}_{\beta}$$
+$$\mathbf{r}_T = S_1 \mathbf{r}_\alpha + T_1 \mathbf{r}_\beta$$
+$$\mathbf{r}_P = S_2 \mathbf{r}_\alpha + T_2 \mathbf{r}_\beta$$
 
 ### 6.2 Derivation of S1, T1, S2, T2
 
@@ -347,11 +347,11 @@ For **pickup** (ISTRIP=−1), the roles of a and B are swapped, and the coeffici
 
 ### 6.3 Magnitudes
 
-Since $\mathbf{r}_{T}$ and $\mathbf{r}_{P}$ are vector sums, their magnitudes involve the angle $\phi_{ab}$ between $\mathbf{r}_{\alpha}$ and $\mathbf{r}_{\beta}$:
+Since $\mathbf{r}_T$ and $\mathbf{r}_P$ are vector sums, their magnitudes involve the angle $\phi_{ab}$ between $\mathbf{r}_\alpha$ and $\mathbf{r}_\beta$:
 
-$$r_T = \sqrt{S_{1}^{2} \, r_{\alpha}^{2} + T_{1}^{2} \, r_{\beta}^{2} + 2 S_1 T_1 \, r_{\alpha} \, r_{\beta} \cos\phi_{ab}}$$
+$$r_T = \sqrt{S_{1}^{2} \, r_{\alpha}^{2} + T_{1}^{2} \, r_{\beta}^{2} + 2 S_1 T_1 \, r_\alpha \, r_\beta \cos\phi_{ab}}$$
 
-$$r_P = \sqrt{S_{2}^{2} \, r_{\alpha}^{2} + T_{2}^{2} \, r_{\beta}^{2} + 2 S_2 T_2 \, r_{\alpha} \, r_{\beta} \cos\phi_{ab}}$$
+$$r_P = \sqrt{S_{2}^{2} \, r_{\alpha}^{2} + T_{2}^{2} \, r_{\beta}^{2} + 2 S_2 T_2 \, r_\alpha \, r_\beta \cos\phi_{ab}}$$
 
 Note that $S_1 T_1 < 0$ and $S_2 T_2 < 0$, so the cross-term reduces the magnitude — the bound state coordinates are always shorter than the scattering coordinates.
 
@@ -359,11 +359,11 @@ Note that $S_1 T_1 < 0$ and $S_2 T_2 < 0$, so the cross-term reduces the magnitu
 
 For numerical integration, Ptolemy uses sum/difference coordinates:
 
-$$U = \frac{r_{\alpha} + r_{\beta}}{2}, \quad V = r_{\alpha} - r_{\beta}, \quad \text{Jacobian} = 1$$
+$$U = \frac{r_{\alpha} + r_{\beta}}{2}, \quad V = r_\alpha - r_\beta, \quad \text{Jacobian} = 1$$
 
-Domain: $U \in [0, U_{\max}]$, $V \in [-2U, +2U]$ (ensures $r_{\alpha} > 0$, $r_{\beta} > 0$).
+Domain: $U \in [0, U_{\max}]$, $V \in [-2U, +2U]$ (ensures $r_\alpha > 0$, $r_\beta > 0$).
 
-This is advantageous because the integrand peaks near $r_{\alpha} \approx r_{\beta}$ (i.e., $V \approx 0$), allowing efficient quadrature concentration.
+This is advantageous because the integrand peaks near $r_\alpha \approx r_\beta$ (i.e., $V \approx 0$), allowing efficient quadrature concentration.
 
 ---
 
@@ -400,11 +400,11 @@ For each (ri,ro) pair, Ptolemy does a 2-pass scan:
 
 ### 8.1 From 6D to the Radial-Angular Form
 
-The DWBA transition amplitude (§4.1) is a 6-dimensional integral over $\mathbf{r}_{\alpha}$ and $\mathbf{r}_{\beta}$. By expanding all wavefunctions in partial waves (spherical harmonics), the angular integrals can be done analytically, reducing the problem to radial integrals.
+The DWBA transition amplitude (§4.1) is a 6-dimensional integral over $\mathbf{r}_\alpha$ and $\mathbf{r}_\beta$. By expanding all wavefunctions in partial waves (spherical harmonics), the angular integrals can be done analytically, reducing the problem to radial integrals.
 
 **Step 1:** Expand distorted waves in partial waves:
 
-$$\chi_a(\mathbf{r}_{\alpha}) = \sum_{L_i, M_i} \frac{u_{L_i}(r_{\alpha})}{r_{\alpha}} Y_{L_i}^{M_i}(\hat{r}_{\alpha}), \qquad \chi_b(\mathbf{r}_{\beta}) = \sum_{L_o, M_o} \frac{u_{L_o}(r_{\beta})}{r_{\beta}} Y_{L_o}^{M_o}(\hat{r}_{\beta})$$
+$$\chi_a(\mathbf{r}_{\alpha}) = \sum_{L_i, M_i} \frac{u_{L_i}(r_{\alpha})}{r_{\alpha}} Y_{L_i}^{M_i}(\hat{r}_\alpha), \qquad \chi_b(\mathbf{r}_{\beta}) = \sum_{L_o, M_o} \frac{u_{L_o}(r_{\beta})}{r_{\beta}} Y_{L_o}^{M_o}(\hat{r}_\beta)$$
 
 **Step 2:** Expand bound states in spherical harmonics:
 
@@ -412,26 +412,26 @@ $$\phi_T(r_T) Y_{l_T}^{m_T}(\hat{r}_T), \qquad \phi_P(r_P) Y_{l_P}^{m_P}(\hat{r}
 
 **Step 3:** The angular integrals over $\hat{r}_\alpha$ and $\hat{r}_\beta$ produce Clebsch-Gordan coefficients and 3j-symbols, coupling $(L_i, l_T, l_P, L_o)$ to a transferred angular momentum $L_x$. Selection rules enforce $|L_i - L_o| \leq L_x \leq L_i + L_o$ and $|l_T - l_P| \leq L_x \leq l_T + l_P$.
 
-**Step 4:** After angular reduction, the remaining integral is over three scalar variables $(r_{\alpha}, r_{\beta}, \phi_{ab})$:
+**Step 4:** After angular reduction, the remaining integral is over three scalar variables $(r_\alpha, r_\beta, \phi_{ab})$:
 
-$$I_{L_i, L_o, L_x}^{J_{\pi}, J_{\pi}'} = \int_0^{\infty} dr_{\alpha} \int_0^{\infty} dr_{\beta} \int_{-1}^{1} d(\cos\phi_{ab}) \; \chi_{L_i}^{J_{\pi}}(r_{\alpha}) \cdot \mathcal{K}(r_{\alpha}, r_{\beta}, \phi_{ab}) \cdot \chi_{L_o}^{J_{\pi}' \ast}(r_{\beta})$$
+$$I_{L_i, L_o, L_x}^{J_{\pi}, J_{\pi}'} = \int_0^{\infty} dr_{\alpha} \int_0^{\infty} dr_{\beta} \int_{-1}^{1} d(\cos\phi_{ab}) \; \chi_{L_i}^{J_{\pi}}(r_{\alpha}) \cdot \mathcal{K}(r_\alpha, r_{\beta}, \phi_{ab}) \cdot \chi_{L_o}^{J_{\pi}' \ast}(r_\beta)$$
 
-The angle $\phi_{ab}$ is the angle between $\mathbf{r}_{\alpha}$ and $\mathbf{r}_{\beta}$ — it survives because the bound state coordinates $r_T$ and $r_P$ depend on it through the law of cosines (§6.3).
+The angle $\phi_{ab}$ is the angle between $\mathbf{r}_\alpha$ and $\mathbf{r}_\beta$ — it survives because the bound state coordinates $r_T$ and $r_P$ depend on it through the law of cosines (§6.3).
 
 ### 8.2 The Kernel
 
-$$\mathcal{K}(r_{\alpha}, r_{\beta}, \phi_{ab}) = \phi_T(r_T) \cdot V(r_P) \cdot \phi_P(r_P) \cdot \mathcal{A}_{12}(r_{\alpha}, r_{\beta}, \phi_{ab})$$
+$$\mathcal{K}(r_{\alpha}, r_{\beta}, \phi_{ab}) = \phi_T(r_T) \cdot V(r_P) \cdot \phi_P(r_P) \cdot \mathcal{A}_{12}(r_\alpha, r_\beta, \phi_{ab})$$
 
 where:
-- $\phi_T(r_T)$ = target bound state wavefunction, evaluated at $r_T(r_{\alpha}, r_{\beta}, \phi_{ab})$
-- $V(r_P) \cdot \phi_P(r_P)$ = interaction × projectile bound state, evaluated at $r_P(r_{\alpha}, r_{\beta}, \phi_{ab})$
+- $\phi_T(r_T)$ = target bound state wavefunction, evaluated at $r_T(r_\alpha, r_\beta, \phi_{ab})$
+- $V(r_P) \cdot \phi_P(r_P)$ = interaction × projectile bound state, evaluated at $r_P(r_\alpha, r_\beta, \phi_{ab})$
 - $\mathcal{A}_{12}$ = angular coupling coefficient from the partial wave reduction
 
 The kernel is **sharply peaked** near $\cos\phi_{ab} \to +1$ (collinear geometry), because this is where $r_P \to 0$ (the transferred particle is closest to the projectile core), making $V(r_P) \cdot \phi_P(r_P)$ large.
 
 ### 8.3 Angular Coupling Kernel (A12)
 
-$$\mathcal{A}_{12}(r_{\alpha}, r_{\beta}, \phi_{ab}) = \sum_{M_T, M_U} C_{M_T, M_U} \cos(M_T \phi_T - M_U \phi_{ab})$$
+$$\mathcal{A}_{12}(r_\alpha, r_\beta, \phi_{ab}) = \sum_{M_T, M_U} C_{M_T, M_U} \cos(M_T \phi_T - M_U \phi_{ab})$$
 
 where $C_{M_T, M_U}$ involves Wigner d-matrix elements (xlam), 3j-symbols, and $\sqrt{2L_o+1}$ normalization factors. This encodes the geometric coupling between the partial waves of the scattering and bound states.
 
@@ -441,17 +441,17 @@ In the **zero-range limit**, the projectile bound state and interaction collapse
 
 $$V(r_P) \cdot \phi_P(r_P) \to D_0 \, \delta^{(3)}(\mathbf{r}_P)$$
 
-This forces $\mathbf{r}_P = 0$, which from $\mathbf{r}_P = S_2 \mathbf{r}_{\alpha} + T_2 \mathbf{r}_{\beta}$ implies:
+This forces $\mathbf{r}_P = 0$, which from $\mathbf{r}_P = S_2 \mathbf{r}_\alpha + T_2 \mathbf{r}_\beta$ implies:
 
-$$\mathbf{r}_{\beta} = -\frac{S_2}{T_2} \mathbf{r}_{\alpha} = \frac{S_2}{S_1} \mathbf{r}_{\alpha} \quad (\text{since } T_2 = -S_1)$$
+$$\mathbf{r}_\beta = -\frac{S_2}{T_2} \mathbf{r}_{\alpha} = \frac{S_2}{S_1} \mathbf{r}_\alpha \quad (\text{since } T_2 = -S_1)$$
 
-So $\mathbf{r}_{\beta}$ is locked to $\mathbf{r}_{\alpha}$ — both coordinates are proportional. The $\phi_{ab}$ integral collapses (the delta function fixes the angle), and $r_T$ becomes a function of $r_{\alpha}$ alone:
+So $\mathbf{r}_\beta$ is locked to $\mathbf{r}_\alpha$ — both coordinates are proportional. The $\phi_{ab}$ integral collapses (the delta function fixes the angle), and $r_T$ becomes a function of $r_\alpha$ alone:
 
-$$r_T = |S_1 - T_1 S_2/S_1| \cdot r_{\alpha} = \left|S_1 + T_1 \frac{S_2}{S_1}\right| r_{\alpha}$$
+$$r_T = |S_1 - T_1 S_2/S_1| \cdot r_{\alpha} = \left|S_1 + T_1 \frac{S_2}{S_1}\right| r_\alpha$$
 
 The 6D integral reduces to a **single radial integral**:
 
-$$T_{\text{ZR}} \propto D_0 \int_0^{\infty} dr \; \chi_{b}^{\ast}\!\left(\frac{S_2}{S_1} r\right) \phi_T(r) \, \chi_a(r)$$
+$$T_{\text{ZR}} \propto D_0 \int_0^{\infty} dr \; \chi_b^{\ast}\!\left(\frac{S_2}{S_1} r\right) \phi_T(r) \, \chi_a(r)$$
 
 This is computationally trivial but ignores the finite spatial extent of the projectile — leading to 10–30% errors for (d,p) reactions where the deuteron has a large radius (~4 fm).
 
@@ -543,7 +543,7 @@ where $f_{M_x} = 1$ for $M_x=0$, $f_{M_x} = 2$ for $M_x > 0$ (sum over $\pm M_x$
 | **Radial integral** | §5.8, Eq. 5.34 | INELDC: 2D Gauss quadrature |
 | **Kinematic factor** | §5.5, Eq. 5.36 | SFROMI: equivalent form |
 | **Angular coupling** | §5.3: 9j-symbol + CG | A12 subroutine |
-| **Phase convention** | $i^{L_{\alpha} - L_{\beta} - l}$ | $i^{L_a + L_o + 2 L_x + 1}$ (equivalent) |
+| **Phase convention** | $i^{L_\alpha - L_\beta - l}$ | $i^{L_a + L_o + 2 L_x + 1}$ (equivalent) |
 | **Spin-orbit** | §2.9, Eq. 2.18 | Same formula |
 | **Units** | fm² | ×10 for mb/sr |
 
