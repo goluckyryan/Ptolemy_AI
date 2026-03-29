@@ -198,11 +198,11 @@ Iterate on potential depth $V$ to drive $\text{Diff} \to 0$:
 
 For a transfer reaction $a (= b + x) + A \to b + B (= A + x)$:
 
-$$T_{ba} = \int d^3 r_b \int d^3 r_a \, \chi_{b}^{(-)\ast}(\vec{r}_{b}) \langle \psi_B \psi_b | V | \psi_A \psi_a \rangle \chi_{a}^{(+)}(\vec{r}_{a})$$
+$$T_{ba} = \int d^3 r_b \int d^3 r_a \, \chi_{b}^{(-)\ast}(\mathbf{r}_{b}) \langle \psi_B \psi_b | V | \psi_A \psi_a \rangle \chi_{a}^{(+)}(\mathbf{r}_{a})$$
 
 Separating internal states from radial motion:
 
-$$T_{ba} \propto \int d^3 r_b \int d^3 r_a \, \chi_{b}^{\ast}(\vec{r}_{b}) \, \phi_{Bx}^{\ast}(\vec{r}_{x}) \, V(\vec{r}_{bx}) \, \phi_{ax}(\vec{r}_{bx}) \, \chi_{a}(\vec{r}_{a})$$
+$$T_{ba} \propto \int d^3 r_b \int d^3 r_a \, \chi_{b}^{\ast}(\mathbf{r}_{b}) \, \phi_{Bx}^{\ast}(\mathbf{r}_{x}) \, V(\mathbf{r}_{bx}) \, \phi_{ax}(\mathbf{r}_{bx}) \, \chi_{a}(\mathbf{r}_{a})$$
 
 - $\phi_{Bx}$: Bound state wavefunction of x in B (target bound state)
 - $\phi_{ax}$: Bound state wavefunction of x in a (projectile bound state)
@@ -275,11 +275,11 @@ Both bound states get their own Woods-Saxon potential, orbital quantum numbers, 
 
 Assumes the interaction and projectile bound state are pointlike:
 
-$$V(\vec{r}_{bx}) \, \phi_{ax}(\vec{r}_{bx}) \approx D_0 \, \delta(\vec{r}_{bx})$$
+$$V(\mathbf{r}_{bx}) \, \phi_{ax}(\mathbf{r}_{bx}) \approx D_0 \, \delta(\mathbf{r}_{bx})$$
 
 This collapses the 6D integral to a 3D integral:
 
-$$T_{\text{ZR}} \propto \int d^3 r \, \chi_{b}^{\ast}(\beta \vec{r}) \, \phi_{Bx}^{\ast}(\vec{r}) \, \chi_{a}(\vec{r})$$
+$$T_{\text{ZR}} \propto \int d^3 r \, \chi_{b}^{\ast}(\beta \mathbf{r}) \, \phi_{Bx}^{\ast}(\mathbf{r}) \, \chi_{a}(\mathbf{r})$$
 
 Fast but inaccurate for heavy ion reactions, high energies, and states where finite size matters. See §8.4 for how the finite-range integral collapses to ZR.
 
@@ -304,15 +304,15 @@ Ptolemy performs the full **finite-range** calculation — double radial integra
 In a transfer reaction $A(a,b)B$ where $a = b + x$ and $B = A + x$, there are four particles but only two independent relative coordinates. The challenge is that the **bound state** coordinates (x relative to its core) differ from the **scattering** coordinates (projectile relative to target).
 
 We define:
-- $\vec{r}_{\alpha}$ = relative coordinate between a and A (entrance channel)
-- $\vec{r}_{\beta}$ = relative coordinate between b and B (exit channel)
-- $\vec{r}_{T}$ = position of x relative to A (target bound state coordinate)
-- $\vec{r}_{P}$ = position of x relative to b (projectile bound state coordinate)
+- $\mathbf{r}_{\alpha}$ = relative coordinate between a and A (entrance channel)
+- $\mathbf{r}_{\beta}$ = relative coordinate between b and B (exit channel)
+- $\mathbf{r}_{T}$ = position of x relative to A (target bound state coordinate)
+- $\mathbf{r}_{P}$ = position of x relative to b (projectile bound state coordinate)
 
-The key insight: $\vec{r}_{T}$ and $\vec{r}_{P}$ are **linear combinations** of $\vec{r}_{\alpha}$ and $\vec{r}_{\beta}$:
+The key insight: $\mathbf{r}_{T}$ and $\mathbf{r}_{P}$ are **linear combinations** of $\mathbf{r}_{\alpha}$ and $\mathbf{r}_{\beta}$:
 
-$$\vec{r}_{T} = S_1 \vec{r}_{\alpha} + T_1 \vec{r}_{\beta}$$
-$$\vec{r}_{P} = S_2 \vec{r}_{\alpha} + T_2 \vec{r}_{\beta}$$
+$$\mathbf{r}_{T} = S_1 \mathbf{r}_{\alpha} + T_1 \mathbf{r}_{\beta}$$
+$$\mathbf{r}_{P} = S_2 \mathbf{r}_{\alpha} + T_2 \mathbf{r}_{\beta}$$
 
 ### 6.2 Derivation of S1, T1, S2, T2
 
@@ -347,7 +347,7 @@ For **pickup** (ISTRIP=−1), the roles of a and B are swapped, and the coeffici
 
 ### 6.3 Magnitudes
 
-Since $\vec{r}_{T}$ and $\vec{r}_{P}$ are vector sums, their magnitudes involve the angle $\phi_{ab}$ between $\vec{r}_{\alpha}$ and $\vec{r}_{\beta}$:
+Since $\mathbf{r}_{T}$ and $\mathbf{r}_{P}$ are vector sums, their magnitudes involve the angle $\phi_{ab}$ between $\mathbf{r}_{\alpha}$ and $\mathbf{r}_{\beta}$:
 
 $$r_T = \sqrt{S_{1}^{2} \, r_{\alpha}^{2} + T_{1}^{2} \, r_{\beta}^{2} + 2 S_1 T_1 \, r_{\alpha} \, r_{\beta} \cos\phi_{ab}}$$
 
@@ -400,23 +400,23 @@ For each (ri,ro) pair, Ptolemy does a 2-pass scan:
 
 ### 8.1 From 6D to the Radial-Angular Form
 
-The DWBA transition amplitude (§4.1) is a 6-dimensional integral over $\vec{r}_{\alpha}$ and $\vec{r}_{\beta}$. By expanding all wavefunctions in partial waves (spherical harmonics), the angular integrals can be done analytically, reducing the problem to radial integrals.
+The DWBA transition amplitude (§4.1) is a 6-dimensional integral over $\mathbf{r}_{\alpha}$ and $\mathbf{r}_{\beta}$. By expanding all wavefunctions in partial waves (spherical harmonics), the angular integrals can be done analytically, reducing the problem to radial integrals.
 
 **Step 1:** Expand distorted waves in partial waves:
 
-$$\chi_a(\vec{r}_{\alpha}) = \sum_{L_i, M_i} \frac{u_{L_i}(r_{\alpha})}{r_{\alpha}} Y_{L_i}^{M_i}(\hat{r}_{\alpha}), \qquad \chi_b(\vec{r}_{\beta}) = \sum_{L_o, M_o} \frac{u_{L_o}(r_{\beta})}{r_{\beta}} Y_{L_o}^{M_o}(\hat{r}_{\beta})$$
+$$\chi_a(\mathbf{r}_{\alpha}) = \sum_{L_i, M_i} \frac{u_{L_i}(r_{\alpha})}{r_{\alpha}} Y_{L_i}^{M_i}(\hat{r}_{\alpha}), \qquad \chi_b(\mathbf{r}_{\beta}) = \sum_{L_o, M_o} \frac{u_{L_o}(r_{\beta})}{r_{\beta}} Y_{L_o}^{M_o}(\hat{r}_{\beta})$$
 
 **Step 2:** Expand bound states in spherical harmonics:
 
 $$\phi_T(r_T) Y_{l_T}^{m_T}(\hat{r}_T), \qquad \phi_P(r_P) Y_{l_P}^{m_P}(\hat{r}_P)$$
 
-**Step 3:** The angular integrals over $\hat{r}_{\alpha}$ and $\hat{r}_{\beta}$ produce Clebsch-Gordan coefficients and 3j-symbols, coupling $(L_i, l_T, l_P, L_o)$ to a transferred angular momentum $L_x$. Selection rules enforce $|L_i - L_o| \leq L_x \leq L_i + L_o$ and $|l_T - l_P| \leq L_x \leq l_T + l_P$.
+**Step 3:** The angular integrals over $\hat{r}_\alpha$ and $\hat{r}_\beta$ produce Clebsch-Gordan coefficients and 3j-symbols, coupling $(L_i, l_T, l_P, L_o)$ to a transferred angular momentum $L_x$. Selection rules enforce $|L_i - L_o| \leq L_x \leq L_i + L_o$ and $|l_T - l_P| \leq L_x \leq l_T + l_P$.
 
 **Step 4:** After angular reduction, the remaining integral is over three scalar variables $(r_{\alpha}, r_{\beta}, \phi_{ab})$:
 
 $$I_{L_i, L_o, L_x}^{J_{\pi}, J_{\pi}'} = \int_0^{\infty} dr_{\alpha} \int_0^{\infty} dr_{\beta} \int_{-1}^{1} d(\cos\phi_{ab}) \; \chi_{L_i}^{J_{\pi}}(r_{\alpha}) \cdot \mathcal{K}(r_{\alpha}, r_{\beta}, \phi_{ab}) \cdot \chi_{L_o}^{J_{\pi}' \ast}(r_{\beta})$$
 
-The angle $\phi_{ab}$ is the angle between $\vec{r}_{\alpha}$ and $\vec{r}_{\beta}$ — it survives because the bound state coordinates $r_T$ and $r_P$ depend on it through the law of cosines (§6.3).
+The angle $\phi_{ab}$ is the angle between $\mathbf{r}_{\alpha}$ and $\mathbf{r}_{\beta}$ — it survives because the bound state coordinates $r_T$ and $r_P$ depend on it through the law of cosines (§6.3).
 
 ### 8.2 The Kernel
 
@@ -439,13 +439,13 @@ where $C_{M_T, M_U}$ involves Wigner d-matrix elements (xlam), 3j-symbols, and $
 
 In the **zero-range limit**, the projectile bound state and interaction collapse to a delta function:
 
-$$V(r_P) \cdot \phi_P(r_P) \to D_0 \, \delta^{(3)}(\vec{r}_P)$$
+$$V(r_P) \cdot \phi_P(r_P) \to D_0 \, \delta^{(3)}(\mathbf{r}_P)$$
 
-This forces $\vec{r}_P = 0$, which from $\vec{r}_P = S_2 \vec{r}_{\alpha} + T_2 \vec{r}_{\beta}$ implies:
+This forces $\mathbf{r}_P = 0$, which from $\mathbf{r}_P = S_2 \mathbf{r}_{\alpha} + T_2 \mathbf{r}_{\beta}$ implies:
 
-$$\vec{r}_{\beta} = -\frac{S_2}{T_2} \vec{r}_{\alpha} = \frac{S_2}{S_1} \vec{r}_{\alpha} \quad (\text{since } T_2 = -S_1)$$
+$$\mathbf{r}_{\beta} = -\frac{S_2}{T_2} \mathbf{r}_{\alpha} = \frac{S_2}{S_1} \mathbf{r}_{\alpha} \quad (\text{since } T_2 = -S_1)$$
 
-So $\vec{r}_{\beta}$ is locked to $\vec{r}_{\alpha}$ — both coordinates are proportional. The $\phi_{ab}$ integral collapses (the delta function fixes the angle), and $r_T$ becomes a function of $r_{\alpha}$ alone:
+So $\mathbf{r}_{\beta}$ is locked to $\mathbf{r}_{\alpha}$ — both coordinates are proportional. The $\phi_{ab}$ integral collapses (the delta function fixes the angle), and $r_T$ becomes a function of $r_{\alpha}$ alone:
 
 $$r_T = |S_1 - T_1 S_2/S_1| \cdot r_{\alpha} = \left|S_1 + T_1 \frac{S_2}{S_1}\right| r_{\alpha}$$
 
