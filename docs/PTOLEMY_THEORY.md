@@ -60,7 +60,7 @@ Before calculating transfer reactions, we must describe the elastic scattering o
 
 For each partial wave L (and total J = L ± ½ if spin-orbit is on), Ptolemy solves:
 
-$$\left[\frac{d^2}{dr^2} + k^2 - \frac{L(L+1)}{r^2} - \frac{2\mu}{\hbar^2}\bigl(V_C(r) + U_{opt}(r)\bigr)\right]\chi_{LJ}(r) = 0 \tag{2.1}$$
+$$\left[\frac{d^2}{dr^2} + k^2 - \frac{L(L+1)}{r^2} - \frac{2\mu}{\hbar^2}\bigl(V_C(r) + U_{opt}(r)\bigr)\right]\chi_{LJ}(r) = 0$$
 
 where:
 - $k^2 = 2\mu E_{cm}/\hbar^2$ (wave number squared)
@@ -70,7 +70,7 @@ where:
 
 **Normalization (boundary condition at large r):**
 
-$$\chi_{LJ}(r) \xrightarrow{r\to\infty} \frac{e^{i\sigma_L}}{2i}\left[S_{LJ}H_L^+(kr) - H_L^-(kr)\right] \tag{2.2}$$
+$$\chi_{LJ}(r) \xrightarrow{r\to\infty} \frac{e^{i\sigma_L}}{2i}\left[S_{LJ}H_L^+(kr) - H_L^-(kr)\right]$$
 
 where $\sigma_L$ is the Coulomb phase shift, $H_L^\pm$ are Coulomb-Hankel functions $(G_L \pm iF_L)$, and $|S_{LJ}| \leq 1$ (unity for pure Coulomb).
 
@@ -83,7 +83,7 @@ Subroutine WAVEF (entry WAVELJ) in source.mor ~line 29969
 ```
 
 **Numerov recursion:**
-$$u_{i+1} = \frac{2\left(1 - \frac{5h^2}{12}f_i\right)u_i - \left(1 + \frac{h^2}{12}f_{i-1}\right)u_{i-1}}{1 + \frac{h^2}{12}f_{i+1}} \tag{2.3}$$
+$$u_{i+1} = \frac{2\left(1 - \frac{5h^2}{12}f_i\right)u_i - \left(1 + \frac{h^2}{12}f_{i-1}\right)u_{i-1}}{1 + \frac{h^2}{12}f_{i+1}}$$
 
 with $f_i = k^2 - L(L+1)/r_i^2 - (2\mu/\hbar^2)U(r_i)$.
 
@@ -107,7 +107,7 @@ This works because the physical regular solution IS zero in the deep interior �
 
 At the outer boundary $r_N$ and $r_{N-1}$, match the Numerov solution to asymptotic Coulomb functions:
 
-$$S_L = \frac{u_{N-1} \cdot H^{+}_{L}(r_N) - u_N \cdot H^{+}_{L}(r_{N-1})}{u_{N-1} \cdot H^{-}_{L}(r_N) - u_N \cdot H^{-}_L(r_{N-1})} \tag{2.4}$$
+$$S_L = \frac{u_{N-1} \cdot H^{+}_{L}(r_N) - u_N \cdot H^{+}_{L}(r_{N-1})}{u_{N-1} \cdot H^{-}_{L}(r_N) - u_N \cdot H^{-}_L(r_{N-1})}$$
 
 where $H^\pm_L = G_L \pm iF_L$ and $F_L, G_L$ from RCWFN (Steed's method). This is exact — no approximation.
 
@@ -128,13 +128,13 @@ Then `chi(r_i) = (ALPHAR + i*ALPHAI) * u_i` for all stored points.
 
 The complete elastic formula (Handbook §2.4):
 
-$$\boxed{\frac{d\sigma}{d\Omega}(\theta) = \left|f_C(\theta) + f_N(\theta)\right|^2} \tag{2.5}$$
+$$\boxed{\frac{d\sigma}{d\Omega}(\theta) = \left|f_C(\theta) + f_N(\theta)\right|^2}$$
 
 where:
 
-$$f_C(\theta) = -\frac{\eta}{2k\sin^2(\theta/2)} e^{i[2\sigma_0 - 2\eta\ln\sin(\theta/2)]} \tag{2.6}$$
+$$f_C(\theta) = -\frac{\eta}{2k\sin^2(\theta/2)} e^{i[2\sigma_0 - 2\eta\ln\sin(\theta/2)]}$$
 
-$$f_N(\theta) = \frac{1}{2ik}\sum_{L=0}^{L_{\max}}(2L+1)\,e^{2i\sigma_L}(S_L - 1)\,P_L(\cos\theta) \tag{2.7}$$
+$$f_N(\theta) = \frac{1}{2ik}\sum_{L=0}^{L_{\max}}(2L+1)\,e^{2i\sigma_L}(S_L - 1)\,P_L(\cos\theta)$$
 
 (For spin-orbit: $S_L \to S_{LJ}$, separate amplitudes for each $J = L \pm \frac{1}{2}$.)
 
@@ -156,7 +156,7 @@ ELDCS   → |f(θ)|² × 10 → dσ/dΩ in mb/sr
 
 Solve the radial Schrödinger equation for a bound state:
 
-$$\left[\frac{d^2}{dr^2} - \frac{l(l+1)}{r^2} + \frac{2\mu}{\hbar^2}\left(E - V_{WS}(r) - V_{SO}(r)\right)\right] u_{lj}(r) = 0 \tag{3.1}$$
+$$\left[\frac{d^2}{dr^2} - \frac{l(l+1)}{r^2} + \frac{2\mu}{\hbar^2}\left(E - V_{WS}(r) - V_{SO}(r)\right)\right] u_{lj}(r) = 0$$
 
 with $E < 0$ (binding energy), boundary condition $u(0) = 0$, and exponential decay at large r.
 
@@ -180,7 +180,7 @@ Unlike simple shooting methods (unstable for bound states), Ptolemy integrates f
 - Method: Numerov integration (backward)
 
 **Matching condition** at $R_{match}$:
-$$\text{Diff} = \left.\frac{u'}{u}\right|_\text{out} - \left.\frac{u'}{u}\right|_\text{in} \to 0 \tag{3.2}$$
+$$\text{Diff} = \left.\frac{u'}{u}\right|_\text{out} - \left.\frac{u'}{u}\right|_\text{in} \to 0$$
 
 ### 3.3 Depth Search Iteration
 
@@ -198,11 +198,11 @@ Iterate on potential depth $V$ to drive $\text{Diff} \to 0$:
 
 For a transfer reaction $a (= b + x) + A \to b + B (= A + x)$:
 
-$$T_{ba} = \int d^3 r_b \int d^3 r_a \, \chi_{b}^{(-)\ast}(\mathbf{r}_{b}) \langle \psi_B \psi_b | V | \psi_A \psi_a \rangle \chi_{a}^{(+)}(\mathbf{r}_a) \tag{4.1}$$
+$$T_{ba} = \int d^3 r_b \int d^3 r_a \, \chi_{b}^{(-)\ast}(\mathbf{r}_{b}) \langle \psi_B \psi_b | V | \psi_A \psi_a \rangle \chi_{a}^{(+)}(\mathbf{r}_a)$$
 
 Separating internal states from radial motion:
 
-$$T_{ba} \propto \int d^3 r_b \int d^3 r_a \, \chi_{b}^{\ast}(\mathbf{r}_{b}) \, \phi_{Bx}^{\ast}(\mathbf{r}_{x}) \, V(\mathbf{r}_{bx}) \, \phi_{ax}(\mathbf{r}_{bx}) \, \chi_{a}(\mathbf{r}_a) \tag{4.2}$$
+$$T_{ba} \propto \int d^3 r_b \int d^3 r_a \, \chi_{b}^{\ast}(\mathbf{r}_{b}) \, \phi_{Bx}^{\ast}(\mathbf{r}_{x}) \, V(\mathbf{r}_{bx}) \, \phi_{ax}(\mathbf{r}_{bx}) \, \chi_{a}(\mathbf{r}_a)$$
 
 - $\phi_{Bx}$: Bound state wavefunction of x in B (target bound state)
 - $\phi_{ax}$: Bound state wavefunction of x in a (projectile bound state)
@@ -215,7 +215,7 @@ $$T \sim \sum_{L_a, L_b} \int r_{a}^{2} \, dr_a \int r_b^{2} \, dr_b \, \chi_{L_
 
 The kernel $K$ involves angular integration:
 
-$$K(r_a, r_b) = \int_{-1}^{1} d(\cos \theta) \, \phi_{Bx}^{\ast}(r_x) \, V(r_{bx}) \, \phi_{ax}(r_{bx}) \, P_L(\cos \theta) \tag{4.3}$$
+$$K(r_a, r_b) = \int_{-1}^{1} d(\cos \theta) \, \phi_{Bx}^{\ast}(r_x) \, V(r_{bx}) \, \phi_{ax}(r_{bx}) \, P_L(\cos \theta)$$
 
 where $r_x$ and $r_{bx}$ depend on $r_a, r_b, \theta$ via the law of cosines.
 
@@ -275,11 +275,11 @@ Both bound states get their own Woods-Saxon potential, orbital quantum numbers, 
 
 Assumes the interaction and projectile bound state are pointlike:
 
-$$V(\mathbf{r}_{bx}) \, \phi_{ax}(\mathbf{r}_{bx}) \approx D_0 \, \delta(\mathbf{r}_{bx}) \tag{5.1}$$
+$$V(\mathbf{r}_{bx}) \, \phi_{ax}(\mathbf{r}_{bx}) \approx D_0 \, \delta(\mathbf{r}_{bx})$$
 
 This collapses the 6D integral to a 3D integral:
 
-$$T_{\text{ZR}} \propto \int d^3 r \, \chi_{b}^{\ast}(\beta \mathbf{r}) \, \phi_{Bx}^{\ast}(\mathbf{r}) \, \chi_a(\mathbf{r}) \tag{5.2}$$
+$$T_{\text{ZR}} \propto \int d^3 r \, \chi_{b}^{\ast}(\beta \mathbf{r}) \, \phi_{Bx}^{\ast}(\mathbf{r}) \, \chi_a(\mathbf{r})$$
 
 Fast but inaccurate for heavy ion reactions, high energies, and states where finite size matters. See §9.4 for how the finite-range integral collapses to ZR.
 
@@ -311,8 +311,8 @@ We define:
 
 The key insight: the bound state coordinates are **linear combinations** of the scattering coordinates:
 
-$$\mathbf{r}_T = S_1 \mathbf{r}_\alpha + T_1 \mathbf{r}_\beta \tag{6.1}$$
-$$\mathbf{r}_P = S_2 \mathbf{r}_\alpha + T_2 \mathbf{r}_\beta \tag{6.2}$$
+$$\mathbf{r}_T = S_1 \mathbf{r}_\alpha + T_1 \mathbf{r}_\beta$$
+$$\mathbf{r}_P = S_2 \mathbf{r}_\alpha + T_2 \mathbf{r}_\beta$$
 
 ### 6.2 Derivation of S1, T1, S2, T2
 
@@ -404,7 +404,7 @@ This section shows how the full DWBA transition amplitude factorizes into the co
 
 Starting from the DWBA transition amplitude (§4.1):
 
-$$T_{ba} = \int d^3 r_\beta \int d^3 r_\alpha \; \chi_b^{(-)\ast}(\mathbf{r}_\beta) \; \phi_T^\ast(\mathbf{r}_T) \; V(\mathbf{r}_P) \; \phi_P(\mathbf{r}_P) \; \chi_a^{(+)}(\mathbf{r}_\alpha) \tag{8.1}$$
+$$T_{ba} = \int d^3 r_\beta \int d^3 r_\alpha \; \chi_b^{(-)\ast}(\mathbf{r}_\beta) \; \phi_T^\ast(\mathbf{r}_T) \; V(\mathbf{r}_P) \; \phi_P(\mathbf{r}_P) \; \chi_a^{(+)}(\mathbf{r}_\alpha)$$
 
 This is a 6D integral involving:
 - **Distorted waves** $\chi_a$, $\chi_b$ — scattering states in entrance/exit channels (§2)
@@ -425,7 +425,7 @@ where $l_T$ is the neutron orbital AM in the target bound state and $l_P$ in the
 
 **Step 1 — SFROMI:** Combine the radial integral with kinematic and spectroscopic factors to get a transfer S-matrix element:
 
-$$S(L_i, L_o, L_x) = \text{FACTOR} \cdot \text{ATERM}(L_x) \cdot \frac{i^{L_i+L_o+2L_x+1}}{\sqrt{2L_i+1}} \cdot I_{L_i,L_o,L_x}^{J_\pi,J_\pi'} \tag{8.2}$$
+$$S(L_i, L_o, L_x) = \text{FACTOR} \cdot \text{ATERM}(L_x) \cdot \frac{i^{L_i+L_o+2L_x+1}}{\sqrt{2L_i+1}} \cdot I_{L_i,L_o,L_x}^{J_\pi,J_\pi'}$$
 
 where:
 - FACTOR $= 2\sqrt{k_a k_b / (E_\text{cm}^a E_\text{cm}^b)}$ — kinematic factor (§10.2)
@@ -434,19 +434,19 @@ where:
 
 **Step 2 — BETCAL:** Sum over incoming partial waves $L_i$ with Clebsch-Gordan coupling and Coulomb phases:
 
-$$\beta(L_o, L_x, M_x) = \frac{1}{2k_a} \sum_{L_i} (2L_i+1) \cdot C(L_i, 0; L_x, M_x | L_o, M_x) \cdot e^{i(\sigma_{L_i} + \sigma_{L_o})} \cdot S(L_i, L_o, L_x) \tag{8.3}$$
+$$\beta(L_o, L_x, M_x) = \frac{1}{2k_a} \sum_{L_i} (2L_i+1) \cdot C(L_i, 0; L_x, M_x | L_o, M_x) \cdot e^{i(\sigma_{L_i} + \sigma_{L_o})} \cdot S(L_i, L_o, L_x)$$
 
 where $C(L_i, 0; L_x, M_x | L_o, M_x)$ is a Clebsch-Gordan coefficient coupling the incoming partial wave $L_i$ (with $M=0$) and the transferred angular momentum $(L_x, M_x)$ to the outgoing partial wave $L_o$.
 
 **Step 3 — AMPCAL:** Sum over outgoing partial waves to get the scattering amplitude at angle $\theta$:
 
-$$F^{(M_x)}(\theta) = \sum_{L_o} \beta(L_o, L_x, M_x) \cdot P_{L_o}^{M_x}(\cos\theta) \tag{8.4}$$
+$$F^{(M_x)}(\theta) = \sum_{L_o} \beta(L_o, L_x, M_x) \cdot P_{L_o}^{M_x}(\cos\theta)$$
 
 where $P_{L_o}^{M_x}$ is an associated Legendre polynomial.
 
 **Step 4 — XSECTN:** Sum incoherently over the transferred angular momentum projection $M_x$:
 
-$$\frac{d\sigma}{d\Omega}(\theta) = 10 \cdot \sum_{L_x, M_x} f_{M_x} \cdot \left|F^{(M_x)}(\theta)\right|^{2} \tag{8.5}$$
+$$\frac{d\sigma}{d\Omega}(\theta) = 10 \cdot \sum_{L_x, M_x} f_{M_x} \cdot \left|F^{(M_x)}(\theta)\right|^{2}$$
 
 where:
 - The factor **10** converts fm² → mb/sr
@@ -528,7 +528,7 @@ where $C_{M_T, M_U}$ involves Wigner d-matrix elements (xlam), 3j-symbols, and $
 
 In the **zero-range limit**, the projectile bound state and interaction collapse to a delta function:
 
-$$V(r_P) \cdot \phi_P(r_P) \to D_0 \, \delta^{(3)}(\mathbf{r}_P) \tag{9.1}$$
+$$V(r_P) \cdot \phi_P(r_P) \to D_0 \, \delta^{(3)}(\mathbf{r}_P)$$
 
 This forces the projectile coordinate to zero. From the mapping $\mathbf{r}_P = S_2 \mathbf{r}_\alpha + T_2 \mathbf{r}_\beta$, this implies:
 
@@ -567,13 +567,13 @@ $$S_{\text{SFROMI}}(L_i, L_o, L_x, J_{\pi}, J_{\pi}') = \text{FACTOR} \cdot \tex
 
 ### 10.2 FACTOR
 
-$$\text{FACTOR} = 2\sqrt{\frac{k_a k_b}{E_{\text{cm}}^{a} \, E_{\text{cm}}^{b}}} \tag{10.1}$$
+$$\text{FACTOR} = 2\sqrt{\frac{k_a k_b}{E_{\text{cm}}^{a} \, E_{\text{cm}}^{b}}}$$
 
 ### 10.3 ATERM (Spectroscopic Amplitude)
 
 **Fortran BSSET (source.mor line 25634):**
 
-$$\text{ATERM}(L_x) = \sqrt{\frac{J_B'+1}{J_A'+1}} \cdot \sqrt{2L_x+1} \cdot \mathcal{S}_{\text{proj}} \cdot \mathcal{S}_{\text{target}} \cdot W(l_T, j_T, l_P, j_P; j_x, L_x) \tag{10.2}$$
+$$\text{ATERM}(L_x) = \sqrt{\frac{J_B'+1}{J_A'+1}} \cdot \sqrt{2L_x+1} \cdot \mathcal{S}_{\text{proj}} \cdot \mathcal{S}_{\text{target}} \cdot W(l_T, j_T, l_P, j_P; j_x, L_x)$$
 
 where $J_A' = 2J_A$ and $J_B' = 2J_B$ are the doubled nuclear spin quantum numbers (Ptolemy convention), and $W$ is the Racah coefficient (related to 6-j by a phase).
 
@@ -593,17 +593,17 @@ If $(L_i + L_o + 2L_x + 1) \bmod 2 = 1$: multiply by $i$.
 
 When spin-orbit potentials are present, the transfer S-matrix involves a double sum over channel spin states via 9-J symbols. For each radial integral element with quantum numbers $(L_i, L_o, L_x^{(\text{phys})}, J_\pi, J_\pi')$, the accumulation into the cross-section S-matrix slot $(L_i, L_o, L_x, J_P)$ proceeds as:
 
-$$S(k, L_i) \mathrel{+}= \sum_{j_{\pi i}, j_{\pi o}} \text{9J}_1 \cdot (SR + i\,SI) \cdot \text{9J}_2 \cdot (-1)^{L_x + L_x^{(\text{phys})}} \tag{10.3}$$
+$$S(k, L_i) \mathrel{+}= \sum_{j_{\pi i}, j_{\pi o}} \text{9J}_1 \cdot (SR + i\,SI) \cdot \text{9J}_2 \cdot (-1)^{L_x + L_x^{(\text{phys})}}$$
 
 where:
 
 **First 9-J symbol** (SAV9J in the code) couples the physical quantum numbers to the channel spin:
 
-$$\text{9J}_1 = \sqrt{(2j_{\pi i}+1)(2j_{\pi o}+1)(2L_x^{(\text{phys})}+1)(J_{BP}+1)} \;\begin{Bmatrix} J_{BT}/2 & L_x^{(\text{phys})} & J_{BP}/2 \\ j_{\pi i}/2 & L_i & J_A/2 \\ j_{\pi o}/2 & L_o & J_B/2 \end{Bmatrix} \tag{10.4}$$
+$$\text{9J}_1 = \sqrt{(2j_{\pi i}+1)(2j_{\pi o}+1)(2L_x^{(\text{phys})}+1)(J_{BP}+1)} \;\begin{Bmatrix} J_{BT}/2 & L_x^{(\text{phys})} & J_{BP}/2 \\ j_{\pi i}/2 & L_i & J_A/2 \\ j_{\pi o}/2 & L_o & J_B/2 \end{Bmatrix}$$
 
 **Second 9-J symbol** (TEMP2) recouples into the cross-section angular momentum $(L_x, J_P)$:
 
-$$\text{9J}_2 = \sqrt{(2j_{\pi i}+1)(2j_{\pi o}+1)(2L_x+1)(J_P+1)} \;\begin{Bmatrix} J_{BT}/2 & L_x & J_P/2 \\ j_{\pi i}/2 & L_i & J_A/2 \\ j_{\pi o}/2 & L_o & J_B/2 \end{Bmatrix} \tag{10.5}$$
+$$\text{9J}_2 = \sqrt{(2j_{\pi i}+1)(2j_{\pi o}+1)(2L_x+1)(J_P+1)} \;\begin{Bmatrix} J_{BT}/2 & L_x & J_P/2 \\ j_{\pi i}/2 & L_i & J_A/2 \\ j_{\pi o}/2 & L_o & J_B/2 \end{Bmatrix}$$
 
 Here:
 - $j_{\pi i}$, $j_{\pi o}$ are the channel spin couplings ($J_\pi = L \otimes S_{\text{channel}}$) in the incoming/outgoing channels
