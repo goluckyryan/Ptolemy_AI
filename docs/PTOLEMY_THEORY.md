@@ -592,11 +592,11 @@ where:
 
 **First 9-J symbol** (SAV9J in the code) couples the physical quantum numbers to the channel spin:
 
-$$\text{9J}_1 = \sqrt{(2j_{\pi i}+1)(2j_{\pi o}+1)(2L_x^{(\text{phys})}+1)(J_{BP}+1)} \;\begin{Bmatrix} J_{BT}/2 & L_x^{(\text{phys})} & J_{BP}/2 \\ j_{\pi i}/2 & L_i & J_A/2 \\ j_{\pi o}/2 & L_o & J_B/2 \end{Bmatrix}$$
+$$\text{9J}_1 = \sqrt{(2j_{\pi i}+1)(2j_{\pi o}+1)(2L_x^{(\text{phys})}+1)(J_{BP}+1)} \;\left\{ \begin{matrix} J_{BT}/2 & L_x^{(\text{phys})} & J_{BP}/2 \\ j_{\pi i}/2 & L_i & J_A/2 \\ j_{\pi o}/2 & L_o & J_B/2 \end{matrix} \right\}$$
 
 **Second 9-J symbol** (TEMP2) recouples into the cross-section angular momentum $(L_x, J_P)$:
 
-$$\text{9J}_2 = \sqrt{(2j_{\pi i}+1)(2j_{\pi o}+1)(2L_x+1)(J_P+1)} \;\begin{Bmatrix} J_{BT}/2 & L_x & J_P/2 \\ j_{\pi i}/2 & L_i & J_A/2 \\ j_{\pi o}/2 & L_o & J_B/2 \end{Bmatrix}$$
+$$\text{9J}_2 = \sqrt{(2j_{\pi i}+1)(2j_{\pi o}+1)(2L_x+1)(J_P+1)} \;\left\{ \begin{matrix} J_{BT}/2 & L_x & J_P/2 \\ j_{\pi i}/2 & L_i & J_A/2 \\ j_{\pi o}/2 & L_o & J_B/2 \end{matrix} \right\}$$
 
 Here:
 - $j_{\pi i}$, $j_{\pi o}$ are the channel spin couplings ($J_\pi = L \otimes S_{\text{channel}}$) in the incoming/outgoing channels
