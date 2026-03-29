@@ -185,7 +185,9 @@ $$U(r) = -V \, f(r) - i W_V f(r) + i W_S \frac{d}{dr}f(r) + V_{\text{SO}} \frac{
 where $f(r, r_0, a) = \left[1 + \exp\!\left(\frac{r - r_0 A^{1/3}}{a}\right)\right]^{-1}$
 
 **Coulomb potential:**
-$$V_C(r) = \begin{cases} \frac{Z_1 Z_2 e^2}{2R_C}\left(3 - \frac{r^2}{R_C^2}\right) & r \leq R_C \\ \frac{Z_1 Z_2 e^2}{r} & r > R_C \end{cases}$$
+$$
+V_C(r) = \begin{cases} \dfrac{Z_1 Z_2 e^2}{2R_C}\left(3 - \dfrac{r^2}{R_C^2}\right) & r \leq R_C \\[6pt] \dfrac{Z_1 Z_2 e^2}{r} & r > R_C \end{cases}
+$$
 
 ### 4.3 Coulomb Phases
 
