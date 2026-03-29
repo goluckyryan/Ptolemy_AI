@@ -135,8 +135,17 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
         std::string raw = Trim(lines[i]);
         if (raw.empty()) continue;
 
-        // Comment lines (Ptolemy uses ' as comment)
-        if (raw[0] == '\'') continue;
+        // Comment lines (Ptolemy uses ' and $ as comment chars)
+        if (raw[0] == '\'' || raw[0] == '$') continue;
+
+        // Strip inline $ comments (everything after $ is a comment)
+        {
+            size_t dollar = raw.find('$');
+            if (dollar != std::string::npos) {
+                raw = Trim(raw.substr(0, dollar));
+                if (raw.empty()) continue;
+            }
+        }
 
         std::string upper = ToUpper(raw);
 
@@ -229,6 +238,33 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
         }
 
         // ── Standalone key=value lines (angles, print, etc.) ──
+        // Pre-process: normalize "key = value" to "key=value"
+        // This handles Ptolemy's loose formatting (spaces around '=')
+        {
+            std::string normalized;
+            std::vector<std::string> parts;
+            std::istringstream splitter(raw);
+            std::string p;
+            while (splitter >> p) parts.push_back(p);
+            for (size_t pi = 0; pi < parts.size(); pi++) {
+                if (pi > 0) normalized += ' ';
+                // Pattern: TOKEN = VALUE  →  TOKEN=VALUE
+                if (pi + 2 < parts.size() && parts[pi+1] == "=") {
+                    normalized += parts[pi] + "=" + parts[pi+2];
+                    pi += 2;
+                }
+                // Pattern: TOKEN= VALUE  →  TOKEN=VALUE
+                else if (parts[pi].back() == '=' && pi + 1 < parts.size() && 
+                         parts[pi+1].find('=') == std::string::npos) {
+                    normalized += parts[pi] + parts[pi+1];
+                    pi += 1;
+                }
+                else {
+                    normalized += parts[pi];
+                }
+            }
+            raw = normalized;
+        }
         // Tokenize the line and process each KEY=VALUE pair
         std::stringstream ss(raw);
         std::string token;
@@ -262,6 +298,9 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
                     // Bound state parameters
                     if (key == "NODES" || key == "N") {
                         bs_nodes = (int)val;
+                    } else if (key == "JBIGA" || key == "JBIGB" || key == "JA" || key == "JB") {
+                        // Target/projectile spin: JBIGA=2*J_target, etc.
+                        // Currently handled by auto-detection; store if needed later
                     } else if (key == "L") {
                         bs_l = (int)val;
                     } else if (key == "BINDING" || key == "BE") {
@@ -411,11 +450,29 @@ void PtolemyParser::ParseReactionLine(const std::string &line, DWBA &dwba) {
         dwba.SetResidualSpin(residualJ);
     }
 
-    // Check for ELAB= on the same line
+    // Check for ELAB= on the same line (handles "ELAB=20" and "ELAB= 20")
     std::string tok;
     while (ss >> tok) {
         std::string key;
         double val;
+        // Handle "ELAB= VALUE" (space after =)
+        std::string utok = ToUpper(tok);
+        if (utok == "ELAB" || utok == "ELAB=") {
+            // Next token should be '=' or the value
+            std::string next;
+            if (utok == "ELAB" && ss >> next) {
+                if (next[0] == '=') {
+                    // "ELAB = 20" or "ELAB =20"
+                    std::string valStr = next.substr(1);
+                    if (valStr.empty() && ss >> valStr) {}
+                    try { dwba.SetEnergy(std::stod(valStr)); } catch (...) {}
+                }
+            } else if (utok == "ELAB=" && ss >> next) {
+                // "ELAB= 20"
+                try { dwba.SetEnergy(std::stod(next)); } catch (...) {}
+            }
+            continue;
+        }
         if (ParseKeyVal(tok, key, val)) {
             if (key == "ELAB") dwba.SetEnergy(val);
         }
