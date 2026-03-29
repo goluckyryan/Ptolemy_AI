@@ -15,9 +15,9 @@
 #include <tuple>
 
 // Constants
-const double HBARC = 197.32697; // MeV fm
-const double AMU = 931.494;     // MeV/c^2
-const double FINE_STRUCTURE = 1.0 / 137.035999;
+const double HBARC = 197.32858;  // Ptolemy HBARC // MeV fm
+const double AMU = 931.5016;    // Ptolemy AMUMEV     // MeV/c^2
+const double FINE_STRUCTURE = 1.0 / 137.03604;  // Ptolemy AFINE
 
 // ---------------------------------------------------------------
 
@@ -102,7 +102,7 @@ void DWBA::InelDc() {
   double mb = Outgoing.Projectile.Mass;
   double mB = Outgoing.Target.Mass;
 
-  const double AMU_MEV = 931.494061;
+  const double AMU_MEV = 931.5016;   // Ptolemy AMUMEV
 
   // True mass of transferred particle (recover neutron mass from binding)
   double mx_kinematic = ma - mb;

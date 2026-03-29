@@ -14,9 +14,13 @@
 #include <vector>
 
 // Module-level constants (duplicated from dwba.cpp for standalone compilation)
-static const double HBARC_B  = 197.32697;  // MeV fm
-static const double AMU_B    = 931.494;    // MeV/c^2
-static const double FINE_B   = 1.0 / 137.035999;
+// Ptolemy constants (source.f line 14066-14068)
+// Used in relativistic branch and Coulomb potential.
+// Non-relativistic branch uses local AMU_MEV = 931.5016 for kinematics.
+static const double HBARC_B  = 197.32858;     // Ptolemy's HBARC
+static const double AMU_B    = 931.5016;       // Ptolemy's AMUMEV
+static const double AFINE    = 137.03604;      // Ptolemy's AFINE = 1/alpha
+static const double FINE_B   = 1.0 / AFINE;   // fine structure constant alpha
 
 // ---------------------------------------------------------------
 // DWBA::CalculateKinematics
@@ -114,7 +118,7 @@ void DWBA::CalculateKinematics() {
     Incoming.Ecm = Incoming.Elab * CMLAB;
     Incoming.mu  = mu_in_kin / AMU_MEV;  // in AMU (for f_conv in WavElj)
     Incoming.k   = std::sqrt(2.0 * mu_in_kin * Incoming.Ecm) / HBARC_B;
-    Incoming.eta = Z1 * Z2 * mu_in_kin / (137.036 * HBARC_B * Incoming.k);
+    Incoming.eta = Z1 * Z2 * mu_in_kin / (AFINE * HBARC_B * Incoming.k);
 
     // Outgoing: E = ECM + Q (matching Ptolemy SETCHN line 32455)
     Outgoing.Ecm = Incoming.Ecm + Q_ptol - Ex;
@@ -123,7 +127,7 @@ void DWBA::CalculateKinematics() {
     }
     Outgoing.mu  = mu_out_kin / AMU_MEV;  // in AMU
     Outgoing.k   = std::sqrt(2.0 * mu_out_kin * Outgoing.Ecm) / HBARC_B;
-    Outgoing.eta = Z3 * Z4 * mu_out_kin / (137.036 * HBARC_B * Outgoing.k);
+    Outgoing.eta = Z3 * Z4 * mu_out_kin / (AFINE * HBARC_B * Outgoing.k);
   }
 
   // Set projectile spin (JSPS = 2*spin) for each channel
@@ -160,8 +164,8 @@ void DWBA::CalculateKinematics() {
 // ---------------------------------------------------------------
 void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
                                double bindingEnergy) {
-  const double AMU_MEV = 931.494061;
-  const double HBARC_L = 197.32697;
+  const double AMU_MEV = 931.5016;   // Ptolemy AMUMEV
+  const double HBARC_L = 197.32858;  // Ptolemy's HBARC (source.f line 14066)
   double mu_MeV = ch.mu * AMU_MEV;
   double AFAC   = 2.0 * mu_MeV / (HBARC_L * HBARC_L);
   double kappa  = std::sqrt(2.0 * mu_MeV * bindingEnergy) / HBARC_L;
@@ -191,9 +195,9 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
   double ZP = ch.Projectile.Z;
   double ZT = ch.Target.Z;
   double RC = ch.Pot.RC0 * std::pow(ch.Target.A, 1.0/3.0);
-  double CI1 = ZP * ZT * HBARC_L * 1.5 / (137.036 * RC);
-  double CI2 = ZP * ZT * HBARC_L * 0.5 / (137.036 * RC * RC * RC);
-  double C0  = ZP * ZT * HBARC_L / 137.036;
+  double CI1 = ZP * ZT * HBARC_L * 1.5 / (AFINE * RC);
+  double CI2 = ZP * ZT * HBARC_L * 0.5 / (AFINE * RC * RC * RC);
+  double C0  = ZP * ZT * HBARC_L / AFINE;
 
   // Radii use ch.Target.A (the core nucleus mass)
   double R_nuc = ch.Pot.R0   * std::pow(ch.Target.A, 1.0/3.0);

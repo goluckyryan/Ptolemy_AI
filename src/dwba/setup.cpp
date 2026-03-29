@@ -237,50 +237,62 @@ void DWBA::Calculate() {
   Incoming.StepSize = std::min(2.0 * M_PI / Incoming.k, 1.0) / STEPSPER;
   Outgoing.StepSize = std::min(2.0 * M_PI / Outgoing.k, 1.0) / STEPSPER;
 
-  // Ptolemy WAVSET: extend asymptopia to classical turning point for large L
-  // RMAX = max(ASYMPT, (eta + sqrt(eta^2 + LMAX*(LMAX+1))) / k)
-  // Condition: NUMFIT==0 && LMAX!=NOTDEF && SCTASY<0 (always true for DWBA with set LMAX)
+  // ── WAVSET NSTEP: exact Fortran algorithm (source.f lines 32500-32502, 37793-37805) ──
   //
-  // CRITICAL: In Ptolemy, the 'asymptopia' PARAMETERSET keyword goes to SCTASY
-  // (the GRDSET integration range), NOT to WAVSET's ASYMPT.
-  // WAVSET's ASYMPT comes from BNDASY (default 20 fm), set by the bound-state
-  // section BEFORE the scattering channels. Since the bound state call to SETBNDS
-  // sets ASYMPT = BNDASY = 20, and subsequent calls skip (ASYMPT != UNDEF),
-  // WAVSET always uses BNDASY = 20 as the base asymptopia.
+  // Ptolemy SETCHN (line 32500-32502) sets ASYMPT for scattering channels:
+  //   ASYMPT = ABS(SCTASY)    (for IBND == 0, i.e., scattering)
+  // where SCTASY comes from the DPSB preset (default -20 fm, negative = allow L-adjust).
+  //
+  // The user keyword 'asymptopia=50' sets FLOAT(9) which goes to GRDSET's integration
+  // range (SUMMAX), NOT to WAVSET's ASYMPT. These are separate concepts:
+  //   - WAVSET ASYMPT: controls Numerov integration range for chi (S-matrix extraction)
+  //   - AsymptopiaSet: controls GRDSET radial integral range (SUMMAX)
+  //
+  // Ptolemy WAVSET (line 37793-37805) then computes RMAX:
+  //   RMAX = ASYMPT                                             (base)
+  //   IF (SCTASY < 0)  RMAX = max(RMAX, turning_point(LMAX))   (L-extend)
+  //   NSTEP = RMAX/STEPSZ + 0.5                                (snap to grid)
+  //   RMAX = NSTEP * STEPSZ
+  //
+  // The chi extension beyond NSTEP (NSTP2S) is handled separately in wavelj.cpp
+  // for the GRDSET integration that needs chi up to SUMMAX > RMAX.
   {
-    // Ptolemy SETBNDS (source.f line 33041-33042):
-    //   IF (ASYMPT .NE. UNDEF) RETURN  — user keyword overrides
-    //   ASYMPT = BNDASY           (if IBND != 0, i.e. bound state)
-    //   ASYMPT = ABS(SCTASY)      (if IBND == 0, i.e. scattering)
-    //
-    // For the ACTUAL scattering wavefunctions (used by WavElj for S-matrix extraction),
-    // we use the user's asymptopia to ensure Numerov extends far enough.
-    // The SCAN chi (GRDSET BSPROD) uses a SEPARATE, shorter range (ABS(SctAsySet))
-    // — computed in grdset_ineldc_faithful.cpp.
-    double ASYMPT = (AsymptopiaSet > 0) ? AsymptopiaSet : std::abs(SctAsySet);
+    // Base asymptopia for scattering: ABS(SCTASY)
+    // SCTASY from DPSB preset = -20.0 (negative = allow L-adjust)
+    double ASYMPT_base = std::abs(SctAsySet);  // = 20.0 fm
     int LMAX_eff = (LmaxSet >= 0) ? LmaxSet : 40;
+    bool allow_L_adjust = (SctAsySet < 0);  // negative SCTASY = allow
 
-    // Incoming channel turning point
-    double tp_in = (Incoming.eta + std::sqrt(Incoming.eta * Incoming.eta
-                    + (double)LMAX_eff * (LMAX_eff + 1))) / Incoming.k;
-    Incoming.MaxR = std::max(ASYMPT, tp_in);
-    // Snap to grid: NSTEP = RMAX/h + 0.5, then RMAX = NSTEP*h
-    int nstep_in = static_cast<int>(Incoming.MaxR / Incoming.StepSize + 0.5);
+    // Incoming channel
+    double RMAX_in = ASYMPT_base;
+    if (allow_L_adjust) {
+      double tp_in = (Incoming.eta + std::sqrt(Incoming.eta * Incoming.eta
+                      + (double)LMAX_eff * (LMAX_eff + 1))) / Incoming.k;
+      RMAX_in = std::max(RMAX_in, tp_in);
+    }
+    int nstep_in = static_cast<int>(RMAX_in / Incoming.StepSize + 0.5);
     Incoming.MaxR = nstep_in * Incoming.StepSize;
+    Incoming.NSteps = nstep_in;
 
-    // Outgoing channel turning point
-    double tp_out = (Outgoing.eta + std::sqrt(Outgoing.eta * Outgoing.eta
-                     + (double)LMAX_eff * (LMAX_eff + 1))) / Outgoing.k;
-    Outgoing.MaxR = std::max(ASYMPT, tp_out);
-    int nstep_out = static_cast<int>(Outgoing.MaxR / Outgoing.StepSize + 0.5);
+    // Outgoing channel
+    double RMAX_out = ASYMPT_base;
+    if (allow_L_adjust) {
+      double tp_out = (Outgoing.eta + std::sqrt(Outgoing.eta * Outgoing.eta
+                       + (double)LMAX_eff * (LMAX_eff + 1))) / Outgoing.k;
+      RMAX_out = std::max(RMAX_out, tp_out);
+    }
+    int nstep_out = static_cast<int>(RMAX_out / Outgoing.StepSize + 0.5);
     Outgoing.MaxR = nstep_out * Outgoing.StepSize;
+    Outgoing.NSteps = nstep_out;
 
-    std::cout << "[WAVSET] Incoming: ASYMPTOPIA = " << Incoming.MaxR
-              << " fm, NSTEP = " << nstep_in
-              << ", StepSize = " << Incoming.StepSize << " fm\n";
-    std::cout << "[WAVSET] Outgoing: ASYMPTOPIA = " << Outgoing.MaxR
-              << " fm, NSTEP = " << nstep_out
-              << ", StepSize = " << Outgoing.StepSize << " fm\n";
+    std::cout << "[WAVSET] Incoming: ASYMPT_base=" << ASYMPT_base
+              << " RMAX=" << Incoming.MaxR
+              << " fm, NSTEP=" << nstep_in
+              << ", h=" << Incoming.StepSize << " fm\n";
+    std::cout << "[WAVSET] Outgoing: ASYMPT_base=" << ASYMPT_base
+              << " RMAX=" << Outgoing.MaxR
+              << " fm, NSTEP=" << nstep_out
+              << ", h=" << Outgoing.StepSize << " fm\n";
   }
 
   WavSet(Incoming);
@@ -340,8 +352,8 @@ void DWBA::PrintParameters() {
   std::cout
       << "================================================================="
       << std::endl;
-  const double AMU_MEV = 931.494061;
-  const double HBARC_L = 197.32697;
+  const double AMU_MEV = 931.5016;   // Ptolemy AMUMEV
+  const double HBARC_L = 197.32858;  // Ptolemy HBARC
 
   double ma = Incoming.Projectile.Mass;
   double mb = Outgoing.Projectile.Mass;

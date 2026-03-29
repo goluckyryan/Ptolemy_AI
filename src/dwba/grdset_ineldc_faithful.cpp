@@ -445,8 +445,8 @@ void DWBA::InelDcFaithful2()
             useTMATCH ? "2-point (TMATCH/Fortran)" : "5-point Wronskian");
 
     const double PI      = 3.14159265358979323846;
-    const double AMU_MEV = 931.494061;
-    const double HBARC_V = 197.32697;
+    const double AMU_MEV = 931.5016;   // Ptolemy AMUMEV
+    const double HBARC_V = 197.32858;  // Ptolemy HBARC
 
     // ─── Kinematics ──────────────────────────────────────────────────────────
     double AKI  = Incoming.k;
@@ -720,7 +720,7 @@ void DWBA::InelDcFaithful2()
 
         int IZC1 = Incoming.Target.Z;   // 8 (16O core charge)
         int IZC2 = Outgoing.Projectile.Z;  // 1 (proton charge)
-        const double HBARC_FINE = HBARC_V / 137.03599908;  // ħc/α = e² = 1.4400 MeV·fm
+        const double HBARC_FINE = HBARC_V / 137.03604;  // ħc/α = e² = 1.4400 MeV·fm
         bs.nuconl_VC0_core = IZC1 * IZC2 * HBARC_FINE;  // 8*1*1.44 = 11.52 MeV·fm
         bs.nuconl_R_core   = RCCOT;    // 3.302 fm (sphere radius for RCORE Coulomb)
         bs.nuconl_VC0_scat = IZC1 * IZC2 * HBARC_FINE;  // same charges → same VC0

@@ -8,7 +8,7 @@ const double MASS_PI0 = 134.9766;
 const double MASS_PIC = 139.57018;
 const double MASS_PROTON = 938.272013;
 const double MASS_NEUTRON = 939.565346;
-const double HBARC = 197.32697;
+const double HBARC = 197.32858;  // Ptolemy HBARC
 
 // Global variables for potential parameters (to match original structure)
 double v, r0, a;

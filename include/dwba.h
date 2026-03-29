@@ -140,7 +140,7 @@ private:
 
   // Kinematics mode flag
   bool useRelativisticKinematics = false;  // false = NR (Ptolemy default), true = relativistic
-  bool useTMATCH = false;  // false = 5-point Wronskian, true = Fortran 2-point TMATCH
+  bool useTMATCH = true;   // true = Fortran 2-point TMATCH (Ptolemy default), false = 5-point Wronskian
 
   std::map<std::pair<int,int>, std::complex<double>> elasticSMatOverride_in;
   std::map<std::pair<int,int>, std::complex<double>> elasticSMatOverride_out;

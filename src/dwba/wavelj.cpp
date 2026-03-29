@@ -152,8 +152,11 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
   double spin_dot_L = (JSP_ch > 0) ? SDOTL_raw / JSP_ch : 0.0;
 
   // Physical constants (same as dwba.cpp globals)
-  const double AMU_MEV  = 931.494061;
-  const double HBARC_L  = 197.32697;
+  // Must match Ptolemy's constants exactly (source.f line 14066-14067)
+  // Previously used CODATA 2014 (931.494061, 197.32697) which caused
+  // 0.0008% systematic error in f_conv → Numerov potential
+  const double AMU_MEV  = 931.5016;    // Ptolemy's AMUMEV
+  const double HBARC_L  = 197.32858;   // Ptolemy's HBARC
   double f_conv = 2.0 * ch.mu * AMU_MEV / (HBARC_L * HBARC_L);
   double k2 = ch.k * ch.k;
 
@@ -206,6 +209,30 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     }
   }
 
+#ifdef DUMP_NUMEROV_DETAIL
+  {
+    int chid = (&ch == &Incoming) ? 0 : (&ch == &Outgoing) ? 1 : 2;
+    // Dump for incoming L=4, JP=10
+    if (chid == 0 && L == DUMP_L && Jp == DUMP_JP) {
+      fprintf(stderr, "CPP_NUMDET h=%.16E h2_12=%.16E k=%.16E k2=%.16E mu=%.16E\n",
+              h, h2_12, ch.k, k2, ch.mu);
+      fprintf(stderr, "CPP_NUMDET DL2=%.16E SDOTL=%.16E fconv=%.16E N=%d\n",
+              DL2, spin_dot_L, f_conv, N);
+      fprintf(stderr, "CPP_NUMDET ETA=%.16E\n", ch.eta);
+      // Dump f[i] (the Numerov potential, NOT multiplied by h2_12 yet)
+      // And the Numerov weight W_re = 1 + h2_12 * f_re, W_im = h2_12 * f_im
+      for (int i = 0; i <= N; ++i) {
+        if (i <= 5 || i % 50 == 0 || i == N || i == N-3 || i == N-4) {
+          double W_re = 1.0 + h2_12 * f[i].real();
+          double W_im = h2_12 * f[i].imag();
+          fprintf(stderr, "CPP_WPOT i=%d R=%.8f f_re=%.16E f_im=%.16E W_re=%.16E W_im=%.16E\n",
+                  i, i*h, f[i].real(), f[i].imag(), W_re, W_im);
+        }
+      }
+    }
+  }
+#endif
+
   // --- Standard Numerov integration (Ptolemy WAVELJ form) ---
   // Recurrence: (1 + h²/12·f_{i+1}) u_{i+1}
   //           = 2*(1 - 5h²/12·f_i)*u_i - (1 + h²/12·f_{i-1})*u_{i-1}
@@ -245,6 +272,18 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     std::complex<double> dn = 1.0 + h2_12 * f[i + 1];
     if (std::abs(dn) < 1e-300) dn = 1e-300;
     u[i + 1] = (t1 - t2) / dn;
+
+#ifdef DUMP_NUMEROV_DETAIL
+    {
+      int chid = (&ch == &Incoming) ? 0 : (&ch == &Outgoing) ? 1 : 2;
+      if (chid == 0 && L == DUMP_L && Jp == DUMP_JP) {
+        if (i <= 5 || i % 50 == 0 || i == N-1) {
+          fprintf(stderr, "CPP_U i=%d R=%.8f u_re=%.16E u_im=%.16E\n",
+                  i+1, (i+1)*h, u[i+1].real(), u[i+1].imag());
+        }
+      }
+    }
+#endif
 
         double mag = std::abs(u[i + 1]);
     if (mag > BIGNUM) {
