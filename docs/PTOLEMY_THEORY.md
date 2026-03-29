@@ -219,6 +219,54 @@ $$K(r_a, r_b) = \int_{-1}^{1} d(\cos \theta) \, \phi_{Bx}^{\ast}(r_x) \, V(r_{bx
 
 where $r_x$ and $r_{bx}$ depend on $r_a, r_b, \theta$ via the law of cosines.
 
+### 4.3 Stripping vs Pickup
+
+Ptolemy handles both directions of transfer using the **same integral code** with different coordinate mappings.
+
+| ISTRIP | Direction | Example | Definition |
+|---|---|---|---|
+| +1 | Stripping | (d,p), (t,d), (³He,d) | Projectile loses particle: $a = b + x$ |
+| −1 | Pickup | (p,d), (d,t), (d,³He) | Projectile gains particle: $b = a + x$ |
+| 0 | Inelastic | (p,p'), (d,d') | No mass transfer |
+
+**Detection is automatic:** Ptolemy compares $m_a$ vs $m_b$. If $m_a > m_b$ → stripping; if $m_a < m_b$ → pickup.
+
+For **pickup** (ISTRIP=−1), Ptolemy flips the S1/T1/S2/T2 mapping (source.mor lines 15889–15896):
+
+```
+T2 = S2;  S2 = -S1;  S1 = T1;  T1 = -S2;  PHISGN = -1
+```
+
+It also adjusts:
+- Q-value sign: `Q = -Q` (line 4490)
+- ATERM stat factor: `(JB+1)/(JA+1)` instead of `(JBIGB+1)/(JBIGA+1)` (line 25631)
+- Bound state assignments: which wavefunction is "projectile" vs "target" (lines 27893–27901)
+
+The integral machinery (INELDC, SFROMI, BETCAL, XSECTN) is identical — all the stripping/pickup physics is encoded in S1/T1/S2/T2 and the bound state assignments.
+
+### 4.4 Multi-Nucleon Transfer
+
+Ptolemy treats the transferred cluster $x$ as a **single entity**, regardless of how many nucleons it contains. For example:
+
+| Reaction | x (cluster) | $m_x$ | $j_x$ | Notes |
+|---|---|---|---|---|
+| (d,p) | n | 1 | 1/2 | Single neutron |
+| (t,p) | 2n | 2 | 0 | Dineutron (J=0 assumed) |
+| (³He,p) | 2n (or d) | 2 | 0 or 1 | Depends on model |
+| (³He,d) | p | 1 | 1/2 | Single proton |
+| (α,d) | 2n | 2 | 0 | Dineutron cluster |
+| (t,d) | n | 1 | 1/2 | Single neutron pickup |
+
+**For dineutron/diproton (A=2, Z=0 or Z=2):** Ptolemy automatically assigns $J_x = 0$ (source.mor line 7064–7068). This is the standard assumption — the two transferred nucleons are in a relative $^1S_0$ state.
+
+**What this means physically:** The (t,p) reaction is treated as transferring a di-neutron cluster with:
+- **Projectile bound state:** 2n inside the triton ($t = p + 2n$)
+- **Target bound state:** 2n inside the residual nucleus ($B = A + 2n$)
+
+Both bound states get their own Woods-Saxon potential, orbital quantum numbers, and binding energies. The DWBA integral is then the same as for single-nucleon transfer — Ptolemy does not do sequential (two-step) transfer.
+
+> **Limitation:** This "cluster DWBA" approach assumes simultaneous transfer. For reactions where sequential transfer dominates (e.g., some (t,p) reactions at higher energies), coupled-channels or second-order DWBA would be needed. Ptolemy's coupled-channels capability is limited and rarely used for this purpose.
+
 ---
 
 ## 5. Zero-Range vs Finite-Range
