@@ -180,7 +180,7 @@ Unlike simple shooting methods (unstable for bound states), Ptolemy integrates f
 - Method: Numerov integration (backward)
 
 **Matching condition** at $R_{match}$:
-$$\text{Diff} = \left( \frac{u'}{u} \right)_{\text{out}} - \left( \frac{u'}{u} \right)_{\text{in}} \to 0$$
+$$\text{Diff} = \left.\frac{u'}{u}\right|_\text{out} - \left.\frac{u'}{u}\right|_\text{in} \to 0$$
 
 ### 3.3 Depth Search Iteration
 
