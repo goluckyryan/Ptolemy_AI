@@ -18,62 +18,19 @@
 
 ## 1. High-Level Flow
 
-```
-┌──────────────────────────────────────────────────────┐
-│                     CONTRL                           │
-│           (Main dispatcher / sequencer)              │
-│                  [line 8109]                         │
-└─────────┬────────────────────────────────────────────┘
-          │
-    ┌─────▼──────┐
-    │  DATAIN    │  Parse input file (potentials, kinematics,
-    │ [line 11643]│  bound state params, angles)
-    └─────┬──────┘
-          │
-    ┌─────▼──────┐
-    │   BOUND    │  Compute bound state wavefunctions φ(r)
-    │ [line 3642] │  for target and projectile
-    └─────┬──────┘
-          │
-    ┌─────▼──────┐
-    │  WAVSET    │  Set up distorted wave computation
-    │ [line 31940]│  (allocate memory, set grid parameters)
-    └─────┬──────┘
-          │
-    ┌─────▼──────┐
-    │  GETSCT    │  Compute optical model S-matrices
-    │ [line 15538]│  (calls WAVELJ for each L)
-    └─────┬──────┘
-          │
-    ┌─────▼──────┐
-    │  GRDSET    │  Set up integration grid (Gauss points)
-    │ [line 15710]│  for the radial DWBA integral
-    └─────┬──────┘
-          │
-    ┌─────▼──────┐
-    │  INELDC    │  Main DWBA radial integral
-    │ [line 17454]│  Computes T-matrix elements I(Li,Lo,Lx)
-    └─────┬──────┘
-          │  (calls SFROMI inside loop)
-    ┌─────▼──────┐
-    │  XSECTN    │  Orchestrate cross section output
-    │ [line 32743]│  (calls BETCAL then AMPCAL then ANAPOW)
-    └─────┬──────┘
-          │
-    ┌─────▼──────┐
-    │  BETCAL    │  Compute angle-independent beta amplitudes
-    │ [line 3358] │  β(Lo) from S_sfromi elements
-    └─────┬──────┘
-          │
-    ┌─────▼──────┐
-    │  AMPCAL    │  Compute angular distribution F(θ)
-    │  [line 220] │  via Legendre polynomial sum
-    └─────┬──────┘
-          │
-    ┌─────▼──────┐
-    │  ANAPOW    │  Compute and print d²σ/dΩ vs angle
-    │  [line 578] │  (final cross section in mb/sr)
-    └────────────┘
+```mermaid
+flowchart TD
+    CONTRL["CONTRL\n(main dispatcher)\nline 8109"]
+    CONTRL --> DATAIN["DATAIN\n(parse input)\nline 11643"]
+    DATAIN --> BOUND["BOUND\n(bound state φ(r))\nline 3642"]
+    BOUND --> WAVSET["WAVSET\n(distorted wave setup)\nline 31940"]
+    WAVSET --> GETSCT["GETSCT\n(S-matrices via WAVELJ)\nline 15538"]
+    GETSCT --> GRDSET["GRDSET\n(integration grid)\nline 15710"]
+    GRDSET --> INELDC["INELDC\n(radial integral → I(Li,Lo,Lx))\nline 17454"]
+    INELDC -->|"calls SFROMI"| XSECTN["XSECTN\n(cross section)\nline 32743"]
+    XSECTN --> BETCAL["BETCAL\n(β amplitudes)\nline 3358"]
+    BETCAL --> AMPCAL["AMPCAL\n(F(θ) via Legendre sum)\nline 220"]
+    AMPCAL --> ANAPOW["ANAPOW\n(dσ/dΩ output)\nline 578"]
 ```
 
 ---
@@ -153,42 +110,39 @@
 
 ## 3. Data Flow Diagram
 
-```
-Input file
-    │
-    ▼
- DATAIN ─────────────────────────────────────────────────┐
-    │                                                    │
-    ├──► BOUND (target BS)                              │
-    │    └─► stores φ_T(r)                              │
-    │                                                    │
-    ├──► BOUND (projectile BS)                          │
-    │    └─► stores φ_P(r)                              │
-    │                                                    │
-    ├──► WAVSET → GETSCT                                │
-    │         ├──► WAVELJ (incoming, L=0..Lmax)        │
-    │         │    RCWFN → S_a,L                        │
-    │         └──► WAVELJ (outgoing, L=0..Lmax)        │
-    │              RCWFN → S_b,L                        │
-    │                                                    │
-    └──► GRDSET (quadrature grid)                       │
-         CUBMAP + BSPROD                                 │
-                                                         │
-              ▼                                          │
-           INELDC (double integral)                      │
-           ┌──────────────────────────┐                 │
-           │ for (Li, Lo):            │                 │
-           │   WFGET → u_a, u_b      │                 │
-           │   A12 → angular kernel   │                 │
-           │   accumulate I(Li,Lo,Lx) │                 │
-           │   SFROMI → S_sfromi     │                 │
-           └──────────────────────────┘                 │
-                                                         │
-              ▼                                          │
-           XSECTN                                        │
-              ├──► BETCAL → β(Lo)                       │
-              ├──► AMPCAL → F(θ)                        │
-              └──► ANAPOW → dσ/dΩ output               │
+```mermaid
+flowchart TD
+    INPUT["📄 Input File"] --> DATAIN["DATAIN\n(parse potentials, kinematics, angles)"]
+
+    DATAIN --> BOUND_T["BOUND\n(target bound state)"]
+    DATAIN --> BOUND_P["BOUND\n(projectile bound state)"]
+    DATAIN --> WAVSET["WAVSET\n(distorted wave setup)"]
+    DATAIN --> GRDSET["GRDSET\n(quadrature grid)"]
+
+    BOUND_T -->|"φ_T(r)"| BSPROD
+    BOUND_P -->|"φ_P(r)"| BSPROD
+
+    WAVSET --> GETSCT["GETSCT\n(loop L=0..Lmax)"]
+    GETSCT --> WAV_IN["WAVELJ\n(incoming χ_a)"]
+    GETSCT --> WAV_OUT["WAVELJ\n(outgoing χ_b)"]
+    WAV_IN --> RCWFN_IN["RCWFN"] -->|"S_a,L"| WFGET
+    WAV_OUT --> RCWFN_OUT["RCWFN"] -->|"S_b,L"| WFGET
+
+    GRDSET --> CUBMAP["CUBMAP\n(adaptive mapping)"]
+    CUBMAP --> BSPROD["BSPROD\n(bound state products)"]
+
+    WFGET["WFGET\n(interpolate u_L at quad pts)"] --> INELDC
+    BSPROD --> INELDC
+
+    INELDC["INELDC\n(double radial integral)"]
+    INELDC --> |"for each (Li, Lo)"| A12["A12\n(angular kernel)"]
+    A12 --> ACC["Accumulate I(Li,Lo,Lx)"]
+    ACC --> SFROMI["SFROMI\n(transfer S-matrix)"]
+
+    SFROMI -->|"S_sfromi"| XSECTN["XSECTN\n(cross section orchestrator)"]
+    XSECTN --> BETCAL["BETCAL\n→ β(Lo)"]
+    BETCAL --> AMPCAL["AMPCAL\n→ F(θ)"]
+    AMPCAL --> ANAPOW["ANAPOW\n→ dσ/dΩ output"]
 ```
 
 ---
