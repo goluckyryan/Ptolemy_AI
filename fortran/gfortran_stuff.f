@@ -58,6 +58,8 @@ C
 C -- THE LOC FUNCTION RETURNS THE ADDRESS (IN BYTES REL TO LOC'N 0)
 C   OF THE VARIABLE S
 C                                                                          60   
+C     Use INTEGER*8 for LOC values on 64-bit systems
+      INTEGER*8 LOCS, ITSAT, ITSAT2
       LOCS = LOC(S)
 c
 cgrab      isize = (nwords*i4or8+7)/8

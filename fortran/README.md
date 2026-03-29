@@ -5,54 +5,64 @@ Original Fortran source code for the Ptolemy DWBA code (April 2007 version), by 
 ## Quick Start
 
 ```bash
-# Ubuntu 24.04 — install 32-bit support (recommended)
-sudo apt install gcc-multilib gfortran-multilib
+# Ubuntu 24.04
+sudo apt install gfortran gcc
 
-# Build
+# Build and test
 make
-
-# Run
-./ptolemy < test01.in > test01.out
+make test
 ```
 
 ## Build Requirements
 
 - **gfortran** (GNU Fortran compiler, version 10+)
-- **gcc** (for two small C support files)
-- **gcc-multilib + gfortran-multilib** (recommended, for 32-bit build)
+- **gcc** (for two small C helper files)
 
 On Ubuntu 24.04:
 ```bash
-sudo apt install gfortran gcc gcc-multilib gfortran-multilib
+sudo apt install gfortran gcc
 ```
 
-## Build Modes
-
-### 32-bit build (recommended)
+## Build
 
 ```bash
+make          # 64-bit build with -O0
+make test     # build + run 16O(d,p)17O test
+make clean    # remove build artifacts
+```
+
+### ⚠️ CRITICAL: Optimization Level
+
+**The code must be compiled with `-O0` on 64-bit systems.** Even `-O1` breaks the output.
+
+The original Ptolemy code relies on Fortran 77 behaviors (implicit SAVE semantics, uninitialized local variables retaining values between calls, pointer-as-integer arithmetic) that modern compilers optimize away at `-O1` and above.
+
+### 32-bit Build (optional)
+
+If you have 32-bit multilib support, the 32-bit build can use `-O2` safely:
+
+```bash
+sudo apt install gcc-multilib gfortran-multilib
 make ptolemy32
 ```
 
-The original Ptolemy code was written for 32-bit systems. The internal memory allocator (`GRAB`/`LOC`) stores memory addresses in Fortran `INTEGER` variables (4 bytes). On 64-bit systems, this causes pointer truncation and silent failures. The 32-bit build avoids this entirely.
+The original Ptolemy was developed and tested on 32-bit systems. The pre-built binary in `../digios/analysis/Cleopatra/ptolemy` is 32-bit and statically linked.
 
-Requires `gcc-multilib` and `gfortran-multilib` packages.
-
-### 64-bit build
+## Usage
 
 ```bash
-make ptolemy64
+./ptolemy < input.in > output.out
 ```
 
-Uses a patched `srread_64.c` with `intptr_t` instead of `int` for file descriptor storage. However, the Fortran-side allocator (`gfortran_stuff.f`) still uses `INTEGER` for `LOC()` addresses, which may cause issues with large memory layouts. **Use the 32-bit build if possible.**
+Standard input/output. See `../docs/PTOLEMY_MANUAL.md` for input format and `../docs/PTOLEMY_OUTPUT.md` for output format.
 
-### Auto-detect
+## Verified Output
 
-```bash
-make
+The 64-bit `-O0` build produces **identical** results to the reference 32-bit binary:
+
 ```
-
-Tries 32-bit first; falls back to 64-bit if multilib packages are not installed.
+16O(d,p)17O at 20 MeV:  0° DCS = 41.629 mb/sr, TOTAL = 35.050 mb
+```
 
 ## Source Files
 
@@ -68,8 +78,8 @@ Tries 32-bit first; falls back to 64-bit if multilib packages are not installed.
 
 | File | Description |
 |------|-------------|
-| `gfortran_stuff.f` | Platform-specific routines — GRAB (memory allocator), SECOND (timer), CMPUTR (hostname), LOC |
-| `masstable.f` | Nuclear mass table (AME data) |
+| `gfortran_stuff.f` | Platform-specific routines — GRAB (memory allocator), SECOND (timer), CMPUTR (hostname) |
+| `masstable.f` | Nuclear mass table (AME data, compiled into DATA statements) |
 | `numbered_store.f` | Named array storage manager (NALLOC/NFREE) |
 | `linkule.f` | Bound state wavefunction plugins (AV18, Reid, Woods-Saxon, etc.) |
 | `linkulesfitters.f` | Optical model parameter libraries (global OM fits) |
@@ -82,52 +92,44 @@ Tries 32-bit first; falls back to 64-bit if multilib packages are not installed.
 | File | Description |
 |------|-------------|
 | `dtime.c` | CPU timer (calls `getrusage`) |
-| `srread.c` | Sequential file I/O (original, 32-bit `int` for FILE*) |
-| `srread_64.c` | Sequential file I/O (64-bit fix, uses `intptr_t`) |
+| `srread.c` | Sequential file I/O for KEEP/NSDUMP |
 
 ### Build Infrastructure
 
 | File | Description |
 |------|-------------|
-| `expand.f` | Macro expander — converts `.mor` files to `.f` (not needed for pre-expanded sources) |
-| `macros1` | Macro definitions (selects `com` for fixed common block allocator) |
-| `Makefile` | Build system for Ubuntu 24.04 |
+| `expand.f` | Macro expander — converts `.mor` source to `.f` (not needed; pre-expanded `.f` files are provided) |
+| `macros1` | Macro definitions used by `expand.f` (selects `com` for fixed common block allocator) |
 
-## Compilation Flags Explained
+## Compilation Flags
 
 ```
--std=legacy          Allow old Fortran 77 constructs (GOTO, EQUIVALENCE, etc.)
--fallow-argument-mismatch   Allow type mismatches in subroutine calls
--fno-range-check     Allow integer overflow (used for BOZ constants)
--fallow-invalid-boz  Allow non-standard BOZ literal assignments
--fd-lines-as-comments  Treat 'D' in column 1 as comments (debug lines)
--fno-automatic       Use static storage for local variables (Fortran 77 behavior)
--w                   Suppress all warnings (the code generates many)
+-O0                      REQUIRED on 64-bit (code breaks at -O1+)
+-std=legacy              Allow old F77 constructs (assigned GOTO, Hollerith, etc.)
+-fallow-argument-mismatch  Allow type mismatches in subroutine calls
+-fno-range-check         Allow integer overflow (BOZ constants)
+-fallow-invalid-boz      Allow non-standard BOZ literal assignments
+-fd-lines-as-comments    Treat 'D' in column 1 as comments
+-w                       Suppress warnings (the code generates hundreds)
 ```
-
-## Usage
-
-```bash
-./ptolemy < input.in > output.out
-```
-
-Standard input/output. See `../docs/PTOLEMY_MANUAL.md` for input format and `../docs/PTOLEMY_OUTPUT.md` for output format.
 
 ## Known Issues
 
-### 64-bit Pointer Truncation
+### Optimization Breaks Output
 
-The `GRAB` subroutine in `gfortran_stuff.f` uses the Fortran `LOC()` intrinsic to get memory addresses, then stores them in `INTEGER` (4-byte) variables. On 64-bit systems, this truncates the address and causes incorrect array indexing. Symptoms: missing output sections, wrong nuclear masses, or silent crashes.
-
-**Fix:** Use the 32-bit build (`make ptolemy32`).
+At `-O1` and above, the compiler optimizes away implicit SAVE behavior and/or reorders operations involving integer/pointer arithmetic. This causes the mass table lookup to fail silently (returning Z=0 for some nuclei) and the DCS calculation to never execute.
 
 ### VSO Factor for Deuterons
 
-Ptolemy divides the spin-orbit coupling by 2S. For S=1 (deuteron), VSO is effectively halved. Published OM parameters for deuterons have this baked in. See `../docs/PTOLEMY_MANUAL.md` §11.1.
+Ptolemy divides the spin-orbit coupling by 2S. For S=1 (deuteron), VSO is effectively halved. Published OM parameters (e.g., An & Cai 2006) have this baked in. See `../docs/PTOLEMY_MANUAL.md` §11.1.
 
 ### Fortran Carriage Control
 
-Output uses column-1 carriage control characters (`0` = double space, `1` = new page). These appear as literal characters when redirecting to a file. See `../docs/PTOLEMY_OUTPUT.md` §13.
+Output uses column-1 carriage control characters (`0` = double space, `1` = new page, `+` = overprint). These appear as literal characters when redirecting to a file. See `../docs/PTOLEMY_OUTPUT.md` §13.
+
+### 64-bit Pointer Arithmetic
+
+The `GRAB` subroutine uses `LOC()` to compute array offsets. The `gfortran_stuff.f` in this directory has `INTEGER*8` declarations for the `LOC()` variables, ensuring correct pointer arithmetic on 64-bit systems. The original code used default `INTEGER` (4 bytes).
 
 ## License
 
