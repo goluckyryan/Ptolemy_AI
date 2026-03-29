@@ -2,23 +2,18 @@
 #
 # Tested on Ubuntu 24.04 with gfortran 13/14
 #
-# CRITICAL: Use -O0 on 64-bit. The code relies on Fortran 77 behaviors
-# (uninitialized variables, implicit SAVE, pointer-as-integer) that
-# break with optimization. The 32-bit build tolerates -O2.
+# ⚠️  WARNING: The 64-bit build compiles and runs, but produces
+#     INCORRECT results for some reactions. Always use the 32-bit
+#     build or the pre-built 32-bit binary for production work.
+#     See README.md for details.
 #
-#   make             — auto-build (64-bit -O0)
-#   make ptolemy32   — 32-bit build (requires gcc-multilib, can use -O2)
+#   make             — 32-bit build (RECOMMENDED, requires gcc-multilib)
+#   make ptolemy64   — 64-bit build (for debugging ONLY, requires -O0)
 #   make test        — run test and verify DCS output
 #   make clean
 
 FC      = gfortran
 CC      = gcc
-
-# Fortran flags for legacy code compatibility
-# -O0 is REQUIRED on 64-bit (code breaks at -O1+)
-# -std=legacy allows old F77 constructs and dummy array size mismatches
-FFLAGS  = -O0 -std=legacy -fallow-argument-mismatch -fno-range-check \
-          -fallow-invalid-boz -fd-lines-as-comments -w
 
 # Source files
 FSRC    = ptolemy-main.f source.f fortlib.f gfortran_stuff.f masstable.f \
@@ -29,25 +24,14 @@ CSRC    = dtime.c srread.c
 FOBJ    = $(FSRC:.f=.o)
 COBJ    = $(CSRC:.c=.o)
 
-# Default: 64-bit build with -O0
+# ============================================================
+# Default: 32-bit build (matches original development platform)
+# ============================================================
 all: ptolemy
 
-ptolemy: $(FOBJ) $(COBJ)
-	@echo "Linking..."
-	$(FC) -o $@ $(FOBJ) $(COBJ)
-	@echo "=== Build complete: ./ptolemy ==="
-
-# Pattern rules
-%.o: %.f
-	$(FC) -c $(FFLAGS) $< -o $@
-
-%.o: %.c
-	$(CC) -c -w $< -o $@
-
-# 32-bit build (can use -O2, matches original 32-bit assumptions)
-ptolemy32:
+ptolemy:
 	@if $(CC) -m32 -xc -c /dev/null -o /dev/null 2>/dev/null; then \
-		echo "=== Building 32-bit ==="; \
+		echo "=== Building 32-bit (recommended) ==="; \
 	else \
 		echo "ERROR: 32-bit support not found."; \
 		echo "  sudo apt install gcc-multilib gfortran-multilib"; \
@@ -62,6 +46,35 @@ ptolemy32:
 	$(CC) -c -m32 -w srread.c
 	$(FC) -m32 -o ptolemy $(FOBJ) $(COBJ)
 	@echo "=== Build complete: ./ptolemy (32-bit) ==="
+
+# ============================================================
+# 64-bit build: for DEBUGGING ONLY — results may be INCORRECT
+# ============================================================
+# Fortran flags for legacy code compatibility
+# -O0 is REQUIRED on 64-bit (code breaks at -O1+)
+FFLAGS64 = -O0 -std=legacy -fallow-argument-mismatch -fno-range-check \
+           -fallow-invalid-boz -fd-lines-as-comments -w
+
+ptolemy64: $(FSRC) $(CSRC)
+	@echo "⚠️  WARNING: 64-bit build is for DEBUGGING ONLY."
+	@echo "    Results may differ from the correct 32-bit output."
+	@echo "    Use 'make' (32-bit) for production work."
+	@echo ""
+	@for f in $(FSRC); do \
+		echo "  $$f"; \
+		$(FC) -c $(FFLAGS64) $$f || exit 1; \
+	done
+	$(CC) -c -w dtime.c
+	$(CC) -c -w srread.c
+	$(FC) -o ptolemy $(FOBJ) $(COBJ)
+	@echo "=== Build complete: ./ptolemy (64-bit, DEBUG ONLY) ==="
+
+# Pattern rules (for ptolemy64 only — 32-bit build uses explicit loop)
+%.o: %.f
+	$(FC) -c $(FFLAGS64) $< -o $@
+
+%.o: %.c
+	$(CC) -c -w $< -o $@
 
 # Test with standard DWBA input
 test: ptolemy test_dwba.in
@@ -79,4 +92,4 @@ test: ptolemy test_dwba.in
 clean:
 	rm -f *.o ptolemy test_dwba.out
 
-.PHONY: all clean test ptolemy32
+.PHONY: all clean test ptolemy64

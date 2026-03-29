@@ -2,13 +2,21 @@
 
 Original Fortran source code for the Ptolemy DWBA code (April 2007 version), by M.H. Macfarlane and S.C. Pieper, Argonne National Laboratory.
 
+## ⚠️ WARNING: 64-bit Builds Are Not Reliable
+
+**Although this code compiles and runs on 64-bit systems, the 64-bit build can produce incorrect results.** The original code was developed for 32-bit platforms and relies on Fortran 77 behaviors (implicit SAVE, integer pointer arithmetic, uninitialized variable persistence) that do not translate reliably to 64-bit, even at `-O0`.
+
+**Always use the 32-bit build for production work.** The 64-bit build (`make ptolemy64`) is provided only for adding debug prints and tracing internal variables.
+
+For a pre-built, verified 32-bit binary, use `../digios/analysis/Cleopatra/ptolemy`.
+
 ## Quick Start
 
 ```bash
-# Ubuntu 24.04
-sudo apt install gfortran gcc
+# Ubuntu 24.04 — install 32-bit multilib support
+sudo apt install gfortran gcc gcc-multilib gfortran-multilib
 
-# Build and test
+# Build (32-bit, recommended) and test
 make
 make test
 ```
@@ -17,36 +25,29 @@ make test
 
 - **gfortran** (GNU Fortran compiler, version 10+)
 - **gcc** (for two small C helper files)
+- **gcc-multilib / gfortran-multilib** (for 32-bit build, recommended)
 
 On Ubuntu 24.04:
 ```bash
-sudo apt install gfortran gcc
+sudo apt install gfortran gcc gcc-multilib gfortran-multilib
 ```
 
 ## Build
 
 ```bash
-make          # 64-bit build with -O0
-make test     # build + run 16O(d,p)17O test
-make clean    # remove build artifacts
+make             # 32-bit build (RECOMMENDED)
+make ptolemy64   # 64-bit build (DEBUG ONLY — results may be incorrect)
+make test        # build + run 16O(d,p)17O test
+make clean       # remove build artifacts
 ```
 
-### ⚠️ CRITICAL: Optimization Level
+### 32-bit Build (default, recommended)
 
-**The code must be compiled with `-O0` on 64-bit systems.** Even `-O1` breaks the output.
+The default `make` target builds a 32-bit binary with `-O2`, matching the original development platform. Requires `gcc-multilib` and `gfortran-multilib`.
 
-The original Ptolemy code relies on Fortran 77 behaviors (implicit SAVE semantics, uninitialized local variables retaining values between calls, pointer-as-integer arithmetic) that modern compilers optimize away at `-O1` and above.
+### 64-bit Build (debugging only)
 
-### 32-bit Build (optional)
-
-If you have 32-bit multilib support, the 32-bit build can use `-O2` safely:
-
-```bash
-sudo apt install gcc-multilib gfortran-multilib
-make ptolemy32
-```
-
-The original Ptolemy was developed and tested on 32-bit systems. The pre-built binary in `../digios/analysis/Cleopatra/ptolemy` is 32-bit and statically linked.
+`make ptolemy64` builds a 64-bit binary with `-O0`. This is useful for adding `PRINT` statements to trace internal variables, but **should never be used as a reference for cross section values**. Even at `-O0`, some reactions produce different results from the 32-bit build.
 
 ## Usage
 
@@ -58,11 +59,13 @@ Standard input/output. See `../docs/PTOLEMY_MANUAL.md` for input format and `../
 
 ## Verified Output
 
-The 64-bit `-O0` build produces **identical** results to the reference 32-bit binary:
+The **32-bit** build produces identical results to the reference pre-built binary:
 
 ```
 16O(d,p)17O at 20 MeV:  0° DCS = 41.629 mb/sr, TOTAL = 35.050 mb
 ```
+
+The 64-bit build may reproduce this for simple test cases, but can diverge for other reactions. Do not rely on it as a reference.
 
 ## Source Files
 
