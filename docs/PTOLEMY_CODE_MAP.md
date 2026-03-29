@@ -184,7 +184,9 @@ FACTOR:
 $$\text{FACTOR} = 2\sqrt{\frac{k_a k_b}{E_{\text{cm}}^{(a)} \, E_{\text{cm}}^{(b)}}}$$
 
 ATERM:
-$$\text{ATERM}(L_x) = \sqrt{\frac{2j_B+1}{2j_A+1}} \cdot \sqrt{2L_x+1} \cdot \mathcal{S}_{\text{proj}} \cdot \mathcal{S}_{\text{target}} \cdot W(j_B, l_T, j_A, l_P; j_n, L_x)$$
+$$\text{ATERM}(L_x) = \sqrt{\frac{J_B'+1}{J_A'+1}} \cdot \sqrt{2L_x+1} \cdot \mathcal{S}_{\text{proj}} \cdot \mathcal{S}_{\text{target}} \cdot W(l_T, j_T, l_P, j_P; j_x, L_x)$$
+
+where $J_A'=2J_A$, $J_B'=2J_B$ (Ptolemy doubled-integer convention), and $W$ is the Racah coefficient.
 
 ### 4.5 BETCAL Formula
 

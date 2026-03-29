@@ -351,7 +351,15 @@ $$\text{FACTOR} = 2\sqrt{\frac{k_a k_b}{E_{\text{cm}}^{a} \, E_{\text{cm}}^{b}}}
 
 ### 9.3 ATERM (Spectroscopic Amplitude)
 
-$$\text{ATERM}(L_x) = \sqrt{\frac{2j_B+1}{2j_A+1}} \cdot \sqrt{2L_x+1} \cdot \mathcal{S}_{\text{proj}} \cdot \mathcal{S}_{\text{target}} \cdot W(j_B, l_T, j_A, l_P; j_n, L_x)$$
+**Fortran BSSET (source.mor line 25634):**
+
+$$\text{ATERM}(L_x) = \sqrt{\frac{J_B'+1}{J_A'+1}} \cdot \sqrt{2L_x+1} \cdot \mathcal{S}_{\text{proj}} \cdot \mathcal{S}_{\text{target}} \cdot W(l_T, j_T, l_P, j_P; j_x, L_x)$$
+
+where $J_A' = 2J_A$ and $J_B' = 2J_B$ are the doubled nuclear spin quantum numbers (Ptolemy convention), and $W$ is the Racah coefficient (related to 6-j by a phase).
+
+**Sign:** $(-1)^{(j_x - j_P + 2(l_P + l_T))/2 + 1}$ flips ATERM when this exponent is odd.
+
+> **C++ note:** The faithful path (`grdset_ineldc_faithful.cpp`) applies the full ATERM with Racah inside the SFROMI block. The `xsectn.cpp` ATERM uses a simplified CG-based formula and re-applies FACTOR — see code comments for details.
 
 ### 9.4 Phase Sign
 
