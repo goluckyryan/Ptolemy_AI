@@ -18,8 +18,7 @@
 8. [Transfer Cross Section: Overview](#8-transfer-cross-section-overview) ← **start here for the big picture**
 9. [Radial Integrals (INELDC)](#9-radial-integrals-ineldc)
 10. [Transfer S-Matrix (SFROMI)](#10-transfer-s-matrix-sfromi)
-11. [Cross Section (BETCAL → AMPCAL → XSECTN)](#11-cross-section)
-12. [Comparison: Handbook vs Ptolemy](#12-comparison-handbook-vs-ptolemy)
+11. [Comparison: Handbook vs Ptolemy](#11-comparison-handbook-vs-ptolemy)
 
 ---
 
@@ -413,15 +412,38 @@ This is a 6D integral involving:
 - **Interaction** $V(\mathbf{r}_P)$ — the binding potential at the projectile vertex
 - **Coordinate mapping** from scattering coordinates to bound state coordinates (§6)
 
-### 8.2 Partial Wave Reduction
+### 8.2 From T-Matrix to Cross Section
 
-Expand all wavefunctions in partial waves (spherical harmonics). The angular integrals can be performed analytically, producing Clebsch-Gordan coefficients, Racah W-coefficients, and 9-j symbols. The result factorizes as:
+Expand all wavefunctions in partial waves. The angular integrals produce Clebsch-Gordan coefficients, Racah W-coefficients, and 9-j symbols. The cross section factorizes into three stages:
 
-$$\frac{d\sigma}{d\Omega}(\theta) = 10 \times \sum_{L_x, M_x} f_{M_x} \left| \; \underbrace{\frac{1}{2k_a} \sum_{L_i}(2L_i+1) \, C_{L_i L_x}^{L_o M_x} \, e^{i(\sigma_{L_i} + \sigma_{L_o})}}_{\text{BETCAL}} \; \times \; \underbrace{S(L_i, L_o, L_x)}_{\text{SFROMI}} \; \right|^2$$
+**Step 1 — SFROMI:** Combine the radial integral with kinematic and spectroscopic factors to get a transfer S-matrix element:
 
-where each $S(L_i, L_o, L_x)$ is itself a product:
+$$S(L_i, L_o, L_x) = \text{FACTOR} \cdot \text{ATERM}(L_x) \cdot \frac{i^{L_i+L_o+2L_x+1}}{\sqrt{2L_i+1}} \cdot I_{L_i,L_o,L_x}^{J_\pi,J_\pi'}$$
 
-$$S = \underbrace{\text{FACTOR}}_{\text{kinematics}} \times \underbrace{\text{ATERM}(L_x)}_{\text{spectroscopy}} \times \underbrace{\frac{i^{L_i+L_o+2L_x+1}}{\sqrt{2L_i+1}}}_{\text{phase}} \times \underbrace{I_{L_i,L_o,L_x}^{J_\pi,J_\pi'}}_{\text{radial integral}}$$
+where:
+- FACTOR $= 2\sqrt{k_a k_b / (E_\text{cm}^a E_\text{cm}^b)}$ — kinematic factor (§10.2)
+- ATERM — spectroscopic amplitude with Racah coefficient (§10.3)
+- $I$ — the 3D radial-angular integral computed by INELDC (§9)
+
+**Step 2 — BETCAL:** Sum over incoming partial waves $L_i$ with Clebsch-Gordan coupling and Coulomb phases:
+
+$$\beta(L_o, L_x, M_x) = \frac{1}{2k_a} \sum_{L_i} (2L_i+1) \cdot C(L_i, 0; L_x, M_x | L_o, M_x) \cdot e^{i(\sigma_{L_i} + \sigma_{L_o})} \cdot S(L_i, L_o, L_x)$$
+
+where $C(L_i, 0; L_x, M_x | L_o, M_x)$ is a Clebsch-Gordan coefficient coupling the incoming partial wave $L_i$ (with $M=0$) and the transferred angular momentum $(L_x, M_x)$ to the outgoing partial wave $L_o$.
+
+**Step 3 — AMPCAL:** Sum over outgoing partial waves to get the scattering amplitude at angle $\theta$:
+
+$$F^{(M_x)}(\theta) = \sum_{L_o} \beta(L_o, L_x, M_x) \cdot P_{L_o}^{M_x}(\cos\theta)$$
+
+where $P_{L_o}^{M_x}$ is an associated Legendre polynomial.
+
+**Step 4 — XSECTN:** Sum incoherently over the transferred angular momentum projection $M_x$:
+
+$$\frac{d\sigma}{d\Omega}(\theta) = 10 \cdot \sum_{L_x, M_x} f_{M_x} \cdot \left|F^{(M_x)}(\theta)\right|^{2}$$
+
+where:
+- The factor **10** converts fm² → mb/sr
+- $f_{M_x} = 1$ for $M_x = 0$, and $f_{M_x} = 2$ for $M_x > 0$ (because $M_x$ and $-M_x$ give identical contributions, so we sum only $M_x \geq 0$ and double)
 
 ### 8.3 The Factorization Map
 
@@ -432,7 +454,7 @@ Stage 1: BOUND (§3)              → φ_T(r), φ_P(r)           [bound state wa
 Stage 2: WAVELJ (§2)             → χ_Li(r), χ_Lo(r)         [distorted waves]
 Stage 3: GRDSET + INELDC (§7,§9) → I(Li, Lo, Lx, Jπ, Jπ')  [radial integral]
 Stage 4: SFROMI (§10)            → S(Li, Lo, Lx)            [transfer S-matrix]
-Stage 5: BETCAL + AMPCAL (§11)   → F(θ), dσ/dΩ             [cross section]
+Stage 5: BETCAL + AMPCAL (§8.2)  → F(θ), dσ/dΩ             [cross section]
 ```
 
 **Why this factorization matters:**
@@ -568,25 +590,7 @@ $$S_{\text{SFROMI}} = \text{FACTOR} \cdot \mathcal{N}_{9J} \cdot \text{SAV9J} \c
 
 ---
 
-## 11. Cross Section
-
-### 11.1 BETCAL — Partial Wave Amplitudes
-
-$$\beta(L_o, L_x, M_x) = \frac{1}{2k_a} \sum_{L_i} (2L_i+1) \cdot C(L_i, 0, L_x, M_x; L_o, M_x) \cdot e^{i(\sigma_{L_i}^{(a)} + \sigma_{L_o}^{(b)})} \cdot S_{\text{SFROMI}}(L_i, L_o, L_x)$$
-
-### 11.2 AMPCAL — Scattering Amplitude
-
-$$F^{(M_x)}(\theta) = \sum_{L_o} \beta(L_o, L_x, M_x) \cdot P_{L_o}^{M_x}(\cos\theta)$$
-
-### 11.3 XSECTN — Differential Cross Section
-
-$$\frac{d\sigma}{d\Omega}(\theta) = 10 \cdot \sum_{L_x, M_x} f_{M_x} \cdot \left|F^{(M_x)}(\theta)\right|^{2}$$
-
-where $f_{M_x} = 1$ for $M_x=0$, $f_{M_x} = 2$ for $M_x > 0$ (sum over $\pm M_x$), and the factor 10 converts fm² to mb.
-
----
-
-## 12. Comparison: Handbook vs Ptolemy
+## 11. Comparison: Handbook vs Ptolemy
 
 | Aspect | Handbook | Ptolemy |
 |---|---|---|
