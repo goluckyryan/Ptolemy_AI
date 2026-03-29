@@ -417,7 +417,7 @@ This is a 6D integral involving:
 
 Expand all wavefunctions in partial waves (spherical harmonics). The angular integrals can be performed analytically, producing Clebsch-Gordan coefficients, Racah W-coefficients, and 9-j symbols. The result factorizes as:
 
-$$\frac{d\sigma}{d\Omega}(\theta) = \underbrace{10}_{\text{fm}^2 \to \text{mb}} \times \sum_{L_x, M_x} f_{M_x} \left| \underbrace{\frac{1}{2k_a} \sum_{L_i}(2L_i+1) \, C_{L_i L_x}^{L_o M_x} \, e^{i(\sigma_{L_i} + \sigma_{L_o})}}_{\text{BETCAL}} \times \underbrace{\vphantom{\frac{1}{2}} S(L_i, L_o, L_x)}_{\text{SFROMI}} \right|^2$$
+$$\frac{d\sigma}{d\Omega}(\theta) = 10 \times \sum_{L_x, M_x} f_{M_x} \left| \; \underbrace{\frac{1}{2k_a} \sum_{L_i}(2L_i+1) \, C_{L_i L_x}^{L_o M_x} \, e^{i(\sigma_{L_i} + \sigma_{L_o})}}_{\text{BETCAL}} \; \times \; \underbrace{S(L_i, L_o, L_x)}_{\text{SFROMI}} \; \right|^2$$
 
 where each $S(L_i, L_o, L_x)$ is itself a product:
 
