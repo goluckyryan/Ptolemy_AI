@@ -32395,6 +32395,8 @@ C     DEFINE THE REDUCED MASS IF NECESSARY                              28030
 C
  370  IF ( AM .NE. UNDEF )  GO TO 380
       AM = AMUMEV * TMP*TMT/(TMP+TMT)
+      write(0,'(A,E18.12,A,E18.12,A,E18.12)')
+     &  'FTN_MKIN TMP=',TMP,' TMT=',TMT,' AM=',AM
 C
 C     FIND ELAB TO ECM CONVERSION
 C
@@ -32453,6 +32455,9 @@ C
  484  CONTINUE
       Q = AMXCS(1) - AMXCS(2) + AMXCS(3) - AMXCS(4)                     28090   
  495  E = ECM + Q
+      write(0,'(A,4E18.10,A,E18.10,A,E18.10)')
+     &  'FTN_Q AMXCS=',AMXCS(1),AMXCS(2),AMXCS(3),AMXCS(4),
+     &  ' Q=',Q,' ECM=',ECM
       GO TO 500
 C
 C     AT LAST E IS DEFINED.  FOR INCOMING WAVE DEFINE ECM, ELAB
@@ -36091,6 +36096,9 @@ C --- Surgical S-matrix dump for L=1 JP=1 NWP=2 ---
       IF ( (NWP .NE. 2)  .OR.  (PROBLM .NE. 24))
      1  CALL JPTOLX ( L, L, JP, NWP, SJR, SJI,
      1   ILLOC(LINDXE), ALLOC(Z(ISMATS(NWP))) )
+      write(0,'(A,I2,A,I3,A,I3,2E18.10,A,F12.8)')
+     &  'FTN_SMAT ch=',NWP-1,' L=',L,' JP=',JP,SJR,SJI,
+     &  ' MAG=',DSQRT(SJR**2+SJI**2)
 C
 C  NORMALIZATION HERE
 C
@@ -37853,6 +37861,8 @@ C
       NSTPSS(ICHANW) = NSTEP
       NSTP2S(ICHANW) = NSTEP
       AKS(ICHANW) = UK
+      write(0,'(A,I2,A,E18.12,A,E18.12,A,E18.12)')
+     &  'FTN_WAVSET ch=',ICHANW-1,' k=',UK,' E=',E,' mu=',AM
       REDMS(ICHANW) = AM                                                32300   
       RATMSS(ICHANW) = RATMAS
       JSPS(ICHANW) = JSP

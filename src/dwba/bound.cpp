@@ -6,6 +6,7 @@
 #include "dwba.h"
 #include "math_utils.h"
 #include "potential_eval.h"
+#include "ptolemy_mass_table.h"
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -73,28 +74,50 @@ void DWBA::CalculateKinematics() {
     Outgoing.mu     = mu_out_MeV / AMU_B;
 
   } else {
-    // ── Non-relativistic kinematics with REAL nuclear masses (Ptolemy dpsb convention) ────────────
-    // Ptolemy PARAMETERSET dpsb uses actual nuclear masses (with mass defects) for kinematics.
-    // Isotope.Mass = Z*mp + (A-Z)*mn - BEA/1000*A  (nuclear mass in MeV, no electrons)
-    // This matches Fortran WAVELJ output: mu=1665.86 MeV for d+16O, k=1.2328 fm^-1.
+    // ── Non-relativistic kinematics matching Ptolemy SETCHN exactly ────────────
+    // Ptolemy computes nuclear mass in AMU as:
+    //   TMP = A + MX/AMU - Z*EMASS/AMU
+    // where MX = mass excess from AME2003 table, AMU = 931.5016 MeV, EMASS = 0.511 MeV
+    // Then: AM = AMU * TMP*TMT/(TMP+TMT), Q = MX_a + MX_A - MX_b - MX_B
     //
-    // Previously used integer masses (A × AMU_int) which gave mu=1656 MeV, k=1.2297 fm^-1 (-0.25%).
-    // That 0.25% k error caused chi table to differ by 5-9% from Fortran, leading to
-    // 23% BSPROD FPFT error and wrong SUMMID/I_accum/DCS.
-    double AMU_MEV = 931.5016;  // AMU in MeV (Ptolemy's AMUMEV — used for mu→AMU conversion only)
-    double ma_kin = ma;   // real nuclear mass (from Isotope.Mass)
-    double mA_kin = mA;
-    double mb_kin = mb;
-    double mB_kin = mB;
-    double mu_in_kin  = ma_kin * mA_kin / (ma_kin + mA_kin);
-    double mu_out_kin = mb_kin * mB_kin / (mb_kin + mB_kin);
-    // Ecm: use real masses for Ecm = Elab × mA/(ma+mA)
-    Incoming.Ecm = Incoming.Elab * mA_kin / (ma_kin + mA_kin);
+    // Previously used Isotope.Mass (AME2012/2016 nuclear masses) which gave Q values
+    // differing by up to 0.27 MeV for heavy nuclei, causing 16% S-matrix errors.
+    double AMU_MEV = 931.5016;  // Ptolemy's AMUMEV
+    double EMASS = 0.511;       // Ptolemy's electron mass (MeV)
+
+    int A1 = Incoming.Projectile.A, Z1i = (int)Z1;
+    int A2 = Incoming.Target.A,     Z2i = (int)Z2;
+    int A3 = Outgoing.Projectile.A, Z3i = (int)Z3;
+    int A4 = Outgoing.Target.A,     Z4i = (int)Z4;
+
+    // Mass excess from Ptolemy's AME2003 table (keV → MeV)
+    double MX1 = PtolemyMass::MassExcess_MeV(Z1i, A1);
+    double MX2 = PtolemyMass::MassExcess_MeV(Z2i, A2);
+    double MX3 = PtolemyMass::MassExcess_MeV(Z3i, A3);
+    double MX4 = PtolemyMass::MassExcess_MeV(Z4i, A4);
+
+    // Nuclear mass in AMU (matching Ptolemy SETCHN line 32390)
+    double TMP_in  = A1 + MX1/AMU_MEV - Z1i*(EMASS/AMU_MEV);
+    double TMT_in  = A2 + MX2/AMU_MEV - Z2i*(EMASS/AMU_MEV);
+    double TMP_out = A3 + MX3/AMU_MEV - Z3i*(EMASS/AMU_MEV);
+    double TMT_out = A4 + MX4/AMU_MEV - Z4i*(EMASS/AMU_MEV);
+
+    // Reduced mass in MeV (matching Ptolemy SETCHN line 32397)
+    double mu_in_kin  = AMU_MEV * TMP_in  * TMT_in  / (TMP_in  + TMT_in);
+    double mu_out_kin = AMU_MEV * TMP_out * TMT_out / (TMP_out + TMT_out);
+
+    // Q from mass excess (matching Ptolemy SETCHN line 32454)
+    double Q_ptol = MX1 + MX2 - MX3 - MX4;
+
+    // Ecm_in = Elab × TMT/(TMP+TMT) (matching Ptolemy CMLAB conversion)
+    double CMLAB = TMT_in / (TMP_in + TMT_in);
+    Incoming.Ecm = Incoming.Elab * CMLAB;
     Incoming.mu  = mu_in_kin / AMU_MEV;  // in AMU (for f_conv in WavElj)
     Incoming.k   = std::sqrt(2.0 * mu_in_kin * Incoming.Ecm) / HBARC_B;
     Incoming.eta = Z1 * Z2 * mu_in_kin / (137.036 * HBARC_B * Incoming.k);
 
-    Outgoing.Ecm = Incoming.Ecm + Q_calc - Ex;  // Q_eff = Q_gs - Ex
+    // Outgoing: E = ECM + Q (matching Ptolemy SETCHN line 32455)
+    Outgoing.Ecm = Incoming.Ecm + Q_ptol - Ex;
     if (Outgoing.Ecm < 0) {
       Outgoing.Ecm = 0;
     }
