@@ -441,6 +441,9 @@ void DWBA::GrdSetFaithful()
 // ============================================================
 void DWBA::InelDcFaithful2()
 {
+    fprintf(stderr, "[GRDSET] S-matrix matching: %s\n",
+            useTMATCH ? "2-point (TMATCH/Fortran)" : "5-point Wronskian");
+
     const double PI      = 3.14159265358979323846;
     const double AMU_MEV = 931.494061;
     const double HBARC_V = 197.32697;
@@ -824,8 +827,9 @@ void DWBA::InelDcFaithful2()
     // For (d,p) with l_T=2, l_P=0: minimum LI = l_T = 2, but with parity LI=3 first odd.
     // Best approximation matching Fortran: use lT+lP+1 as LMIN_scat = 2+0+1 = 3.
     // → L_ISCTMN = MAX0(0, 3-2) = 1. ✓ Matches Fortran!
-    int LMIN_scat = lT + lP + 1;  // minimum LI (first odd transfer) — matches Fortran lmin=3
-    int L_ISCTMN = std::max(0, LMIN_scat - LxMax_bs);
+    // Fortran: L = MAX0(0, LMIN - LXMAX) where LMIN is from input keyword (lmin=...)
+    int LMIN_kw_scat = (LminSet >= 0) ? LminSet : 0;  // use actual input lmin keyword
+    int L_ISCTMN = std::max(0, LMIN_kw_scat - LxMax_bs);
     int JPI_ISCTMN = 2*L_ISCTMN + JSPS1;  // Fortran: 2*L + JSPS(1)
     // LCRIT = (LMIN + LMAX) / 2 — Fortran LCRITL computes this from the keyword LMIN/LMAX
     // For lmin=0, lmax=40: LCRIT = (0+40)/2 = 20
@@ -839,8 +843,45 @@ void DWBA::InelDcFaithful2()
     int JPI_ISCTCR = 2*LCRIT + JSPS1;  // Fortran: CALL WAVELJ(LC, 2*LC+JSPS(1),...)
 
     double ROFMAX = 0.0;  // Fortran: set to R where |psi| is maximum (during ISCTMN chi build)
-    auto build_rpsi_table = [&](int L, int JPI, bool update_rofmax) -> std::vector<double> {
+    // Standard asymptopia for scan chi (Fortran: NSTPSS(1) + 1 points, fixed regardless of L)
+    // Fortran ASYMPS(1) = 33.125 fm for this case
+    double std_MaxR = ASYMPT;  // use the input asymptopia (30.0)
+    // Fortran: ASYMPS(1) = max(ASYMPT, classicalTP_for_L=0) + 3.125
+    // Actually Fortran's ASYMPS(1) comes from WAVPOT → WAVSET which adds NBACK*RSTEP
+    // For now, just note the standard asymptopia from the Fortran output.
+    
+    auto build_rpsi_table = [&](int L, int JPI, bool update_rofmax, bool no_SO = false) -> std::vector<double> {
+        // Fortran GRDSET: STANSW=TRUE, SOSWS(1)=FALSE → chi computed WITHOUT spin-orbit
+        // Also: uses NSTPSS(1)+1 points (fixed standard asymptopia, not L-dependent)
+        std::vector<double> saved_Vso_re, saved_Vso_im;
+        double saved_MaxR = Incoming.MaxR;
+        if (no_SO) {
+            if (!Incoming.V_so_real.empty()) {
+                saved_Vso_re = Incoming.V_so_real;
+                saved_Vso_im = Incoming.V_so_imag;
+                std::fill(Incoming.V_so_real.begin(), Incoming.V_so_real.end(), 0.0);
+                std::fill(Incoming.V_so_imag.begin(), Incoming.V_so_imag.end(), 0.0);
+            }
+            // Use standard asymptopia (not extended for high L)
+            // Don't change MaxR — let WavElj use whatever it normally does
+            // The key difference is just SO=0
+        }
+        // For scan chi: use standard asymptopia (Fortran: ASYMPS(1) = ASYMPT + NBACK*h)
+        // Fortran NSTPSS is fixed regardless of L — no turning-point extension for scan chi
+        if (no_SO) {
+            double NBACK = 25.0;  // Fortran NBACK = NBAKCM
+            double std_asym = ASYMPT + NBACK * Incoming.StepSize;  // 30 + 25*0.125 = 33.125
+            int std_nsteps = static_cast<int>(std_asym / Incoming.StepSize + 0.5);
+            Incoming.MaxR = std_nsteps * Incoming.StepSize;
+        }
         WavElj(Incoming, L, JPI);
+        if (no_SO) {
+            if (!saved_Vso_re.empty()) {
+                Incoming.V_so_real = saved_Vso_re;
+                Incoming.V_so_imag = saved_Vso_im;
+            }
+            Incoming.MaxR = saved_MaxR;
+        }
         double h = Incoming.StepSize;
         int n = (int)Incoming.WaveFunction.size();
         std::vector<double> rpsi(n);
@@ -861,12 +902,14 @@ void DWBA::InelDcFaithful2()
     // The last chi build (II=2 = ISCTCR) can override ROFMAX if its psi peaks higher.
     // For L=3 ISCTCR vs L=1 ISCTMN: max(psi) for L=3 (0.878 at R=8.375) > max for L=1 (0.757 at R=8.875)
     // → ROFMAX = 8.375 fm from Fortran (from ISCTCR L=3).
-    std::vector<double> chi_ISCTMN = build_rpsi_table(L_ISCTMN, JPI_ISCTMN, true);
+    std::vector<double> chi_ISCTMN = build_rpsi_table(L_ISCTMN, JPI_ISCTMN, true, true);
+    // ROFMAX updated by ISCTMN
     // Save ISCTMN WaveFunction (Re/Im) before ISCTCR call overwrites Incoming.WaveFunction
     std::vector<std::complex<double>> wf_ISCTMN_saved = Incoming.WaveFunction;
-    std::vector<double> chi_ISCTCR = build_rpsi_table(LCRIT,    JPI_ISCTCR, true);  // also updates ROFMAX
+    std::vector<double> chi_ISCTCR = build_rpsi_table(LCRIT,    JPI_ISCTCR, true, true);  // also updates ROFMAX, no SO
     double h_chi_scan = Incoming.StepSize;
     int N_chi_scan = (int)chi_ISCTMN.size();
+    // ROFMAX updated by ISCTCR
     double SCTSP_inv = 1.0 / h_chi_scan;
     // SUMMAX_from_chi = outgoing chi grid endpoint (Fortran SUMMAX = ABS(SCTASY) = outgoing grid end)
     // Fortran OUTGOING = 30.4 fm = (N_out-1) * h_out for the outgoing scattering channel.
@@ -1132,7 +1175,8 @@ void DWBA::InelDcFaithful2()
         // Fortran: SUMMAX = ABS(SCTASY) = scattering chi grid endpoint.
         // Use scan exit U (matches edfce88 behavior):
         SUMMAX = U;
-        // DEBUG: force Fortran SUMMAX for testing
+        // The SUMMAX scan is very sensitive to chi at the boundary.
+        // Small FIFO differences (~10%) at U≈29 cause ±1.4 fm SUMMAX shift.
 
         // SUMMID = first moment × AMDMLT (Fortran line 16070)
         if (SUM0 > 1e-30) {
@@ -1279,11 +1323,14 @@ void DWBA::InelDcFaithful2()
                     if (RI < 0.0 || RO < 0.0) { VVAL -= DV_scan; continue; }
                     double ULIM2 = RVRLIM / std::max(1e-2, RI * RO);
                     bool above = false;
+                    bool bsprod_failed = false;
                     for (int ix = 0; ix < 2; ++ix) {
                         double FIFO2, RP2, RT2;
                         bool ok = bsp_ISCTMN(2, RI, RO, XS[ix], FIFO2, RP2, RT2);
-                        
-                        if (ok && std::fabs(FIFO2) > ULIM2) { above = true; break; }
+                        if (IU == 10 && ISYNE == 1 && VVAL > 0.62 && VVAL < 0.72) {
+                        }
+                        if (!ok) { bsprod_failed = true; break; }  // Fortran *435: exit DO 429 loop
+                        if (std::fabs(FIFO2) > ULIM2) { above = true; break; }
                     }
                     if (above) {
                         found_in_scan = true; break;
@@ -1810,13 +1857,7 @@ void DWBA::InelDcFaithful2()
                     phip_stored = (float)(PHISGN * std::acos(cos_phiP));
                 }
                 phi_table[IPLUNK][kphi] = { (float)PHI, phip_stored, phit_stored, pvpdx };
-                JCNT++;
-            }
-
-            if (IPLUNK == 3 || IPLUNK == 11) {
-                for (int k = 0; k < std::min(NPPHI, 5); ++k) {
-                    auto& p = phi_table[IPLUNK][k];
-                }
+                                JCNT++;
             }
         }
     }
@@ -2131,14 +2172,7 @@ void DWBA::InelDcFaithful2()
                 }
                 #endif
 
-                // ── Dump I_accum for comparison ──
-                for (auto& [key, val] : I_accum) {
-                    fprintf(stderr, "CPP_IACC Li=%3d JPI=%3d Lo=%3d JPO=%3d Lx=%3d Ire=%14.6e Iim=%14.6e\n",
-                            LI, key.JPI, lolx_pairs[key.IH].Lo, key.JPO, lolx_pairs[key.IH].Lx,
-                            val.first, val.second);
-                }
-
-                        // ── SFROMI: convert I_accum → S-matrix elements ──────────────────
+                                        // ── SFROMI: convert I_accum → S-matrix elements ──────────────────
             for (int IH = 0; IH < IHMAX; ++IH) {
                 int Lo = lolx_pairs[IH].Lo;
                 int Lx = lolx_pairs[IH].Lx;

@@ -367,14 +367,7 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     }
   }
 
-  // Print S-matrix
-  {
-    double mag_S = std::sqrt(SJR*SJR + SJI*SJI);
-    double phase_S = std::atan2(SJI, SJR);
-    bool is_in = (&ch == &Incoming);
-    fprintf(stderr, "SMAT_%s L=%2d JP=%2d |S|=%.6f phase=%.4f SJR=%.6f SJI=%.6f\n",
-      is_in ? "IN" : "OUT", L, Jp, mag_S, phase_S, SJR, SJI);
-  }
+  // S-matrix print removed (enable for debugging)
 
   // --- Normalization ---
   // Normalize at n_match using Coulomb F,G (FL, GL) at that point.

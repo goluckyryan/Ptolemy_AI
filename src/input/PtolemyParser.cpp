@@ -291,7 +291,9 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
                         prj_wavefunction = ToUpper(token);
                     }
                 }
-                // Other bare keywords: r0target, labangles, dpsb, etc. — handled in PARAMETERSET
+                // Standalone bare keywords (also accepted on PARAMETERSET line)
+                else if (utoken == "TMATCH")    { dwba.SetUseTMATCH(true); }
+                else if (utoken == "WRONSKIAN") { dwba.SetUseTMATCH(false); }
             }
         }
     }
@@ -449,6 +451,7 @@ void PtolemyParser::ParseParameterSet(const std::string &line, DWBA &dwba) {
             else if (utoken == "DPSB")       {} // deuteron projectile stripping/breakup — default
             else if (utoken == "NONLOCALITY") {} // ignore for now
             else if (utoken == "TMATCH")     { dwba.SetUseTMATCH(true); }
+            else if (utoken == "WRONSKIAN")  { dwba.SetUseTMATCH(false); }
         }
     }
 }

@@ -496,13 +496,7 @@ void DWBA::XSectn() {
           BETAS[k_dst][ILO] += std::complex<double>(T * SMATR, T * SMATI);
 
           // Debug: trace k=0 Lo=3
-          if (k_dst == 0 && Lo == 3) {
-            fprintf(stderr, "DBG_SCATTER k_dst=0 Lo=3 Li=%d LX=%d LDEL=%d SMAG=%.6e SPHASE=%.6f "
-              "SMATR=%.6e SMATI=%.6e T=%.6e mx=%d\n",
-              Li, LX, LDEL_for_Li, amag, SPHASE[k_src][Li_idx]+sigin(Li)+sigout(Lo),
-              SMATR, SMATI, T, mx_dst);
-          }
-        }
+                  }
       }
     }
 
@@ -535,8 +529,6 @@ void DWBA::XSectn() {
         int LDEL = JTOCS[k].LDEL;
         int JP = JTOCS[k].JP;
         int Lo = LOMN + i;
-        fprintf(stderr, "CPP_BETAS k=%2d Lo=%2d LDEL=%2d LX=%d JP=%d MX=%d BR=%12.5e BI=%12.5e\n",
-                k+1, Lo, LDEL, LX, JP, MX, br, bi);
       }
     }
   }
@@ -672,14 +664,9 @@ void DWBA::XSectn() {
       double FMNEG = (MX == 0) ? 1.0 : 2.0;
       double contrib = 10.0 * FMNEG * std::norm(F_amp);
       dSigma += contrib;
-      if (theta_deg < 0.01 && contrib > 1e-10) {
-        fprintf(stderr, "CPP_DCS0_K k=%d LX=%d MX=%d LDEL=%d JP=%d JT=%d |F|²=%.6e contrib=%.6e\n",
-                k, JTOCS[k].LX, MX, JTOCS[k].LDEL, JTOCS[k].JP, JTOCS[k].JT, std::norm(F_amp), contrib);
-      }
     }
 
     if (theta_deg < 0.01) {
-      fprintf(stderr, "CPP_DCS0 TAU=%.6f AJACOB=%.6f DCS=%.4f\n", TAU_lab, AJACOB, dSigma);
     }
 
     std::cout << std::fixed << std::setprecision(1) << theta_deg
