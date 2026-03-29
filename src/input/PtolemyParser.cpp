@@ -508,7 +508,13 @@ void PtolemyParser::ParseParameterSet(const std::string &line, DWBA &dwba) {
             // Bare keyword flags
             if      (utoken == "LABANGLES")  {} // TODO: implement lab angle conversion
             else if (utoken == "R0TARGET")   {} // already default behavior
-            else if (utoken == "DPSB")       {} // deuteron projectile stripping/breakup — default
+            else if (utoken == "DPSB") {
+                // Load DPSB preset grid parameters (Fortran RGRIDS row C / DATNUM=12):
+                //   DWCUT=2e-6, SUMPTS=8, STPSPR=8, GAMSUM=2, GAMDIF=12,
+                //   BNDASY=20, ALMNMT=0, ALMXMT=2, SCTASY=-20, PHIMID=0.20, AMDMLT=0.90
+                //   NPSUM=40, NPDIF=40, NPPHI=20, NPHIAD=4, LSTEP=1, LMAXAD=12, LMINSB=10
+                dwba.SetSctAsy(-20.0);
+            }
             else if (utoken == "NONLOCALITY") {} // ignore for now
             else if (utoken == "TMATCH")     { dwba.SetUseTMATCH(true); }
             else if (utoken == "WRONSKIAN")  { dwba.SetUseTMATCH(false); }

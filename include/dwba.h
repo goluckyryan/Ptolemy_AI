@@ -116,6 +116,7 @@ public:
   void SetLmin(int lmin) { LminSet = lmin; }
   void SetLmax(int lmax) { LmaxSet = lmax; }
   void SetAsymptopia(double a) { AsymptopiaSet = a; }
+  void SetSctAsy(double s) { SctAsySet = s; }
 
   // Main calculation
   void Calculate();
@@ -151,6 +152,8 @@ private:
   int    LminSet      = -1;     // lmin for incoming partial wave (-1 = use default 0)
   int    LmaxSet      = -1;     // lmax for incoming partial wave (-1 = use default 40)
   double AsymptopiaSet = -1.0;  // asymptopia in fm (-1 = use default 30)
+  double SctAsySet     = -20.0; // scattering asymptopia from preset (DPSB default = -20 fm)
+                                // negative = allow L-dependent turning point extension
 
   // Integration Grid
   std::vector<double> ThetaGrid;

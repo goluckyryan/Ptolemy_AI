@@ -766,8 +766,10 @@ void DWBA::InelDcFaithful2()
     const double ASYMPT = (AsymptopiaSet > 0) ? AsymptopiaSet : 30.0;
 
     // ROFMAX: set during chi build (position of psi maximum, ~nuclear surface radius)
-    // SCTMAX: chi table extent ≈ asymptopia + 5
-    double SCTMAX = ASYMPT + 5.0;
+    // SCTMAX: Fortran sets SCTMAX = ASYMPS(1) (= scattering asymptopia, NOT user's asymptopia)
+    // Beyond SCTMAX, BSPROD uses chi(R) = R (linear, no oscillation)
+    // This MUST match the scan chi table size — computed below after scattering asymptopia calc
+    double SCTMAX = 0.0;  // set after scan chi is built
 
     // ISCTMN: reference chi for WVWMAX scan = chi at L=MAX(0, LMIN-LXMAX)
     // ISCTCR: reference chi for SUMMID scan = chi at LCRIT
@@ -849,16 +851,35 @@ void DWBA::InelDcFaithful2()
     int JPI_ISCTCR = 2*LCRIT + JSPS1;  // Fortran: CALL WAVELJ(LC, 2*LC+JSPS(1),...)
 
     double ROFMAX = 0.0;  // Fortran: set to R where |psi| is maximum (during ISCTMN chi build)
-    // Standard asymptopia for scan chi (Fortran: NSTPSS(1) + 1 points, fixed regardless of L)
-    // Fortran ASYMPS(1) = 33.125 fm for this case
-    double std_MaxR = ASYMPT;  // use the input asymptopia (30.0)
-    // Fortran: ASYMPS(1) = max(ASYMPT, classicalTP_for_L=0) + 3.125
-    // Actually Fortran's ASYMPS(1) comes from WAVPOT → WAVSET which adds NBACK*RSTEP
-    // For now, just note the standard asymptopia from the Fortran output.
+
+    // ── Scattering asymptopia for scan chi (ASYMPS(1) in Fortran) ──
+    // Fortran GRDSET scan chi uses NSTPSS(1)+1 points, where NSTPSS(1) comes from
+    // the scattering channel's asymptopia = ABS(SCTASY) + L-adjustment.
+    // This is SEPARATE from the actual Numerov asymptopia (which uses user's keyword).
+    //
+    // SCTMAX: beyond this, BSPROD uses chi(R) = R (linear asymptotic) instead of
+    // interpolating the oscillating scattering wavefunction. This prevents
+    // oscillation artifacts in the SUMMAX scan at large R.
+    //
+    // Algorithm: RMAX = max(ABS(SctAsy), turning_point(LMAX)); snap to grid
+    double SCTASY_base = std::abs(SctAsySet);  // from preset (DPSB: 20 fm)
+    double RMAX_scat = SCTASY_base;
+    int LMAX_eff_scat = (LMAX_kw >= 0) ? LMAX_kw : 40;
+    if (SctAsySet < 0) {  // negative = allow L-dependent turning-point extension
+        double eta = Incoming.eta;
+        double tp = (eta + std::sqrt(eta*eta + (double)LMAX_eff_scat*(LMAX_eff_scat+1))) / Incoming.k;
+        RMAX_scat = std::max(RMAX_scat, tp);
+    }
+    double h_scat = Incoming.StepSize;
+    int NSTEP_scat = static_cast<int>(RMAX_scat / h_scat + 0.5);
+    RMAX_scat = NSTEP_scat * h_scat;
+    double SCTMAX_scan = RMAX_scat;
+    fprintf(stderr, "CPP_SCTMAX: SctAsy=%.1f, SCTMAX_scan=%.4f (NSTEP=%d, h=%.6f)\n",
+            SctAsySet, SCTMAX_scan, NSTEP_scat, h_scat);
     
     auto build_rpsi_table = [&](int L, int JPI, bool update_rofmax, bool no_SO = false) -> std::vector<double> {
         // Fortran GRDSET: STANSW=TRUE, SOSWS(1)=FALSE → chi computed WITHOUT spin-orbit
-        // Also: uses NSTPSS(1)+1 points (fixed standard asymptopia, not L-dependent)
+        // Also: uses NSTPSS(1)+1 points — scan chi matches scattering asymptopia, not user's value
         std::vector<double> saved_Vso_re, saved_Vso_im;
         double saved_MaxR = Incoming.MaxR;
         if (no_SO) {
@@ -868,17 +889,9 @@ void DWBA::InelDcFaithful2()
                 std::fill(Incoming.V_so_real.begin(), Incoming.V_so_real.end(), 0.0);
                 std::fill(Incoming.V_so_imag.begin(), Incoming.V_so_imag.end(), 0.0);
             }
-            // Use standard asymptopia (not extended for high L)
-            // Don't change MaxR — let WavElj use whatever it normally does
-            // The key difference is just SO=0
-        }
-        // For scan chi: use standard asymptopia (Fortran: ASYMPS(1) = ASYMPT + NBACK*h)
-        // Fortran NSTPSS is fixed regardless of L — no turning-point extension for scan chi
-        if (no_SO) {
-            // Don't change MaxR/NSteps — the WavElj NSTP2S Coulomb extension
-            // already extends chi beyond NSteps to cover GRDSET's range.
-            // The scan chi table (rpsi) will be built from the full WaveFunction
-            // including the Coulomb-extended points.
+            // Set MaxR to the scattering asymptopia (NOT user's bound state asymptopia)
+            // Fortran: scan chi uses NSTPSS(1)+1 points, where NSTPSS(1) = ASYMPS(1)/h
+            Incoming.MaxR = SCTMAX_scan;
         }
         WavElj(Incoming, L, JPI);
         if (no_SO) {
@@ -918,6 +931,12 @@ void DWBA::InelDcFaithful2()
     int N_chi_scan = (int)chi_ISCTMN.size();
     // ROFMAX updated by ISCTCR
     double SCTSP_inv = 1.0 / h_chi_scan;
+    // Set SCTMAX = ASYMPS(1) = scattering asymptopia (Fortran: SCTMAX = ASYMPS(1) at line 18370)
+    // This is where BSPROD switches from chi interpolation to chi(R) = R
+    SCTMAX = SCTMAX_scan;
+    fprintf(stderr, "CPP_SCAN_CHI: ISCTMN size=%d, ISCTCR size=%d, h=%.6f, SCTMAX=%.4f, ROFMAX=%.4f, LCRIT=%d\n",
+            (int)chi_ISCTMN.size(), (int)chi_ISCTCR.size(), h_chi_scan,
+            SCTMAX, ROFMAX, LCRIT);
     // SUMMAX_from_chi = outgoing chi grid endpoint (Fortran SUMMAX = ABS(SCTASY) = outgoing grid end)
     // Fortran OUTGOING = 30.4 fm = (N_out-1) * h_out for the outgoing scattering channel.
     // We compute this by running WavElj once for the outgoing channel at L=0.

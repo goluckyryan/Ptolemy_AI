@@ -248,18 +248,16 @@ void DWBA::Calculate() {
   // sets ASYMPT = BNDASY = 20, and subsequent calls skip (ASYMPT != UNDEF),
   // WAVSET always uses BNDASY = 20 as the base asymptopia.
   {
-    // Ptolemy SETBNDS (source.f line 32496-32497):
+    // Ptolemy SETBNDS (source.f line 33041-33042):
+    //   IF (ASYMPT .NE. UNDEF) RETURN  — user keyword overrides
     //   ASYMPT = BNDASY           (if IBND != 0, i.e. bound state)
     //   ASYMPT = ABS(SCTASY)      (if IBND == 0, i.e. scattering)
-    // For scattering channels, ASYMPT = user's asymptopia parameter.
-    // The BNDASY=20 value is ONLY for bound state calls.
-    // Ptolemy SETBNDS (source.f line 32496-32497):
-    //   ASYMPT = ABS(SCTASY) for scattering channels (IBND=0)
-    //   ASYMPT = BNDASY=20 for bound state channels (IBND!=0)
-    // For scattering: use user's asymptopia so Numerov covers the full range.
-    // This eliminates the need for NSTP2S Coulomb extension (which can diverge
-    // when the Wronskian S-matrix is slightly off).
-    double ASYMPT = (AsymptopiaSet > 0) ? AsymptopiaSet : 20.0;
+    //
+    // For the ACTUAL scattering wavefunctions (used by WavElj for S-matrix extraction),
+    // we use the user's asymptopia to ensure Numerov extends far enough.
+    // The SCAN chi (GRDSET BSPROD) uses a SEPARATE, shorter range (ABS(SctAsySet))
+    // — computed in grdset_ineldc_faithful.cpp.
+    double ASYMPT = (AsymptopiaSet > 0) ? AsymptopiaSet : std::abs(SctAsySet);
     int LMAX_eff = (LmaxSet >= 0) ? LmaxSet : 40;
 
     // Incoming channel turning point
