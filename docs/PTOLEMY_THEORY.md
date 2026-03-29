@@ -584,9 +584,28 @@ If $(L_i + L_o + 2L_x + 1) \bmod 2 = 1$: multiply by $i$.
 
 ### 10.5 9-J Structure
 
-The full SFROMI includes a double 9-J symbol loop coupling spin quantum numbers of incoming/outgoing channel J-values:
+When spin-orbit potentials are present, the transfer S-matrix involves a double sum over channel spin states via 9-J symbols. For each radial integral element with quantum numbers $(L_i, L_o, L_x^{(\text{phys})}, J_\pi, J_\pi')$, the accumulation into the cross-section S-matrix slot $(L_i, L_o, L_x, J_P)$ proceeds as:
 
-$$S_{\text{SFROMI}} = \text{FACTOR} \cdot \mathcal{N}_{9J} \cdot \text{SAV9J} \cdot \text{TEMP} \cdot I$$
+$$S(k, L_i) \mathrel{+}= \sum_{j_{\pi i}, j_{\pi o}} \text{9J}_1 \cdot (SR + i\,SI) \cdot \text{9J}_2 \cdot (-1)^{L_x + L_x^{(\text{phys})}}$$
+
+where:
+
+**First 9-J symbol** (SAV9J in the code) couples the physical quantum numbers to the channel spin:
+
+$$\text{9J}_1 = \sqrt{(2j_{\pi i}+1)(2j_{\pi o}+1)(2L_x^{(\text{phys})}+1)(J_{BP}+1)} \;\begin{Bmatrix} J_{BT}/2 & L_x^{(\text{phys})} & J_{BP}/2 \\ j_{\pi i}/2 & L_i & J_A/2 \\ j_{\pi o}/2 & L_o & J_B/2 \end{Bmatrix}$$
+
+**Second 9-J symbol** (TEMP2) recouples into the cross-section angular momentum $(L_x, J_P)$:
+
+$$\text{9J}_2 = \sqrt{(2j_{\pi i}+1)(2j_{\pi o}+1)(2L_x+1)(J_P+1)} \;\begin{Bmatrix} J_{BT}/2 & L_x & J_P/2 \\ j_{\pi i}/2 & L_i & J_A/2 \\ j_{\pi o}/2 & L_o & J_B/2 \end{Bmatrix}$$
+
+Here:
+- $j_{\pi i}$, $j_{\pi o}$ are the channel spin couplings ($J_\pi = L \otimes S_{\text{channel}}$) in the incoming/outgoing channels
+- $J_A$, $J_B$ are the doubled target/residual spins
+- $J_{BT}$, $J_{BP}$ are the doubled transferred particle total angular momenta
+- $(SR, SI)$ is the complex S-matrix element from GRDSET/INELDC (with FACTOR, ATERM, and phase already applied)
+- The phase $(-1)^{L_x + L_x^{(\text{phys})}}$ accounts for the parity difference when $L_x \neq L_x^{(\text{phys})}$
+
+When the two 9-J symbols share the same arguments (i.e., $L_x = L_x^{(\text{phys})}$ and $J_P = J_{BP}$), the second 9-J equals the first (optimization in the code).
 
 ---
 

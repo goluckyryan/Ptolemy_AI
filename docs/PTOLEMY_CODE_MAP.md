@@ -180,7 +180,7 @@ $$\eta = \frac{Z_1 Z_2 e^2 \mu}{\hbar^2 k}$$
 ### 4.2 Optical Model Potentials
 
 **General Woods-Saxon form:**
-$$U(r) = -V \, f(r) - i W_V f(r) + i W_S \frac{d}{dr}f(r) + V_{\text{SO}} \frac{1}{r}\frac{d}{dr}f(r) \; \vec{L}\cdot\vec{S} + V_C(r)$$
+$$U(r) = -V \, f(r) - i W_V f(r) + i W_S \frac{d}{dr}f(r) + V_{\text{SO}} \frac{1}{r}\frac{d}{dr}f(r) \; \mathbf{L}\cdot\mathbf{S} + V_C(r)$$
 
 where $f(r, r_0, a) = \left[1 + \exp\!\left(\frac{r - r_0 A^{1/3}}{a}\right)\right]^{-1}$
 
@@ -201,7 +201,7 @@ $$\text{FACTOR} = 2\sqrt{\frac{k_a k_b}{E_{\text{cm}}^{(a)} \, E_{\text{cm}}^{(b
 ATERM:
 $$\text{ATERM}(L_x) = \sqrt{\frac{J_B'+1}{J_A'+1}} \cdot \sqrt{2L_x+1} \cdot \mathcal{S}_{\text{proj}} \cdot \mathcal{S}_{\text{target}} \cdot W(l_T, j_T, l_P, j_P; j_x, L_x)$$
 
-where $J_A'=2J_A$, $J_B'=2J_B$ (Ptolemy doubled-integer convention), and $W$ is the Racah coefficient.
+Here $J_A'$ and $J_B'$ are doubled nuclear spins (Ptolemy convention: $J_A'=2J_A$, $J_B'=2J_B$), and $W$ is the Racah coefficient.
 
 ### 4.5 BETCAL Formula
 
