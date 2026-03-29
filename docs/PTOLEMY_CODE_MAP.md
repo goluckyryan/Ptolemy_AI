@@ -1,0 +1,293 @@
+# Ptolemy Subroutine Map & Mathematical Reference
+
+> **Active test case:** 16O(d,p)17O at Elab=20 MeV
+> **Source:** `src/source.mor`, `src/rcwfn.f`, `src/fortlib.mor`
+> **Last updated:** 2026-03-29
+
+---
+
+## Table of Contents
+
+1. [High-Level Flow](#1-high-level-flow)
+2. [Subroutine Reference](#2-subroutine-reference)
+3. [Data Flow Diagram](#3-data-flow-diagram)
+4. [Mathematical Reference](#4-mathematical-reference)
+5. [Physics Constants](#5-physics-constants)
+
+---
+
+## 1. High-Level Flow
+
+```
+┌──────────────────────────────────────────────────────┐
+│                     CONTRL                           │
+│           (Main dispatcher / sequencer)              │
+│                  [line 8109]                         │
+└─────────┬────────────────────────────────────────────┘
+          │
+    ┌─────▼──────┐
+    │  DATAIN    │  Parse input file (potentials, kinematics,
+    │ [line 11643]│  bound state params, angles)
+    └─────┬──────┘
+          │
+    ┌─────▼──────┐
+    │   BOUND    │  Compute bound state wavefunctions φ(r)
+    │ [line 3642] │  for target and projectile
+    └─────┬──────┘
+          │
+    ┌─────▼──────┐
+    │  WAVSET    │  Set up distorted wave computation
+    │ [line 31940]│  (allocate memory, set grid parameters)
+    └─────┬──────┘
+          │
+    ┌─────▼──────┐
+    │  GETSCT    │  Compute optical model S-matrices
+    │ [line 15538]│  (calls WAVELJ for each L)
+    └─────┬──────┘
+          │
+    ┌─────▼──────┐
+    │  GRDSET    │  Set up integration grid (Gauss points)
+    │ [line 15710]│  for the radial DWBA integral
+    └─────┬──────┘
+          │
+    ┌─────▼──────┐
+    │  INELDC    │  Main DWBA radial integral
+    │ [line 17454]│  Computes T-matrix elements I(Li,Lo,Lx)
+    └─────┬──────┘
+          │  (calls SFROMI inside loop)
+    ┌─────▼──────┐
+    │  XSECTN    │  Orchestrate cross section output
+    │ [line 32743]│  (calls BETCAL then AMPCAL then ANAPOW)
+    └─────┬──────┘
+          │
+    ┌─────▼──────┐
+    │  BETCAL    │  Compute angle-independent beta amplitudes
+    │ [line 3358] │  β(Lo) from S_sfromi elements
+    └─────┬──────┘
+          │
+    ┌─────▼──────┐
+    │  AMPCAL    │  Compute angular distribution F(θ)
+    │  [line 220] │  via Legendre polynomial sum
+    └─────┬──────┘
+          │
+    ┌─────▼──────┐
+    │  ANAPOW    │  Compute and print d²σ/dΩ vs angle
+    │  [line 578] │  (final cross section in mb/sr)
+    └────────────┘
+```
+
+---
+
+## 2. Subroutine Reference
+
+### CONTRL — Main Dispatcher
+**Line:** 8109 | Sequences the entire calculation via `IGOTO` state machine.
+
+| IGOTO | Action |
+|-------|--------|
+| 1 | Call BOUND |
+| 5 | Call WAVSET |
+| 7 | Call INELDC |
+| 9 | Call XSECTN |
+
+### DATAIN — Input Parser
+**Line:** 11643 | Reads input file, parses OMP parameters, kinematics, bound state params, angular range. Stores everything in COMMON blocks.
+
+### BOUND — Bound State Wavefunction
+**Line:** 3642 | Solves Schrödinger equation with WS + SO potential using Numerov. Performs depth search (adjusts V until BE matches). Stores φ(r) = u(r)/r where ∫u²dr = 1.
+
+### WAVSET — Distorted Wave Setup
+**Line:** 31940 | Allocates memory, initializes grid parameters (step size H, NSTEP). Calls WAVELJ via WFGET for each partial wave L.
+
+### WAVELJ — Distorted Wave Solver
+**Line:** 30428 | Computes u_L(r) = r·χ_L(r) for a single partial wave using modified Numerov. Matches to Coulomb functions at large r. Extracts S-matrix via Wronskian.
+
+**Key detail:** Stores u_L(r) = r·χ_L(r), NOT χ_L(r) directly.
+
+### RCWFN — Coulomb Wave Functions
+**File:** `src/rcwfn.f` | Computes regular (F_L) and irregular (G_L) Coulomb wave functions using Steed's method + continued fractions.
+
+### WFGET — Wavefunction Retrieval
+**Line:** 32533 | Interpolates precomputed distorted wave u_L(r) at Gauss quadrature points. Returns u_L(r) = r·χ_L(r).
+
+### GETSCT — S-Matrix Loop
+**Line:** 15538 | Loops L from 0 to L_max, calls WAVELJ for each, stores S-matrix.
+
+### GRDSET — Integration Grid Setup
+**Line:** 15710 | Sets up Gauss quadrature for 2D radial integral. Uses CUBMAP for adaptive point distribution. Calls BSPROD to evaluate bound state overlaps.
+
+### BSPROD — Bound State Product Evaluator
+**Line:** 4531 | Evaluates wavefunction products at grid points via Lagrange interpolation (AITLAG).
+
+| ITYPE | Computes |
+|-------|---------|
+| 1 | Full interp, NO chi — returns FP×FT only |
+| 2 | Flat-top clipping, NO chi — returns FP×FT |
+| ≥3 | Same as ITYPE-2, THEN multiplies R×chi(RA) × R×chi(RB) |
+
+### INELDC — Main DWBA Radial Integral
+**Line:** 17454 | Double integration over (r_i, r_o) with angular kernel. Calls SFROMI after integration.
+
+### A12 — Angular Coupling Kernel
+**Line:** 1453 | Computes angular momentum transformation coefficient for DWBA transfer kernel.
+
+### SFROMI — Transfer S-Matrix Assembly
+**Line:** 29003 | Converts raw radial integral I(Li,Lo,Lx) into S-matrix element with kinematic factor, spectroscopic amplitudes, phases, and 9-J symbols.
+
+### BETCAL — Beta Amplitude Calculator
+**Line:** 3358 | Computes angle-independent β(Lo) amplitudes from S_sfromi elements.
+
+### AMPCAL — Angular Distribution
+**Line:** 220 | Sums β(Lo) × P_Lo^Mx(cosθ) at each angle. Calls PLMSUB for Legendre polynomials.
+
+### XSECTN — Cross Section Orchestrator
+**Line:** 32743 | Calls BETCAL → AMPCAL → ANAPOW. Applies final prefactor and ×10 fm²→mb conversion.
+
+### ANAPOW — Output
+**Line:** 578 | Formats and prints dσ/dΩ vs angle table. Also computes analyzing powers if requested.
+
+### ELDCS — Elastic Cross Section
+**Line:** 12989 | Computes elastic dσ/dΩ from optical model S-matrix (separate from transfer).
+
+---
+
+## 3. Data Flow Diagram
+
+```
+Input file
+    │
+    ▼
+ DATAIN ─────────────────────────────────────────────────┐
+    │                                                    │
+    ├──► BOUND (target BS)                              │
+    │    └─► stores φ_T(r)                              │
+    │                                                    │
+    ├──► BOUND (projectile BS)                          │
+    │    └─► stores φ_P(r)                              │
+    │                                                    │
+    ├──► WAVSET → GETSCT                                │
+    │         ├──► WAVELJ (incoming, L=0..Lmax)        │
+    │         │    RCWFN → S_a,L                        │
+    │         └──► WAVELJ (outgoing, L=0..Lmax)        │
+    │              RCWFN → S_b,L                        │
+    │                                                    │
+    └──► GRDSET (quadrature grid)                       │
+         CUBMAP + BSPROD                                 │
+                                                         │
+              ▼                                          │
+           INELDC (double integral)                      │
+           ┌──────────────────────────┐                 │
+           │ for (Li, Lo):            │                 │
+           │   WFGET → u_a, u_b      │                 │
+           │   A12 → angular kernel   │                 │
+           │   accumulate I(Li,Lo,Lx) │                 │
+           │   SFROMI → S_sfromi     │                 │
+           └──────────────────────────┘                 │
+                                                         │
+              ▼                                          │
+           XSECTN                                        │
+              ├──► BETCAL → β(Lo)                       │
+              ├──► AMPCAL → F(θ)                        │
+              └──► ANAPOW → dσ/dΩ output               │
+```
+
+---
+
+## 4. Mathematical Reference
+
+### 4.1 Kinematics
+
+The reaction is A(a,b)B. For 16O(d,p)17O at Elab=20 MeV:
+
+$$E_{cm}^a = E_{lab} \cdot \frac{M_A}{M_a + M_A}$$
+$$E_{cm}^b = E_{cm}^a + Q - E_x$$
+
+Wave numbers:
+$$k = \sqrt{\frac{2\mu E_{cm}}{\hbar^2}}$$
+
+Sommerfeld parameters:
+$$\eta = \frac{Z_1 Z_2 e^2 \mu}{\hbar^2 k}$$
+
+### 4.2 Optical Model Potentials
+
+**General Woods-Saxon form:**
+$$U(r) = -V f(r) - i W_V f(r) + i W_S \frac{d}{dr}f(r) + V_{SO} \frac{1}{r}\frac{d}{dr}f(r) \, \vec{L}\cdot\vec{S} + V_C(r)$$
+
+where $f(r, r_0, a) = \left[1 + \exp\!\left(\frac{r - r_0 A^{1/3}}{a}\right)\right]^{-1}$
+
+**Coulomb potential:**
+$$V_C(r) = \begin{cases} \frac{Z_1 Z_2 e^2}{2R_C}\left(3 - \frac{r^2}{R_C^2}\right) & r \leq R_C \\ \frac{Z_1 Z_2 e^2}{r} & r > R_C \end{cases}$$
+
+### 4.3 Coulomb Phases
+
+$$\sigma_L = \arg\left[\Gamma(L+1+i\eta)\right] = \sum_{n=1}^{L} \arctan\!\left(\frac{\eta}{n}\right)$$
+
+### 4.4 SFROMI Formula
+
+$$S_{SFROMI} = \text{FACTOR} \cdot \text{ATERM} \cdot \frac{i^{L_i+L_o+2L_x+1}}{\sqrt{2L_i+1}} \cdot I_{L_i L_o L_x}$$
+
+FACTOR:
+$$\text{FACTOR} = 2\sqrt{\frac{k_a k_b}{E_{cm}^a E_{cm}^b}}$$
+
+ATERM:
+$$\text{ATERM}(L_x) = \sqrt{\frac{2j_B+1}{2j_A+1}} \cdot \sqrt{2L_x+1} \cdot \mathcal{S}_{proj} \cdot \mathcal{S}_{target} \cdot W(j_B, l_T, j_A, l_P; j_n, L_x)$$
+
+### 4.5 BETCAL Formula
+
+$$\beta(L_o, L_x, M_x) = \frac{1}{2k_a} \sum_{L_i} (2L_i+1) \cdot C^{L_i\ L_x\ L_o}_{0\ M_x\ M_x} \cdot e^{i(\sigma_{L_i} + \sigma_{L_o})} \cdot S_{SFROMI}$$
+
+### 4.6 Cross Section Formula
+
+$$\frac{d\sigma}{d\Omega}(\theta) = 10 \cdot \sum_{L_x, M_x} f_{M_x} \cdot \left|\sum_{L_o} \beta(L_o, M_x) \cdot P_{L_o}^{M_x}(\cos\theta)\right|^2$$
+
+### 4.7 Angular Coupling (A12)
+
+$$\mathcal{A}_{12} = \sum_{M_T, M_U} C_{M_T, M_U} \cos(M_T \phi_T - M_U \phi_{ab})$$
+
+where:
+$$C_{M_T, M_U} = X_N \cdot d^{l_T}_{|M_T|,0}(\pi/2) \cdot d^{l_P}_{0,0}(\pi/2) \cdot \begin{pmatrix} l_T & l_P & L_x \\ M_T & 0 & -M_T \end{pmatrix} \cdot d^{L_i}_{|M_U|,0} \cdot d^{L_o}_{|M_T-M_U|,0} \cdot \sqrt{2L_o+1} \cdot \begin{pmatrix} L_i & L_o & L_x \\ M_U & M_T-M_U & -M_T \end{pmatrix}$$
+
+with $X_N = \frac{1}{2}\sqrt{(2L_i+1)(2l_T+1)(2l_P+1)}$
+
+### 4.8 CUBMAP Quadrature
+
+**Rational-sinh formula (MAPTYP=2):** Given GL nodes $t_k \in [-1,1]$:
+
+$$x_k = \frac{-A + (C/\gamma)\sinh(\tau t_k)}{B - (D/\gamma)\sinh(\tau t_k)}, \quad \tau = \text{arcsinh}(\gamma)$$
+
+Points concentrate near $x_{mid}$.
+
+---
+
+## 5. Physics Constants
+
+### 5.1 Reference Values (16O(d,p)17O, Elab=20 MeV, ground state)
+
+```
+Q-value:     1.9185 MeV
+Ecm_in:      17.763 MeV       (d+16O)
+Ecm_out:     19.682 MeV       (p+17O, g.s.)
+k_in:        1.2328 fm⁻¹
+k_out:       0.9251 fm⁻¹
+η_in:        0.469
+η_out:       0.413
+FACTOR:      2√(k_in·k_out/(Ecm_in·Ecm_out)) ≈ 0.114
+FACTOR_BET:  0.5/k_in ≈ 0.406
+```
+
+### 5.2 GRDSET Grid Parameters (DPSB parameterset)
+
+```
+NPSUM=40, NPDIF=40, NPPHI=20, NPSUMI=42, NPHIAD=4, LOOKST=250
+MAPSUM=2, MAPDIF=1, MAPPHI=2
+GAMSUM=2.0, GAMDIF=12.0, GAMPHI≈0, PHIMID=0.20, AMDMLT=0.90
+SUMMIN=0, SUMMID≈15.4 fm, SUMMAX≈30.8 fm
+```
+
+### 5.3 AV18 Spectroscopic Amplitude
+
+$\mathcal{S}_{AV18}^{1/2} = 0.97069$ (deuteron internal wavefunction)
+
+---
+
+*Generated by Dudu 🐱 — from source.mor analysis*
