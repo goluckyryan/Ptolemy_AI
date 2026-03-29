@@ -177,7 +177,7 @@ anglemin=0 anglemax=180 anglestep=5
 | `STEPSPER = value` | `SCHRITTL` | Steps per asymptotic range (bound state grid) | 8 |
 | `ASYMPTOPIA = value` | `ASYMPTOP` | Maximum r for integration (fm) | auto |
 | `STEPSIZE = value` | `SCHRITTL` | Fixed step size (fm); overrides STEPSPER | auto |
-| `WRITESTEP = value` | `SCHREIBS` | Print bound state wf every N fm (0 = no print) | 0 |
+| `WRITESTEP = value` | `SCHREIBS` | Print wavefunction every N fm (bound state or scattering; 0 = no print) | 0 |
 | `LMAX = value` | `LMAXHINZ` | Maximum L for partial wave sum | auto |
 | `LMIN = value` | `LMINABZI` | Minimum L | 0 |
 | `MAXLEXTRAP = value` | — | Extrapolation beyond LMAX | 0 |
@@ -186,7 +186,7 @@ anglemin=0 anglemax=180 anglestep=5
 
 | Keyword | Description |
 |---------|-------------|
-| `PRINT = 1001` | Print elastic S-matrix in JP basis (see §10.3) |
+| `PRINT = N` | Multi-digit verbosity control (see §10.3 for details) |
 | `CROSSSEC` | Compute and print cross section (new-style) |
 | `WRITENS` | Write NS (normalization) table |
 | `LABANGLE` | Output lab-frame angles |
@@ -533,21 +533,88 @@ The main output table for both elastic and transfer:
 
 For elastic, `REACTION LAB. MB` column = σ_CM.
 
-### 10.3 S-Matrix Output (PRINT=1001)
+### 10.3 PRINT Keyword — Multi-Digit Verbosity Control
 
-Add `PRINT=1001` to get S-matrix in JP (j=l±½) basis:
+The `PRINT` keyword is a multi-digit integer where each digit position controls a different aspect of the output:
 
 ```
-ELASTIC S-MATRIX FOR L = 3, JP = 5/2: Re +- Im I
+PRINT = A B C D E
+        │ │ │ │ └─ Ones (E):       General print level
+        │ │ │ └─── Tens (D):       (reserved)
+        │ │ └───── Hundreds (C):   Potential/constants output
+        │ └─────── Thousands (B):  Elastic S-matrix table
+        └───────── Ten-thousands (A): Debug output
 ```
 
-Format: one line per (L, J) pair:
-- `JP = 2L-1` → J = L-½
-- `JP = 2L+1` → J = L+½
+| Digit | Position | Value | Effect |
+|-------|----------|-------|--------|
+| E | Ones | ≥ 1 | Print optical model parameters, transfer S-matrix |
+| E | Ones | ≥ 3 | Print constants |
+| E | Ones | ≥ 4 | Debug output |
+| E | Ones | ≥ 5 | Bound state debug |
+| C | Hundreds | ≥ 2 | Print potential constants |
+| B | Thousands | ≥ 1 | Print elastic S-matrix in JP basis (one line per L, J pair) |
+| B | Thousands | ≥ 4 | Debug elastic scattering |
+| A | Ten-thousands | ≥ 4 | Debug radial integrals |
 
-> ⚠️ The **normal** Ptolemy output table (L L' LX columns) is in the **LX spin-flip basis**, NOT the JP basis. Use `PRINT=1001` for the real S-matrix elements.
+**Common values:**
 
-### 10.4 Bound State Output
+| PRINT | Effect |
+|-------|--------|
+| 1 | Standard output: OM parameters + transfer S-matrix + DCS |
+| 2 | Standard + slightly more detail |
+| 1001 | Standard + elastic S-matrix in JP basis |
+| 50000 | Full debug output |
+
+**Elastic S-matrix in JP basis** (`PRINT ≥ 1000`):
+
+```
+INCOMING ELASTIC S-MATRIX FOR L =   3,  LAS =   3,   JP =   5/2:  0.12345E+00 + 0.67890E-01 I
+INCOMING ELASTIC S-MATRIX FOR L =   3,  LAS =   3,   JP =   7/2:  0.23456E+00 +-0.34567E-01 I
+```
+
+One line per (L, JP) pair showing Re(S) and Im(S). This is the **physical JP basis**, in contrast to the standard elastic S-matrix table (§7 of OUTPUT.md) which uses the LX spin-orbit index.
+
+> ⚠️ The **normal** elastic output table (L L' LX columns) is in the **LX spin-flip basis**, NOT the JP basis. Use `PRINT=1001` for the physical JP-basis S-matrix elements.
+
+### 10.4 Distorted Wave Output (WRITESTEP)
+
+To print the optical model scattering wavefunction χ(r), add `WRITESTEP` inside the `INCOMING` or `OUTGOING` block:
+
+```
+INCOMING
+v = 88.955 r0 = 1.149 a = 0.751
+...
+writestep = 0.5
+;
+```
+
+This prints a table for **each partial wave** (L, and J if spin-orbit is present):
+
+```
+OPTICAL MODEL WAVE FUNCTION FOR L =   3  J =   5/2
+
+     R       REAL F       IMAG F
+   0.000   0.00000E+00  0.00000E+00
+   0.500   1.23456E-04  2.34567E-05
+   1.000   4.56789E-03  8.90123E-04
+   ...
+```
+
+The wavefunction printed is the radial solution χ_LJ(r), not divided by r.
+
+For tensor-coupled channels (e.g., deuteron with tensor force), both coupled components are printed side by side:
+
+```
+                   LAS =  1                      LAS =  3
+     R       REAL F       IMAG F       REAL F       IMAG F
+```
+
+> **Note:** This produces a LOT of output — one table per (L, J) partial wave. Use selectively or with small `LMAX`.
+
+The `WRITESTEP` keyword works identically for bound states in `PROJECTILE`/`TARGET` blocks, printing φ(r) = u(r)/r at the specified interval.
+
+### 10.5 Bound State Output
 
 ```
 0        TARGET BOUND STATE PARAMETERS
@@ -560,7 +627,7 @@ Ptolemy prints:
 - κ = sqrt(2μBE)/ℏ (inverse decay length, fm⁻¹)
 - Wavefunction table if `writestep` is set
 
-### 10.5 Common Output Messages
+### 10.6 Common Output Messages
 
 | Message | Meaning |
 |---------|---------|
@@ -604,7 +671,9 @@ Always specify `r0target` explicitly when matching Cleopatra-generated inputs.
 
 ### 11.3 S-Matrix Output Column Confusion
 
-Normal Ptolemy S-matrix output (without `PRINT=1001`) uses the **LX spin-flip basis**, not J=L±½. The columns are NOT directly the JP-split S-matrix elements. Always use `PRINT=1001` to get the physical JP-basis S-matrix.
+The **elastic** S-matrix table uses `(L, L', LX)` labeling where LX is a spin-orbit index (0=average, 1=J=L+S, 2=J=L-S). These are NOT the physical JP-basis elements. Use `PRINT=1001` for the JP-basis elastic S-matrix (see §10.3).
+
+The **transfer** S-matrix table always uses `(JP, JT, LX, LDEL)` labeling — this IS the physical basis. No special PRINT setting needed.
 
 ### 11.4 CM vs Lab Cross Section
 

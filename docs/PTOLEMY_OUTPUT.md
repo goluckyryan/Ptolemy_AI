@@ -13,10 +13,12 @@
 4. [Reaction Summary](#4-reaction-summary)
 5. [Integration Grid Summary](#5-integration-grid-summary)
 6. [Transfer S-Matrix Timing](#6-transfer-s-matrix-timing)
-7. [Elastic S-Matrix Table](#7-elastic-s-matrix-table)
-8. [Transfer S-Matrix Elements](#8-transfer-s-matrix-elements)
-9. [Cross Section Table](#9-cross-section-table)
-10. [Total Cross Section](#10-total-cross-section)
+7. [Scattering Wavefunction Table](#7-scattering-wavefunction-table-optional) (optional)
+8. [Elastic S-Matrix Table](#8-elastic-s-matrix-table)
+9. [Transfer S-Matrix Elements](#9-transfer-s-matrix-elements)
+10. [Cross Section Table](#10-cross-section-table)
+11. [Total Cross Section](#11-total-cross-section)
+12. [The PRINT Keyword](#12-the-print-keyword)
 
 ---
 
@@ -53,7 +55,7 @@ E =   -2.2246 MEV     KAPPA = 0.23161
 | Field | Meaning |
 |-------|---------|
 | E | Binding energy (negative, MeV) |
-| KAPPA | Bound state wave number $\kappa = \sqrt{2\mu|E|}/\hbar$ (fm⁻¹) |
+| KAPPA | Bound state wave number $\kappa = \sqrt{2\mu \|E\| / \hbar^2}$ (fm⁻¹) |
 | L | Orbital angular momentum |
 | NODES | Number of radial nodes (n-1 where n is the principal quantum number) |
 | J PROJECTILE | Total angular momentum j = l ± 1/2 |
@@ -205,7 +207,45 @@ This is the main computational cost — the INELDC radial integral loop.
 
 ---
 
-## 7. Elastic S-Matrix Table
+## 7. Scattering Wavefunction Table (optional)
+
+> Printed only if `WRITESTEP` is set to a nonzero value in the `INCOMING` or `OUTGOING` block.
+
+For each partial wave, Ptolemy prints the radial scattering wavefunction:
+
+```
+OPTICAL MODEL WAVE FUNCTION FOR L =   3  J =   5/2
+
+     R       REAL F       IMAG F
+   0.000   0.00000E+00  0.00000E+00
+   0.500   1.23456E-04  2.34567E-05
+   1.000   4.56789E-03  8.90123E-04
+   1.500   2.34567E-02  5.67890E-03
+   ...
+```
+
+| Column | Meaning |
+|--------|---------|
+| R | Radial distance (fm) |
+| REAL F | Real part of the scattering wavefunction |
+| IMAG F | Imaginary part of the scattering wavefunction |
+
+- The header shows **L** (orbital AM) and **J** (total AM, only when spin-orbit coupling is present)
+- Without spin-orbit: header is `OPTICAL MODEL WAVEFUNCTION FOR L = N`
+- One table is printed per (L, J) partial wave from L=0 to LMAX
+- For tensor-coupled channels (e.g., deuteron with tensor force), both coupled LAS components are printed side by side
+
+**Warning:** This produces a large volume of output — one full radial table per partial wave. Use with small `LMAX` or selectively.
+
+The same `WRITESTEP` keyword in `PROJECTILE`/`TARGET` blocks prints the bound state wavefunction in the same format.
+
+If `CHECKASYM` is also set, an additional asymptotic check table is printed comparing the numerical solution to the analytical asymptotic form, with relative errors.
+
+---
+
+## 8. Elastic S-Matrix Table
+
+> Printed when `PRINT ≥ 1000` (i.e., the thousands digit ≥ 1). For example, `PRINT=1001`.
 
 ```
                INCOMING ELASTIC                          UNITARITY                          OUTGOING ELASTIC
@@ -218,18 +258,28 @@ This is the main computational cost — the INELDC radial integral loop.
     4    4  2  0.000340    8.273
 ```
 
+The elastic S-matrix uses `(L, L', LX)` labeling, where **LX is a spin-orbit index** (not the transferred angular momentum):
+
 **Left block — Incoming elastic S-matrix:**
 
 | Column | Meaning |
 |--------|---------|
 | L | Orbital angular momentum |
-| L' | = L (elastic) |
-| LX | Spin-orbit index: 0 = average, 1 = J=L+S, 2 = J=L-S (for spin-1 deuteron: 0=average, 1=J=L+1, 2=J=L-1) |
+| L' | = L (elastic scattering) |
+| LX | Spin-orbit index (see table below) |
 | MAGNITUDE | \|S_L\| (should be ≤ 1) |
 | PHASE | Nuclear phase shift δ_L (radians) |
 | COULOMB | Coulomb phase σ_L (radians) |
 
-**Center block — Unitarity check:**
+**LX values for elastic S-matrix** (depends on projectile spin S):
+
+| Spin S | LX=0 | LX=1 | LX=2 |
+|--------|------|------|------|
+| S=0 (α) | J=L (only value) | — | — |
+| S=1/2 (p,n) | J=L+1/2 | J=L-1/2 | — |
+| S=1 (d) | spin-averaged | J=L+1 | J=L-1 |
+
+**Center block — Unitarity check** (LX=0 only):
 
 | Column | Meaning |
 |--------|---------|
@@ -243,34 +293,49 @@ For LX > 0, only the S-matrix is shown (no unitarity).
 
 ---
 
-## 8. Transfer S-Matrix Elements
+## 9. Transfer S-Matrix Elements
+
+> Always printed when `PRINT ≥ 1` (ones digit). The transfer S-matrix uses `(JP, JT, LX, LDEL)` labeling — **different from the elastic table.**
+
+The transfer S-matrix is labeled by conserved quantum numbers. The header shows:
 
 ```
-   TRANSFER S-MATRIX ELEMENTS
+ L IN          S-MATRICES FOR CHANNEL  1  AND PARTIAL WAVES LABELED BY ( JP, JT, LX, L(OUT)-L(IN) )
 
-    L   L'  LX    |S|          PHASE(RAD)      |S|          PHASE(RAD)      |S|          PHASE(RAD)
-                           JP = 1/2                    JP = 3/2                    JP = 5/2
+                (  9/2  9/2   4   4 )    (  9/2  9/2   4   2 )    (  9/2  9/2   4   0 )    ...
 
-    0    4   4  0.34961E-04   -0.543    0.10283E-03   -0.465    0.14028E-03   -0.454
-    1    3   4  0.71820E-04   -0.655    0.16736E-03   -0.591    0.21295E-03   -0.573
+                    |S|       PHASE        |S|       PHASE        |S|       PHASE
 ```
 
-Each row gives the transfer S-matrix element for a specific $(L_i, L_o, L_x)$ combination, broken down by JP (conserved total angular momentum of the system, in half-integer notation `2J/2`):
+Where each column group is identified by `(JP, JT, LX, LDEL)`:
+
+| Label | Meaning |
+|-------|---------|
+| JP | Total angular momentum of the system (half-integer, printed as `2J/2`) |
+| JT | Transfer angular momentum coupling |
+| LX | Transferred orbital angular momentum |
+| L(OUT)-L(IN) | Difference between outgoing and incoming partial waves |
+
+Rows are indexed by **L IN** (incoming partial wave $L_i$), and each row gives \|S\| and PHASE for up to 5 column groups:
+
+```
+    0           0.34961E-04   -0.543    0.10283E-03   -0.465    0.14028E-03   -0.454
+    1           0.71820E-04   -0.655    0.16736E-03   -0.591    0.21295E-03   -0.573
+```
 
 | Column | Meaning |
 |--------|---------|
-| L | Incoming partial wave $L_i$ |
-| L' | Outgoing partial wave $L_o$ |
-| LX | Transferred angular momentum $L_x$ |
+| L IN | Incoming partial wave $L_i$ |
 | \|S\| | Magnitude of transfer S-matrix element |
-| PHASE | Phase of transfer S-matrix element (radians) |
-| JP | Total angular momentum (multiple JP values per row) |
+| PHASE | Phase of transfer S-matrix element (radians, smoothed) |
+
+**Key difference from elastic table:** The elastic S-matrix is organized by `(L, LX)` where LX is a spin-orbit index. The transfer S-matrix is organized by `(JP, JT, LX, LDEL)` where LX is the physical transferred angular momentum.
 
 The selection rule $L_i + L_o + L_x$ = even must be satisfied.
 
 ---
 
-## 9. Cross Section Table
+## 10. Cross Section Table
 
 This is the main result — the angular distribution:
 
@@ -312,7 +377,7 @@ The DCS decomposed by transferred angular momentum $L_x$. For 206Hg(d,p)207Hg wi
 
 ---
 
-## 10. Total Cross Section
+## 11. Total Cross Section
 
 At the end of the angular distribution:
 
@@ -330,7 +395,43 @@ TOTAL:     20.329
 
 ---
 
-## Column Control Characters
+## 12. The PRINT Keyword
+
+The `PRINT` keyword controls output verbosity. It is a multi-digit integer where **each digit position controls a different aspect**:
+
+```
+PRINT = A B C D E
+        │ │ │ │ └─ Ones:      General print level
+        │ │ │ └─── Tens:      (reserved)
+        │ │ └───── Hundreds:  Potential/constants output
+        │ └─────── Thousands: Elastic S-matrix table
+        └───────── Ten-thousands: Debug output
+```
+
+| Digit | Position | Value | Effect |
+|-------|----------|-------|--------|
+| E | Ones | ≥ 1 | Print optical model parameters, transfer S-matrix |
+| E | Ones | ≥ 3 | Print constants |
+| E | Ones | ≥ 4 | Debug output |
+| C | Hundreds | ≥ 1 | Suppress some output |
+| C | Hundreds | ≥ 2 | Print potential constants |
+| B | Thousands | ≥ 1 | Print elastic S-matrix partial wave table (§7) |
+| B | Thousands | ≥ 4 | Debug elastic scattering |
+| A | Ten-thousands | ≥ 4 | Debug radial integrals |
+| A | Ten-thousands | = 5 | Extensive debug ("PRINT=50000") |
+
+**Common values:**
+
+| PRINT | Effect |
+|-------|--------|
+| 1 | Standard output: OM parameters + transfer S-matrix + DCS |
+| 2 | Standard + slightly more detail |
+| 1001 | Standard + elastic S-matrix table |
+| 50000 | Full debug output |
+
+---
+
+## 13. Column Control Characters
 
 Ptolemy uses Fortran carriage control in column 1:
 
