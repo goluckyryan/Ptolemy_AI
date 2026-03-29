@@ -260,6 +260,9 @@ If `CHECKASYM` is also set, an additional asymptotic check table is printed comp
 
 The elastic S-matrix uses `(L, L', LX)` labeling, where **LX is a spin-orbit index** (not the transferred angular momentum):
 
+> [!IMPORTANT]
+> Ptolemy internally uses **doubled integers** for angular momenta: what it calls `JP` is actually **2J**. For example, `JP = 5` means J = 5/2. Throughout this document, we use **J** (the physical half-integer value) in all equations. The Ptolemy output prints spins as `JP/2` (e.g., `5/2`).
+
 **Left block — Incoming elastic S-matrix:**
 
 | Column | Meaning |
@@ -267,9 +270,9 @@ The elastic S-matrix uses `(L, L', LX)` labeling, where **LX is a spin-orbit ind
 | L | Orbital angular momentum |
 | L' | = L (elastic scattering) |
 | LX | Spin-orbit index (see table below) |
-| MAGNITUDE | \|S_L\| (should be ≤ 1) |
-| PHASE | Nuclear phase shift δ_L (radians) |
-| COULOMB | Coulomb phase σ_L (radians) |
+| MAGNITUDE | \|S\| (should be ≤ 1) |
+| PHASE | Nuclear phase shift δ (radians) |
+| COULOMB | Coulomb phase σ (radians) |
 
 **LX values for elastic S-matrix** (depends on projectile spin S):
 
@@ -277,7 +280,7 @@ The elastic S-matrix uses `(L, L', LX)` labeling, where **LX is a spin-orbit ind
 |--------|------|------|------|
 | S=0 (α) | J=L (only value) | — | — |
 | S=1/2 (p,n) | J=L+1/2 | J=L-1/2 | — |
-| S=1 (d) | spin-averaged | J=L+1 | J=L-1 |
+| S=1 (d) | spin-averaged | vector SO correction | tensor correction |
 
 **Center block — Unitarity check** (LX=0 only):
 
@@ -293,37 +296,67 @@ For LX > 0, only the S-matrix is shown (no unitarity).
 
 ### Understanding the LX Decomposition
 
-The LX=0,1,2 values are **not** independent S-matrix elements. They are a **Racah decomposition** of the physical JP-basis S-matrix. For each JP value, the code projects onto LX channels via the `JPTOLX` subroutine:
+The LX=0,1,2 values are **not** independent S-matrix elements. They are a **Racah decomposition** of the physical J-basis S-matrix via the `JPTOLX` subroutine.
+
+The physical elastic S-matrix for spin S > 0 is S(L, L', J), where:
+- L and L' are the incoming and outgoing orbital angular momenta
+- J is the total angular momentum (conserved)
+- For S=1 (deuteron), tensor coupling allows L' = L ± 2 (off-diagonal elements)
+
+For each (L, L', J), the code accumulates into LX channels:
 
 $$
-S(LX) = \sum_{JP} (-1)^p \cdot \frac{JP+1}{\sqrt{(2S+1)(2L+1)}} \cdot \sqrt{2LX+1} \cdot W(L,L,S,S;LX,JP) \; S(JP)
+S_\text{LX}(L, LX) \mathrel{+}= T(L, L', J, LX) \cdot S(L, L', J)
 $$
 
-where p = (S - JP + 2L)/2 and W is a Racah coefficient.
+where the transformation coefficient is:
 
-**For deuteron (S=1):** each L has three JP values (J = L-1, L, L+1) projected onto three LX channels:
+$$
+T(L, L', J, LX) = (-1)^p \cdot \frac{2J+1}{\sqrt{(2S+1)(2L'+1)}} \cdot \sqrt{2LX+1} \cdot W(L, L', S, S; LX, J)
+$$
+
+with p = (S - J + L + L')/2 and W is a Racah coefficient.
+
+**For deuteron (S=1) at a given L:** each J value (J = L-1, L, L+1) contributes both diagonal (L'=L) and off-diagonal (L'=L±2) elements. All are mixed together in the LX output.
 
 - **LX=0** — spin-averaged (dominant; captures central + Coulomb scattering)
-- **LX=1** — vector spin-orbit correction
-- **LX=2** — tensor correction (smallest)
+- **LX=1** — vector spin-orbit correction (~2% of LX=0)
+- **LX=2** — tensor correction (~0.1% of LX=0)
 
-**Why LX>0 are small:** The optical model spin-orbit potential (VSO ~ 3–6 MeV) is much weaker than the central potential (V ~ 50–100 MeV). LX=0 captures the spin-independent scattering, while LX=1,2 encode only the spin-orbit splitting. Typical magnitude: LX=1 is ~2% of LX=0, and LX=2 is ~0.1%.
+**Why LX>0 are small:** The spin-orbit potential (VSO ~ 3–6 MeV) is much weaker than the central potential (V ~ 50–100 MeV).
 
-**To reconstruct JP-basis elements from LX** — invert with the same Racah coefficients:
+### Reconstructing S(L, L', J) from the LX Output
 
-$$
-S(JP) = \sum_{LX} \frac{(2LX+1)(JP+1)}{(2S+1)(2L+1)} \cdot (-1)^p \cdot W(L,L,S,S;LX,JP) \; S(LX)
-$$
+> [!WARNING]
+> **Reconstruction is not trivial.** The LX decomposition mixes diagonal S(L, L, J) and off-diagonal S(L, L±2, J) contributions into the same LX values. For S=1 at L=4:
+> - LX=0 and LX=1 come from diagonal elements S(4, 4, J=3) and S(4, 4, J=5) only
+> - LX=2 receives contributions from **both** diagonal S(4, 4, J) **and** off-diagonal S(4, 2, J=3) and S(4, 6, J=5) — these partially cancel, making the observed LX=2 very small
+>
+> You cannot separate the diagonal and off-diagonal contributions from the LX output alone.
 
-Alternatively, use `PRINT=1001` to get the JP-basis S-matrix directly (see §12).
+**For diagonal-only reconstruction** (valid when tensor coupling is negligible, i.e., no tensor OM potential):
+
+Using LX=0 and LX=1, the two diagonal J-values can be recovered by inverting the 2×2 transformation. Example for L=4, S=1:
+
+```
+S(J=3) = +1.714 × S(LX=0) − 1.565 × S(LX=1)
+S(J=5) = +1.364 × S(LX=0) + 0.996 × S(LX=1)
+```
+
+These coefficients depend on L. A consistency check: predict LX=2 from the reconstructed J-values. If it matches the output, tensor coupling is negligible. If not, the off-diagonal elements matter.
+
+**Recommended approach:** Use `PRINT=1001` to get S(L, L', J) directly in the J-basis (see §12). This is unambiguous and avoids the Racah inversion entirely.
 
 ---
 
 ## 9. Transfer S-Matrix Elements
 
-> Always printed when `PRINT ≥ 1` (ones digit). The transfer S-matrix uses `(JP, JT, LX, LDEL)` labeling — **different from the elastic table.**
+> Always printed when `PRINT ≥ 1` (ones digit). The transfer S-matrix uses **(J, J\_T, L\_x, ΔL)** labeling in the **J-basis** — different from the LX-basis elastic table.
 
-The transfer S-matrix is labeled by conserved quantum numbers. The header shows:
+> [!IMPORTANT]
+> The column headers print angular momenta as **2J** (Ptolemy's doubled-integer convention). For example, `9/2` in the header means J = 9/2. Read the numbers as printed fractions.
+
+The header shows:
 
 ```
  L IN          S-MATRICES FOR CHANNEL  1  AND PARTIAL WAVES LABELED BY ( JP, JT, LX, L(OUT)-L(IN) )
@@ -333,16 +366,16 @@ The transfer S-matrix is labeled by conserved quantum numbers. The header shows:
                     |S|       PHASE        |S|       PHASE        |S|       PHASE
 ```
 
-Where each column group is identified by `(JP, JT, LX, LDEL)`:
+Each column group is identified by four quantum numbers:
 
-| Label | Meaning |
-|-------|---------|
-| JP | Total angular momentum of the system (half-integer, printed as `2J/2`) |
-| JT | Transfer angular momentum coupling |
-| LX | Transferred orbital angular momentum |
-| L(OUT)-L(IN) | Difference between outgoing and incoming partial waves |
+| Header label | Physical meaning | Notation |
+|-------|---------|---------|
+| JP | Total angular momentum of the system | J (printed as 2J/2) |
+| JT | Transfer angular momentum coupling | J\_T (printed as 2J\_T/2) |
+| LX | Transferred orbital angular momentum | L\_x (integer) |
+| L(OUT)-L(IN) | Difference between outgoing and incoming partial waves | ΔL = L\_o − L\_i |
 
-Rows are indexed by **L IN** (incoming partial wave $L_i$), and each row gives \|S\| and PHASE for up to 5 column groups:
+Rows are indexed by **L IN** (incoming partial wave L\_i), and each row gives |S| and PHASE for up to 5 column groups:
 
 ```
     0           0.34961E-04   -0.543    0.10283E-03   -0.465    0.14028E-03   -0.454
@@ -351,13 +384,13 @@ Rows are indexed by **L IN** (incoming partial wave $L_i$), and each row gives \
 
 | Column | Meaning |
 |--------|---------|
-| L IN | Incoming partial wave $L_i$ |
+| L IN | Incoming partial wave L\_i |
 | \|S\| | Magnitude of transfer S-matrix element |
 | PHASE | Phase of transfer S-matrix element (radians, smoothed) |
 
-**Key difference from elastic table:** The elastic S-matrix is organized by `(L, LX)` where LX is a spin-orbit index. The transfer S-matrix is organized by `(JP, JT, LX, LDEL)` where LX is the physical transferred angular momentum.
+**Key difference from elastic table:** The elastic S-matrix table uses the **LX-basis** (Racah decomposition, §8), which mixes J-values. The transfer S-matrix table uses the **J-basis** directly — each column is a specific (J, J\_T, L\_x, ΔL) combination. No inversion needed.
 
-The selection rule $L_i + L_o + L_x$ = even must be satisfied.
+The selection rule L\_i + L\_o + L\_x = even must be satisfied.
 
 ---
 
@@ -441,7 +474,7 @@ PRINT = A B C D E
 | E | Ones | ≥ 4 | Debug output |
 | C | Hundreds | ≥ 1 | Suppress some output |
 | C | Hundreds | ≥ 2 | Print potential constants |
-| B | Thousands | ≥ 1 | Print elastic S-matrix partial wave table (§7) |
+| B | Thousands | ≥ 1 | Print elastic S-matrix in J-basis — S(L, L', J) directly (§8) |
 | B | Thousands | ≥ 4 | Debug elastic scattering |
 | A | Ten-thousands | ≥ 4 | Debug radial integrals |
 | A | Ten-thousands | = 5 | Extensive debug ("PRINT=50000") |
@@ -452,7 +485,7 @@ PRINT = A B C D E
 |-------|--------|
 | 1 | Standard output: OM parameters + transfer S-matrix + DCS |
 | 2 | Standard + slightly more detail |
-| 1001 | Standard + elastic S-matrix table |
+| 1001 | Standard + elastic S-matrix in J-basis (recommended for S-matrix analysis) |
 | 50000 | Full debug output |
 
 ---
