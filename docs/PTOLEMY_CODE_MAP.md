@@ -38,7 +38,7 @@ flowchart TD
 ## 2. Subroutine Reference
 
 ### CONTRL — Main Dispatcher
-**Line:** 8109 | Sequences the entire calculation via `IGOTO` state machine.
+**Fortran line:** 8109 | **C++:** [`dwba.cpp`](../src/dwba/dwba.cpp) | Sequences the entire calculation via `IGOTO` state machine.
 
 | IGOTO | Action |
 |-------|--------|
@@ -48,33 +48,33 @@ flowchart TD
 | 9 | Call XSECTN |
 
 ### DATAIN — Input Parser
-**Line:** 11643 | Reads input file, parses OMP parameters, kinematics, bound state params, angular range. Stores everything in COMMON blocks.
+**Fortran line:** 11643 | **C++:** [`PtolemyParser.cpp`](../src/input/PtolemyParser.cpp), [`PtolemyParser.h`](../include/PtolemyParser.h) | Reads input file, parses OMP parameters, kinematics, bound state params, angular range. Stores everything in COMMON blocks (Fortran) / `DWBA` struct (C++).
 
 ### BOUND — Bound State Wavefunction
-**Line:** 3642 | Solves Schrödinger equation with WS + SO potential using Numerov. Performs depth search (adjusts V until BE matches). Stores φ(r) = u(r)/r where ∫u²dr = 1.
+**Fortran line:** 3642 | **C++:** [`bound.cpp`](../src/dwba/bound.cpp) | Solves Schrödinger equation with WS + SO potential using Numerov. Performs depth search (adjusts V until BE matches). Stores φ(r) = u(r)/r where ∫u²dr = 1.
 
 ### WAVSET — Distorted Wave Setup
-**Line:** 31940 | Allocates memory, initializes grid parameters (step size H, NSTEP). Calls WAVELJ via WFGET for each partial wave L.
+**Fortran line:** 31940 | **C++:** [`setup.cpp`](../src/dwba/setup.cpp) | Allocates memory, initializes grid parameters (step size H, NSTEP). Calls WAVELJ via WFGET for each partial wave L.
 
 ### WAVELJ — Distorted Wave Solver
-**Line:** 30428 | Computes u_L(r) = r·χ_L(r) for a single partial wave using modified Numerov. Matches to Coulomb functions at large r. Extracts S-matrix via Wronskian.
+**Fortran line:** 30428 | **C++:** [`wavelj.cpp`](../src/dwba/wavelj.cpp) | Computes u_L(r) = r·χ_L(r) for a single partial wave using modified Numerov. Matches to Coulomb functions at large r. Extracts S-matrix via Wronskian.
 
 **Key detail:** Stores u_L(r) = r·χ_L(r), NOT χ_L(r) directly.
 
 ### RCWFN — Coulomb Wave Functions
-**File:** `src/rcwfn.f` | Computes regular (F_L) and irregular (G_L) Coulomb wave functions using Steed's method + continued fractions.
+**Fortran file:** `src/rcwfn.f` | **C++:** [`rcwfn.cpp`](../src/dwba/rcwfn.cpp), [`rcwfn.h`](../include/rcwfn.h) | Computes regular (F_L) and irregular (G_L) Coulomb wave functions using Steed's method + continued fractions.
 
 ### WFGET — Wavefunction Retrieval
-**Line:** 32533 | Interpolates precomputed distorted wave u_L(r) at Gauss quadrature points. Returns u_L(r) = r·χ_L(r).
+**Fortran line:** 32533 | **C++:** integrated into [`grdset_ineldc_faithful.cpp`](../src/dwba/grdset_ineldc_faithful.cpp) | Interpolates precomputed distorted wave u_L(r) at Gauss quadrature points. Returns u_L(r) = r·χ_L(r).
 
 ### GETSCT — S-Matrix Loop
-**Line:** 15538 | Loops L from 0 to L_max, calls WAVELJ for each, stores S-matrix.
+**Fortran line:** 15538 | **C++:** [`wavelj.cpp`](../src/dwba/wavelj.cpp) (loop in [`dwba.cpp`](../src/dwba/dwba.cpp)) | Loops L from 0 to L_max, calls WAVELJ for each, stores S-matrix.
 
 ### GRDSET — Integration Grid Setup
-**Line:** 15710 | Sets up Gauss quadrature for 2D radial integral. Uses CUBMAP for adaptive point distribution. Calls BSPROD to evaluate bound state overlaps.
+**Fortran line:** 15710 | **C++:** [`grdset_ineldc_faithful.cpp`](../src/dwba/grdset_ineldc_faithful.cpp) | Sets up Gauss quadrature for 2D radial integral. Uses CUBMAP for adaptive point distribution. Calls BSPROD to evaluate bound state overlaps.
 
 ### BSPROD — Bound State Product Evaluator
-**Line:** 4531 | Evaluates wavefunction products at grid points via Lagrange interpolation (AITLAG).
+**Fortran line:** 4531 | **C++:** integrated into [`grdset_ineldc_faithful.cpp`](../src/dwba/grdset_ineldc_faithful.cpp) | Evaluates wavefunction products at grid points via Lagrange interpolation (AITLAG).
 
 | ITYPE | Computes |
 |-------|---------|
@@ -83,28 +83,43 @@ flowchart TD
 | ≥3 | Same as ITYPE-2, THEN multiplies R×chi(RA) × R×chi(RB) |
 
 ### INELDC — Main DWBA Radial Integral
-**Line:** 17454 | Double integration over (r_i, r_o) with angular kernel. Calls SFROMI after integration.
+**Fortran line:** 17454 | **C++:** [`grdset_ineldc_faithful.cpp`](../src/dwba/grdset_ineldc_faithful.cpp) | Double integration over (r_i, r_o) with angular kernel. Calls SFROMI after integration.
 
 ### A12 — Angular Coupling Kernel
-**Line:** 1453 | Computes angular momentum transformation coefficient for DWBA transfer kernel.
+**Fortran line:** 1453 | **C++:** [`a12.cpp`](../src/dwba/a12.cpp) | Computes angular momentum transformation coefficient for DWBA transfer kernel.
 
 ### SFROMI — Transfer S-Matrix Assembly
-**Line:** 29003 | Converts raw radial integral I(Li,Lo,Lx) into S-matrix element with kinematic factor, spectroscopic amplitudes, phases, and 9-J symbols.
+**Fortran line:** 29003 | **C++:** [`xsectn.cpp`](../src/dwba/xsectn.cpp) | Converts raw radial integral I(Li,Lo,Lx) into S-matrix element with kinematic factor, spectroscopic amplitudes, phases, and 9-J symbols.
 
 ### BETCAL — Beta Amplitude Calculator
-**Line:** 3358 | Computes angle-independent β(Lo) amplitudes from S_sfromi elements.
+**Fortran line:** 3358 | **C++:** [`xsectn.cpp`](../src/dwba/xsectn.cpp) | Computes angle-independent β(Lo) amplitudes from S_sfromi elements.
 
 ### AMPCAL — Angular Distribution
-**Line:** 220 | Sums β(Lo) × P_Lo^Mx(cosθ) at each angle. Calls PLMSUB for Legendre polynomials.
+**Fortran line:** 220 | **C++:** [`xsectn.cpp`](../src/dwba/xsectn.cpp) | Sums β(Lo) × P_Lo^Mx(cosθ) at each angle. Calls PLMSUB for Legendre polynomials.
 
 ### XSECTN — Cross Section Orchestrator
-**Line:** 32743 | Calls BETCAL → AMPCAL → ANAPOW. Applies final prefactor and ×10 fm²→mb conversion.
+**Fortran line:** 32743 | **C++:** [`xsectn.cpp`](../src/dwba/xsectn.cpp) | Calls BETCAL → AMPCAL → ANAPOW. Applies final prefactor and ×10 fm²→mb conversion.
 
 ### ANAPOW — Output
-**Line:** 578 | Formats and prints dσ/dΩ vs angle table. Also computes analyzing powers if requested.
+**Fortran line:** 578 | **C++:** [`xsectn.cpp`](../src/dwba/xsectn.cpp) | Formats and prints dσ/dΩ vs angle table. Also computes analyzing powers if requested.
 
 ### ELDCS — Elastic Cross Section
-**Line:** 12989 | Computes elastic dσ/dΩ from optical model S-matrix (separate from transfer).
+**Fortran line:** 12989 | **C++:** [`elastic.cpp`](../src/elastic/elastic.cpp), [`elastic.h`](../include/elastic.h) | Computes elastic dσ/dΩ from optical model S-matrix (separate from transfer).
+
+### Math Utilities
+**C++:** [`math_utils.cpp`](../src/dwba/math_utils.cpp), [`math_utils.h`](../include/math_utils.h) | Clebsch-Gordan, Racah W, 6-J, 9-J symbols, Wigner 3-J.
+
+### AV18 Potential
+**C++:** [`av18_potential.cpp`](../src/dwba/av18_potential.cpp), [`av18_potential.h`](../include/av18_potential.h) | AV18 deuteron wavefunction and spectroscopic amplitude.
+
+### Isotope Database
+**C++:** [`Isotope.cpp`](../src/input/Isotope.cpp), [`Isotope.h`](../include/Isotope.h) | Nuclear masses, charges, binding energies, Q-values.
+
+### Optical Model Potentials
+**C++:** [`potential_eval.cpp`](../src/dwba/potential_eval.cpp), [`potential_eval.h`](../include/potential_eval.h), [`Potentials.cpp`](../src/input/Potentials.cpp) | Woods-Saxon potential evaluation and parameterizations.
+
+### Spline Interpolation
+**C++:** [`spline.cpp`](../src/dwba/spline.cpp), [`spline.h`](../include/spline.h) | Cubic spline interpolation for wavefunction grids.
 
 ---
 
