@@ -416,6 +416,13 @@ This is a 6D integral involving:
 
 Expand all wavefunctions in partial waves. The angular integrals produce Clebsch-Gordan coefficients, Racah W-coefficients, and 9-j symbols. The cross section factorizes into three stages:
 
+**Key quantum number — $L_x$ (transferred orbital angular momentum):**
+$L_x$ is the orbital angular momentum carried by the transferred nucleon between the projectile and target vertices. It is constrained by the triangle rule on the bound-state orbital angular momenta:
+
+$$|l_T - l_P| \leq L_x \leq l_T + l_P$$
+
+where $l_T$ is the neutron orbital AM in the target bound state and $l_P$ in the projectile. For (d,p) reactions with an s-wave deuteron ($l_P = 0$), this simplifies to $L_x = l_T$ exactly. The value of $L_x$ determines the shape of the angular distribution (e.g., L=0 peaks at 0°, L=2 has a minimum at 0°), making it the primary observable for assigning spin-parity to nuclear states.
+
 **Step 1 — SFROMI:** Combine the radial integral with kinematic and spectroscopic factors to get a transfer S-matrix element:
 
 $$S(L_i, L_o, L_x) = \text{FACTOR} \cdot \text{ATERM}(L_x) \cdot \frac{i^{L_i+L_o+2L_x+1}}{\sqrt{2L_i+1}} \cdot I_{L_i,L_o,L_x}^{J_\pi,J_\pi'}$$
