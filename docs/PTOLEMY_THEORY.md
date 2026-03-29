@@ -15,10 +15,11 @@
 5. [Zero-Range vs Finite-Range](#5-zero-range-vs-finite-range)
 6. [Coordinate Geometry](#6-coordinate-geometry)
 7. [Integration Grid (GRDSET)](#7-integration-grid-grdset)
-8. [Radial Integrals (INELDC)](#8-radial-integrals-ineldc)
-9. [Transfer S-Matrix (SFROMI)](#9-transfer-s-matrix-sfromi)
-10. [Cross Section (BETCAL → AMPCAL → XSECTN)](#10-cross-section)
-11. [Comparison: Handbook vs Ptolemy](#11-comparison-handbook-vs-ptolemy)
+8. [Transfer Cross Section: Overview](#8-transfer-cross-section-overview) ← **start here for the big picture**
+9. [Radial Integrals (INELDC)](#9-radial-integrals-ineldc)
+10. [Transfer S-Matrix (SFROMI)](#10-transfer-s-matrix-sfromi)
+11. [Cross Section (BETCAL → AMPCAL → XSECTN)](#11-cross-section)
+12. [Comparison: Handbook vs Ptolemy](#12-comparison-handbook-vs-ptolemy)
 
 ---
 
@@ -281,7 +282,7 @@ This collapses the 6D integral to a 3D integral:
 
 $$T_{\text{ZR}} \propto \int d^3 r \, \chi_{b}^{\ast}(\beta \mathbf{r}) \, \phi_{Bx}^{\ast}(\mathbf{r}) \, \chi_a(\mathbf{r})$$
 
-Fast but inaccurate for heavy ion reactions, high energies, and states where finite size matters. See §8.4 for how the finite-range integral collapses to ZR.
+Fast but inaccurate for heavy ion reactions, high energies, and states where finite size matters. See §9.4 for how the finite-range integral collapses to ZR.
 
 ### Finite-Range (Ptolemy)
 
@@ -396,9 +397,68 @@ For each (ri,ro) pair, Ptolemy does a 2-pass scan:
 
 ---
 
-## 8. Radial Integrals (INELDC)
+## 8. Transfer Cross Section: Overview
 
-### 8.1 From 6D to the Radial-Angular Form
+This section shows how the full DWBA transition amplitude factorizes into the components computed by Ptolemy's subroutines. The subsequent chapters (§9–§12) detail each piece.
+
+### 8.1 The Full T-Matrix
+
+Starting from the DWBA transition amplitude (§4.1):
+
+$$T_{ba} = \int d^3 r_\beta \int d^3 r_\alpha \; \chi_b^{(-)\ast}(\mathbf{r}_\beta) \; \phi_T^\ast(\mathbf{r}_T) \; V(\mathbf{r}_P) \; \phi_P(\mathbf{r}_P) \; \chi_a^{(+)}(\mathbf{r}_\alpha)$$
+
+This is a 6D integral involving:
+- **Distorted waves** $\chi_a$, $\chi_b$ — scattering states in entrance/exit channels (§2)
+- **Bound states** $\phi_T$, $\phi_P$ — bound wavefunctions for target and projectile vertices (§3)
+- **Interaction** $V(\mathbf{r}_P)$ — the binding potential at the projectile vertex
+- **Coordinate mapping** from scattering coordinates to bound state coordinates (§6)
+
+### 8.2 Partial Wave Reduction
+
+Expand all wavefunctions in partial waves (spherical harmonics). The angular integrals can be performed analytically, producing Clebsch-Gordan coefficients, Racah W-coefficients, and 9-j symbols. The result factorizes as:
+
+$$\frac{d\sigma}{d\Omega}(\theta) = \underbrace{10}_{\text{fm}^2 \to \text{mb}} \times \sum_{L_x, M_x} f_{M_x} \left| \underbrace{\frac{1}{2k_a} \sum_{L_i}(2L_i+1) \, C_{L_i L_x}^{L_o M_x} \, e^{i(\sigma_{L_i} + \sigma_{L_o})}}_{\text{BETCAL}} \times \underbrace{\vphantom{\frac{1}{2}} S(L_i, L_o, L_x)}_{\text{SFROMI}} \right|^2$$
+
+where each $S(L_i, L_o, L_x)$ is itself a product:
+
+$$S = \underbrace{\text{FACTOR}}_{\text{kinematics}} \times \underbrace{\text{ATERM}(L_x)}_{\text{spectroscopy}} \times \underbrace{\frac{i^{L_i+L_o+2L_x+1}}{\sqrt{2L_i+1}}}_{\text{phase}} \times \underbrace{I_{L_i,L_o,L_x}^{J_\pi,J_\pi'}}_{\text{radial integral}}$$
+
+### 8.3 The Factorization Map
+
+The cross section computation splits into five independent stages, each handled by a dedicated subroutine:
+
+```
+Stage 1: BOUND (§3)              → φ_T(r), φ_P(r)           [bound state wavefunctions]
+Stage 2: WAVELJ (§2)             → χ_Li(r), χ_Lo(r)         [distorted waves]
+Stage 3: GRDSET + INELDC (§7,§9) → I(Li, Lo, Lx, Jπ, Jπ')  [radial integral]
+Stage 4: SFROMI (§10)            → S(Li, Lo, Lx)            [transfer S-matrix]
+Stage 5: BETCAL + AMPCAL (§11)   → F(θ), dσ/dΩ             [cross section]
+```
+
+**Why this factorization matters:**
+- **Stages 1–2** are 1D problems (single ODE each) — cheap
+- **Stage 3** is the expensive part — a 3D integral over $(r_\alpha, r_\beta, \phi_{ab})$ for each $(L_i, L_o, L_x, J_\pi)$ combination
+- **Stages 4–5** are algebraic — just sums over angular momentum quantum numbers
+
+### 8.4 Quantum Number Loops
+
+The transfer cross section involves nested sums over angular momentum quantum numbers. Here is the complete loop structure:
+
+**Outer (XSECTN):** Sum over $L_x$ (transferred angular momentum) and $M_x$ (projection)
+
+**Middle (BETCAL):** For each $(L_x, M_x)$, sum over $L_i$ (incoming partial wave), with $L_o$ fixed by CG selection rule
+
+**Inner (SFROMI):** For each $(L_i, L_o, L_x)$, sum over $(J_\pi, J_\pi')$ via 9-j symbols coupling channel spins
+
+**Innermost (INELDC):** For each $(L_i, L_o, L_x, J_\pi, J_\pi')$, compute the 3D radial-angular integral
+
+The total number of integrals scales as $N_L^2 \times N_{L_x} \times N_J^2$, where $N_L \sim 30\text{--}40$, $N_{L_x} \sim 1\text{--}5$, and $N_J \sim 2$ (for spin-1/2 channels).
+
+---
+
+## 9. Radial Integrals (INELDC)
+
+### 9.1 From 6D to the Radial-Angular Form
 
 The DWBA transition amplitude (§4.1) is a 6-dimensional integral over the entrance and exit channel coordinates. By expanding all wavefunctions in partial waves (spherical harmonics), the angular integrals can be done analytically, reducing the problem to radial integrals.
 
@@ -418,7 +478,7 @@ $$I_{L_i, L_o, L_x}^{J_{\pi}, J_{\pi}'} = \int_0^{\infty} dr_{\alpha} \int_0^{\i
 
 The angle $\phi_{ab}$ is the angle between the entrance and exit channel coordinate vectors — it survives because the bound state coordinates depend on it through the law of cosines (§6.3).
 
-### 8.2 The Kernel
+### 9.2 The Kernel
 
 $$\mathcal{K}(r_{\alpha}, r_{\beta}, \phi_{ab}) = \phi_T(r_T) \cdot V(r_P) \cdot \phi_P(r_P) \cdot \mathcal{A}_{12}(r_\alpha, r_\beta, \phi_{ab})$$
 
@@ -429,13 +489,13 @@ where:
 
 The kernel is **sharply peaked** near $\cos\phi_{ab} \to +1$ (collinear geometry), because this is where $r_P \to 0$ (the transferred particle is closest to the projectile core), making $V(r_P) \cdot \phi_P(r_P)$ large.
 
-### 8.3 Angular Coupling Kernel (A12)
+### 9.3 Angular Coupling Kernel (A12)
 
 $$\mathcal{A}_{12}(r_\alpha, r_\beta, \phi_{ab}) = \sum_{M_T, M_U} C_{M_T, M_U} \cos(M_T \phi_T - M_U \phi_{ab})$$
 
 where $C_{M_T, M_U}$ involves Wigner d-matrix elements (xlam), 3j-symbols, and $\sqrt{2L_o+1}$ normalization factors. This encodes the geometric coupling between the partial waves of the scattering and bound states.
 
-### 8.4 Connection to Zero-Range
+### 9.4 Connection to Zero-Range
 
 In the **zero-range limit**, the projectile bound state and interaction collapse to a delta function:
 
@@ -455,7 +515,7 @@ $$T_{\text{ZR}} \propto D_0 \int_0^{\infty} dr \; \chi_b^{\ast}\!\left(\frac{S_2
 
 This is computationally trivial but ignores the finite spatial extent of the projectile — leading to 10–30% errors for (d,p) reactions where the deuteron has a large radius (~4 fm).
 
-### 8.5 INELDC Loop Structure
+### 9.5 INELDC Loop Structure
 
 ```
 for LI (incoming L):
@@ -470,17 +530,17 @@ call SFROMI to convert I → S-matrix element
 
 ---
 
-## 9. Transfer S-Matrix (SFROMI)
+## 10. Transfer S-Matrix (SFROMI)
 
-### 9.1 Assembly
+### 10.1 Assembly
 
 $$S_{\text{SFROMI}}(L_i, L_o, L_x, J_{\pi}, J_{\pi}') = \text{FACTOR} \cdot \text{ATERM} \cdot \frac{i^{L_i+L_o+2L_x+1}}{\sqrt{2L_i+1}} \cdot I_{L_i, L_o, L_x}^{J_{\pi}, J_{\pi}'}$$
 
-### 9.2 FACTOR
+### 10.2 FACTOR
 
 $$\text{FACTOR} = 2\sqrt{\frac{k_a k_b}{E_{\text{cm}}^{a} \, E_{\text{cm}}^{b}}}$$
 
-### 9.3 ATERM (Spectroscopic Amplitude)
+### 10.3 ATERM (Spectroscopic Amplitude)
 
 **Fortran BSSET (source.mor line 25634):**
 
@@ -495,12 +555,12 @@ where $J_A' = 2J_A$ and $J_B' = 2J_B$ are the doubled nuclear spin quantum numbe
 >
 > For the SO-active path (9-J loop), the simplified ATERM × 9-J in `xsectn.cpp` combined with the full ATERM already in `TransferSMatrix` may produce the correct result for the current test case (16O(d,p)17O) by coincidence. **This should be investigated if DCS errors appear for other reactions** — the fix would be to either store raw integrals in `TransferSMatrix` (and apply SFROMI entirely in `xsectn.cpp`), or skip the SFROMI block in `xsectn.cpp` when using the faithful path.
 
-### 9.4 Phase Sign
+### 10.4 Phase Sign
 
 If $(L_i + L_o + 2L_x + 1) \bmod 4 \geq 2$: flip sign.
 If $(L_i + L_o + 2L_x + 1) \bmod 2 = 1$: multiply by $i$.
 
-### 9.5 9-J Structure
+### 10.5 9-J Structure
 
 The full SFROMI includes a double 9-J symbol loop coupling spin quantum numbers of incoming/outgoing channel J-values:
 
@@ -508,17 +568,17 @@ $$S_{\text{SFROMI}} = \text{FACTOR} \cdot \mathcal{N}_{9J} \cdot \text{SAV9J} \c
 
 ---
 
-## 10. Cross Section
+## 11. Cross Section
 
-### 10.1 BETCAL — Partial Wave Amplitudes
+### 11.1 BETCAL — Partial Wave Amplitudes
 
 $$\beta(L_o, L_x, M_x) = \frac{1}{2k_a} \sum_{L_i} (2L_i+1) \cdot C(L_i, 0, L_x, M_x; L_o, M_x) \cdot e^{i(\sigma_{L_i}^{(a)} + \sigma_{L_o}^{(b)})} \cdot S_{\text{SFROMI}}(L_i, L_o, L_x)$$
 
-### 10.2 AMPCAL — Scattering Amplitude
+### 11.2 AMPCAL — Scattering Amplitude
 
 $$F^{(M_x)}(\theta) = \sum_{L_o} \beta(L_o, L_x, M_x) \cdot P_{L_o}^{M_x}(\cos\theta)$$
 
-### 10.3 XSECTN — Differential Cross Section
+### 11.3 XSECTN — Differential Cross Section
 
 $$\frac{d\sigma}{d\Omega}(\theta) = 10 \cdot \sum_{L_x, M_x} f_{M_x} \cdot \left|F^{(M_x)}(\theta)\right|^{2}$$
 
@@ -526,7 +586,7 @@ where $f_{M_x} = 1$ for $M_x=0$, $f_{M_x} = 2$ for $M_x > 0$ (sum over $\pm M_x$
 
 ---
 
-## 11. Comparison: Handbook vs Ptolemy
+## 12. Comparison: Handbook vs Ptolemy
 
 | Aspect | Handbook | Ptolemy |
 |---|---|---|
