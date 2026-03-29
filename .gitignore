@@ -1,8 +1,13 @@
-.cache
-build
-CMakeFiles
+# ── Build artifacts ──
+*.o
+*.a
+*.so
+*.dylib
 
 # Compiled binaries (rebuild with g++ as needed)
+ptolemy_cpp
+ptolemy_cpp_*
+ptolemy
 fr_o16dp
 fr_o16dp_*
 !fr_o16dp.cpp
@@ -16,7 +21,7 @@ chi_validate2
 ninj_test
 radint_test
 smat_debug
-smat_debug2
+smat_debug*
 smat_o16dp
 wftest_main
 elastic_*
@@ -25,24 +30,41 @@ dwba_*
 boundstate_*
 distwave_*
 test_*
+!tests/
 
-# Fortran temp files
+# Fortran compiled binaries
+fortran_testing/ptolemy_annotated
+fortran_testing/ptolemy_annotated_bc
+fortran_testing/test_fortran
+fortran_testing/test_racah
+fortran_testing/test_racah_*
+fortran_testing/reid_compare
+fortran_testing/reid_vertex_test
+fortran_testing/phip_test
+fortran_testing/test_bound_fortran
+fortran_testing/test_bound_cpp
+fortran_testing/*.o
+
+# ── Generated output ──
+*.png
+*.txt
+!data/mass20.txt
+!README.md
+
+# ── Data/docs (large files, keep locally not in git) ──
+*.pdf
+*.csv
+!data/mass20.txt
+
+# ── Temporary / cache ──
+.cache
+build
+CMakeFiles
 fort.*
-
-# Backup files
 *.bak
 *.orig
+*.swp
+*~
 
-# Generated output txt files (regenerable from C++ runs)
-ni60*.txt
-sm148*.txt
-reid_*.txt
-o16dp_bs_cpp*.txt
-*_smat_cpp.txt
-*_xsec_cpp.txt
-*_cpp_output*.txt
-comparison_*.txt
-data/reid_S_phi_norm.txtptolemy
-
-# Main binary
-ptolemy
+# ── Fortran output ──
+*.out
