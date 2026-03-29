@@ -218,7 +218,14 @@ $$\frac{d\sigma}{d\Omega}(\theta) = 10 \cdot \sum_{L_x, M_x} f_{M_x} \cdot \left
 $$\mathcal{A}_{12} = \sum_{M_T, M_U} C_{M_T, M_U} \cos(M_T \phi_T - M_U \phi_{ab})$$
 
 where:
-$$C_{M_T, M_U} = X_N \cdot d_{|M_T|,0}^{(l_T)}(\pi/2) \cdot d_{0,0}^{(l_P)}(\pi/2) \cdot \begin{pmatrix} l_T & l_P & L_x \\ M_T & 0 & -M_T \end{pmatrix} \cdot d_{|M_U|,0}^{(L_i)} \cdot d_{|M_T-M_U|,0}^{(L_o)} \cdot \sqrt{2L_o+1} \cdot \begin{pmatrix} L_i & L_o & L_x \\ M_U & M_T-M_U & -M_T \end{pmatrix}$$
+$$
+C_{M_T, M_U} = X_N \cdot d_{|M_T|,0}^{(l_T)}(\pi/2) \cdot d_{0,0}^{(l_P)}(\pi/2) \cdot
+\begin{pmatrix} l_T & l_P & L_x \\
+M_T & 0 & -M_T \end{pmatrix} \cdot
+d_{|M_U|,0}^{(L_i)} \cdot d_{|M_T-M_U|,0}^{(L_o)} \cdot \sqrt{2L_o+1} \cdot
+\begin{pmatrix} L_i & L_o & L_x \\
+M_U & M_T-M_U & -M_T \end{pmatrix}
+$$
 
 with $X_N = \frac{1}{2}\sqrt{(2L_i+1)(2l_T+1)(2l_P+1)}$
 
