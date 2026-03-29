@@ -756,8 +756,9 @@ void DWBA::InelDcFaithful2()
     const double SUMPTS  = 8.0;
     const double DXV_scan = 2.0 / ((double)LOOKST * (double)LOOKST);
 
-    // Asymptopia (from input: asymptopia=30)
-    const double ASYMPT = 30.0;
+    // GRDSET asymptopia: Fortran sets SUMMAX = ABS(SCTASY) = user's asymptopia parameter
+    // This is DIFFERENT from WAVSET's ASYMPT (which uses BNDASY=20).
+    const double ASYMPT = (AsymptopiaSet > 0) ? AsymptopiaSet : 30.0;
 
     // ROFMAX: set during chi build (position of psi maximum, ~nuclear surface radius)
     // SCTMAX: chi table extent ≈ asymptopia + 5
@@ -2225,6 +2226,11 @@ void DWBA::InelDcFaithful2()
                                                    it->second.second);
 
                         // Debug: dump raw I_accum (before phase/ATERM)
+#ifdef DUMP_IACC
+                        fprintf(stderr, "CPP_IACC LI=%d IH=%d JPI=%d JPO=%d SR=%.6e SI=%.6e MAG=%.6e\n",
+                                LI, IH, JPI_v, JPO,
+                                I_raw.real(), I_raw.imag(), std::abs(I_raw));
+#endif
 
                         std::complex<double> Integral = I_raw * phase_factor;
                         double sf_norm = FACTOR_sf * std::fabs(ATERM_val)

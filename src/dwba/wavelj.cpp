@@ -215,10 +215,33 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
   const double STEPI  = 1e-10;  // inner cutoff after rescaling
 
   std::vector<std::complex<double>> u(N + 2, 0.0);
-  // Initial conditions: u[0]=0, u[1]=h^(L+1) (real regular solution near origin)
-  // Note: Fortran uses u[1] = THISR*(1+i) — complex IC. For a complex optical potential,
-  // this gives a slightly different WF phase at matching radius but the same S-matrix
-  // (the Wronskian normalization removes the overall complex scale).
+  // Initial conditions matching Fortran WAVELJ:
+  //   THISR = STEPI * STEPR = 1e-6 * 1 = 1e-6
+  //   THISI = THISR = 1e-6
+  //   u[ISTRT+1] = THISR * D^(L+1)  (both real and imag parts)
+  //   u[ISTRT+2] = THISR             (both real and imag parts)
+  // where D = ISTRT/(ISTRT+1), ISTRT=0 → D=0 → u[1]=0, u[2]=THISR
+  // Wait: for ISTRT=0, AA1=0, D=0/(0+1)=0
+  //   u[1] = THISR * 0^(L+1) = 0
+  //   u[2] = THISR = 1e-6  (both Re and Im)
+  // Then XSI computation gives u[3], u[4]
+  //
+  // Actually re-reading Fortran: ISTRT=0, NFIRST=2:
+  //   WAVR(1) = THISR * 0 = 0   (I=0, ISTRT+1=1)
+  //   WAVR(2) = THISR = 1e-6    (I=1, ISTRT+2=2)
+  // These map to u[0]=0, u[1]=1e-6*(1+i)
+  //
+  // Use complex IC with equal real and imaginary parts (Ptolemy convention):
+  // Fortran WAVELJ initial conditions:
+  // THISR = STEPI*STEPR = 1e-6, THISI = 1e-6
+  // u[ISTRT+1] = THISR * D^(L+1) where D = ISTRT/(ISTRT+1)
+  // u[ISTRT+2] = THISR
+  // For ISTRT=0: D=0, u[1] = 0, u[2] = 1e-6(1+i)
+  // But C++ indexing: u[0] maps to step 0, u[1] maps to step 1 = Fortran ISTRT+2
+  // Actually: Fortran WAVR(ISTRT+1) → C++ u[0] (step ISTRT)
+  //          Fortran WAVR(ISTRT+2) → C++ u[1] (step ISTRT+1)
+  // For ISTRT=0: u[0]=0, u[1]=THISR*(1+i)=1e-6*(1+i)
+  // Use real-only IC (original C++ behavior) for now
   u[0] = std::complex<double>(0.0, 0.0);
   u[1] = std::complex<double>(std::pow(h, L + 1), 0.0);
   if (std::abs(u[1]) < 1e-300) u[1] = 1e-300;
@@ -367,7 +390,49 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     }
   }
 
-  // S-matrix print removed (enable for debugging)
+  // S-matrix print (enable for debugging)
+#ifdef DUMP_SMAT
+  {
+    double S_mag = std::sqrt(SJR*SJR + SJI*SJI);
+    int chid = (&ch == &Incoming) ? 0 : (&ch == &Outgoing) ? 1 : 2;
+    fprintf(stderr, "CPP_SMAT ch=%d L=%d JP=%d SR=%.8e SI=%.8e MAG=%.8f\n",
+            chid, L, Jp, SJR, SJI, S_mag);
+  }
+#endif
+
+#ifdef DUMP_CHI_SURGICAL
+  {
+    int chid = (&ch == &Incoming) ? 0 : (&ch == &Outgoing) ? 1 : 2;
+    if (chid == 1 && L == 1 && Jp == 1) {
+      fprintf(stderr, "CPP_H2= %5d val=%.12E\n", 0, h*h);
+      fprintf(stderr, "CPP_SDOTL=%.12E DL2=%.12E\n", spin_dot_L, DL2);
+      // Phase 1: W(I) at sparse points
+      for (int i = 0; i <= N; ++i) {
+        if (i % 50 == 0 || i <= 5 || i == N || i == N-4) {
+          double W_re = 1.0 + h2_12 * f[i].real();
+          double W_im = h2_12 * f[i].imag();
+          fprintf(stderr, "CPP_WPOT2 %5d %10.4f %.12E %.12E\n",
+              i, i*ch.StepSize, W_re, W_im);
+        }
+      }
+      // Phase 2: Initial conditions
+      fprintf(stderr, "CPP_IC u0=%.12E %.12E u1=%.12E %.12E\n",
+          u[0].real(), u[0].imag(), u[1].real(), u[1].imag());
+      // Phase 3: u(I) at sparse points
+      for (int i = 2; i <= N; ++i) {
+        if (i % 50 == 0 || i <= 5 || i == N || i == N-4) {
+          fprintf(stderr, "CPP_U2 %5d %10.4f %.12E %.12E\n",
+              i, i*ch.StepSize, u[i].real(), u[i].imag());
+        }
+      }
+      // Phase 4: matching info
+      fprintf(stderr, "CPP_UMATCH_N  %5d %.12E %.12E\n", N, u[N].real(), u[N].imag());
+      fprintf(stderr, "CPP_UMATCH_NB %5d %.12E %.12E\n", n_match, u[n_match].real(), u[n_match].imag());
+      fprintf(stderr, "CPP_COUL2 F=%.12E G=%.12E n_match=%d R=%.6f\n", FL, GL, n_match, n_match*h);
+      fprintf(stderr, "CPP_SMAT2 SJR=%.12E SJI=%.12E |S|=%.12f\n", SJR, SJI, std::sqrt(SJR*SJR+SJI*SJI));
+    }
+  }
+#endif
 
   // --- Normalization ---
   // Normalize at n_match using Coulomb F,G (FL, GL) at that point.
@@ -397,19 +462,20 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     }
   }
 
-  // --- Coulomb asymptotic extension beyond NSTEP (Ptolemy WAVELJ NSTP2S logic) ---
-  // Ptolemy extends chi to NSTP2S = RIMAX/h+3.5 (RIMAX can exceed MaxR=30fm).
-  // Integration domain reaches RI,RO up to SUMMAX=30.4fm > MaxR.
-  // Without extension, 5-pt Lagrange stencil reads guard zeros → large error.
-  // Here we extend with the exact Coulomb asymptotic:
-  //   chi_b(r) = 0.5*[(1+S)*F_L + i*(1-S)*G_L] / (normalized to our convention)
-  // Since we already know alpha = normalization constant, and the Coulomb functions,
-  // just call Rcwfn at each extension point and apply alpha.
+  // --- Coulomb asymptotic extension beyond NSTEP (Ptolemy NSTP2S logic) ---
+  // In Ptolemy, WAVSET uses BNDASY=20 for NSTEP, but GRDSET needs chi up to
+  // SUMMAX ≈ ABS(SCTASY) (user's asymptopia, e.g. 50 fm).
+  // Ptolemy extends chi to NSTP2S = RIMAX/h + 3.5 where RIMAX comes from the
+  // GRDSET grid scan (can be up to SUMMAX).
+  // The extension uses the normalized Coulomb asymptotic form:
+  //   chi(r) = alpha * [0.5*(1+S)*F_L(kr) + i*0.5*(1-S)*G_L(kr)]
+  // which is exact beyond the nuclear potential range (~10 fm).
   {
-    // Fortran NSTP2S = RIMAX/h + 3.5 → INT = RIMAX/h + 3 (for h=0.125, RIMAX=30: NSTP2S=243)
-    // Extra points = NSTP2S - NSTEPS = (RIMAX/h+3) - RIMAX/h = 3.
-    // This gives max chi R = NSTP2S * h = (RIMAX/h+3)*h = RIMAX+3h = 30.375 fm (→ Fortran "30.4").
-    const int NEXTRA = static_cast<int>(ch.MaxR / h + 3.5) - static_cast<int>(ch.MaxR / h);
+    // Extend to max(SUMMAX, MaxR)/h + 3.5 where SUMMAX = AsymptopiaSet
+    double SUMMAX_ext = (AsymptopiaSet > 0) ? AsymptopiaSet : 30.0;
+    double RIMAX_est = std::max(SUMMAX_ext, ch.MaxR);
+    const int NSTP2S = static_cast<int>(RIMAX_est / h + 3.5);
+    const int NEXTRA = std::max(NSTP2S - N, 0);
     int old_size = static_cast<int>(ch.WaveFunction.size());
     int need_size = N + NEXTRA + 4;
     if (need_size > old_size) ch.WaveFunction.resize(need_size, {0.0, 0.0});

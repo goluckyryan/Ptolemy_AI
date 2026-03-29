@@ -240,8 +240,19 @@ void DWBA::Calculate() {
   // Ptolemy WAVSET: extend asymptopia to classical turning point for large L
   // RMAX = max(ASYMPT, (eta + sqrt(eta^2 + LMAX*(LMAX+1))) / k)
   // Condition: NUMFIT==0 && LMAX!=NOTDEF && SCTASY<0 (always true for DWBA with set LMAX)
+  //
+  // CRITICAL: In Ptolemy, the 'asymptopia' PARAMETERSET keyword goes to SCTASY
+  // (the GRDSET integration range), NOT to WAVSET's ASYMPT.
+  // WAVSET's ASYMPT comes from BNDASY (default 20 fm), set by the bound-state
+  // section BEFORE the scattering channels. Since the bound state call to SETBNDS
+  // sets ASYMPT = BNDASY = 20, and subsequent calls skip (ASYMPT != UNDEF),
+  // WAVSET always uses BNDASY = 20 as the base asymptopia.
   {
-    double ASYMPT = (AsymptopiaSet > 0) ? AsymptopiaSet : 30.0;
+    // Ptolemy WAVSET uses BNDASY=20 as the base asymptopia for DWBA.
+    // The user's 'asymptopia=X' keyword goes to SCTASY → GRDSET SUMMAX.
+    // WAVSET only extends beyond BNDASY for the classical turning point.
+    const double BNDASY = 20.0;
+    double ASYMPT = BNDASY;
     int LMAX_eff = (LmaxSet >= 0) ? LmaxSet : 40;
 
     // Incoming channel turning point
