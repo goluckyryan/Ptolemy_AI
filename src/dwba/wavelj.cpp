@@ -95,6 +95,7 @@ void DWBA::WavSet(Channel &ch) {
                       ch.V_so_imag[i], ch.V_coulomb[i], ch.Projectile.Z,
                       ch.Target.Z, A_target, A_projectile);
   }
+
 }
 
 // ---------------------------------------------------------------------------
@@ -124,7 +125,7 @@ void DWBA::WavSet(Channel &ch) {
 //                         JP=2L   → spin_dot_L = -1    (J=L);
 //                         JP=2L-2 → spin_dot_L = -(L+1) (J=L-1)
 // ---------------------------------------------------------------------------
-void DWBA::WavElj(Channel &ch, int L, int Jp) {
+void DWBA::WavElj(Channel &ch, int L, int Jp, bool skipSO, bool scanMode) {
   int N = ch.NSteps;
   double h = ch.StepSize;
   double h2 = h * h;
@@ -149,7 +150,9 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
   double DL2 = (double)L * (L + 1);
   double SDOTL_raw =
       0.25 * double(Jp * (Jp + 2) - JSP_ch * (JSP_ch + 2)) - DL2;
-  double spin_dot_L = (JSP_ch > 0) ? SDOTL_raw / JSP_ch : 0.0;
+  double spin_dot_L = (JSP_ch > 0 && !skipSO) ? SDOTL_raw / JSP_ch : 0.0;
+  fprintf(stderr, "WAVELJ_DBG L=%d Jp=%d skipSO=%d spin_dot_L=%.6f SDOTL_raw=%.6f JSP_ch=%d\n",
+          L, Jp, skipSO, spin_dot_L, SDOTL_raw, JSP_ch);
 
   // Physical constants (same as dwba.cpp globals)
   // Must match Ptolemy's constants exactly (source.f line 14066-14067)
@@ -183,9 +186,19 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
     double Vsoi = ch.V_so_imag[idx];
     double LL1  = (double)L * (L + 1);
 
-    double f_re = k2 - LL1 / (r * r) - f_conv * Vc + f_conv * Vr
-                  - spin_dot_L * f_conv * Vso;
-    double f_im = f_conv * Wi - spin_dot_L * f_conv * Vsoi;
+    double f_re, f_im;
+    if (scanMode) {
+      // NWP=3 scan mode: no Coulomb, no k², no SO, TEMP=0
+      // Fortran WAVR = -HS²/(12E)×V_nuc - LL1/(12I²) = h²_12×f_conv×Vr - LL1/(12I²)
+      // C++ textbook: W = 1 + h²_12*f → f = (W-1)/h²_12
+      // f_scan = f_conv*Vr - LL1/r² - 12/h²
+      f_re = f_conv * Vr - LL1 / (r * r) - 12.0 / h2;
+      f_im = f_conv * Wi;  // imaginary same as normal (no SO in scan)
+    } else {
+      f_re = k2 - LL1 / (r * r) - f_conv * Vc + f_conv * Vr
+                    - spin_dot_L * f_conv * Vso;
+      f_im = f_conv * Wi - spin_dot_L * f_conv * Vsoi;
+    }
     f[i] = std::complex<double>(f_re, f_im);
 
     // Fortran stores WAVR(I+4) = h²/12 × f(r) = total Numerov potential
@@ -286,16 +299,26 @@ void DWBA::WavElj(Channel &ch, int L, int Jp) {
 #endif
 
         double mag = std::abs(u[i + 1]);
-    if (mag > BIGNUM) {
-      // Rescale: multiply ALL stored values by 1/mag to prevent overflow.
-      // DO NOT zero inner points here — that happens after normalization.
-      // (Fortran WAVELJ: zeroing only after final ALPHAR/ALPHAI computation)
-      double inv_mag = 1.0 / mag;
+    // Fortran: THISR = |Re| + |Im| (L1 norm), NOT sqrt(Re²+Im²)
+    double thisr_ftn = std::abs(u[i+1].real()) + std::abs(u[i+1].imag());
+    if (thisr_ftn > BIGNUM) {
+      // Rescale: multiply ALL stored values by 1/thisr (Fortran L1 norm)
+      fprintf(stderr, "WAVELJ_RESCALE L=%d i=%d r=%.3f |u|_L2=%.3e |u|_L1=%.3e ratio=%.6f\n",
+              L, i+1, (i+1)*h, mag, thisr_ftn, mag/thisr_ftn);
+      double inv_mag = 1.0 / thisr_ftn;  // USE L1 NORM like Fortran!
       for (int j = ISTRT; j <= i + 1; ++j) u[j] *= inv_mag;
       // Track ISTRT: find first nonzero (inner region is naturally small)
-      double threshold = STEPI * inv_mag;  // already-rescaled threshold
+      // Fortran: THISI = STEPI * THISR, then zeros u where |Re(u)| < THISI
+      // In rescaled coordinates: threshold = STEPI * THISR / THISR = STEPI
+      // Actually: STEPI*THISR is the PRE-rescale threshold, 
+      // then after dividing by THISR, the threshold becomes STEPI.
+      // But Fortran checks |Re(u[ISTRT])| (not |u|), so:
+      double threshold = STEPI;  // Fortran zeros where |Re(u_rescaled)| < STEPI
+      // Fortran: zeros from ISTRT up, stops when |Re(u[j])| >= STEPI*THISR
+      // After rescaling by 1/THISR, this is |Re(u[j]_new)| >= STEPI
       for (int j = ISTRT; j <= i + 1; ++j) {
-        if (std::abs(u[j]) >= threshold) { ISTRT = j; break; }
+        if (std::abs(u[j].real()) >= threshold) { ISTRT = j; break; }
+        u[j] = {0.0, 0.0};
       }
     }
   }

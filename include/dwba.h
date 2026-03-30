@@ -171,7 +171,7 @@ private:
   // Methods corresponding to Fortran subroutines
   void WavSet(Channel &ch);
   void WavPot(Channel &ch);
-  void WavElj(Channel &ch, int L, int Jp);
+  void WavElj(Channel &ch, int L, int Jp, bool skipSO = false, bool scanMode = false);
   void GrdSet();
   void InelDc();
   void InelDcZR();  // Zero-Range transfer integral

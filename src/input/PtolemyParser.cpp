@@ -176,6 +176,9 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
                     double ME_core = PtolemyMass::MassExcess_MeV(core.Z, core.A);
                     double ME_res  = PtolemyMass::MassExcess_MeV(residual.Z, residual.A);
                     double ME_trans = PtolemyMass::MassExcess_MeV(Z_trans, A_trans);
+                    fprintf(stderr, "DBG_AUTOBE: core=%s Z=%d A=%d ME=%.6f\n", rxn_target.c_str(), core.Z, core.A, ME_core);
+                    fprintf(stderr, "DBG_AUTOBE: res=%s Z=%d A=%d ME=%.6f\n", rxn_residual.c_str(), residual.Z, residual.A, ME_res);
+                    fprintf(stderr, "DBG_AUTOBE: trans Z=%d A=%d ME=%.6f\n", Z_trans, A_trans, ME_trans);
                     // BE = Sn - Ex = (ME_core + ME_trans - ME_res) - Ex
                     bs_binding = ME_core + ME_trans - ME_res - rxn_excitation;
                     std::cerr << "Auto-computed target binding energy: "

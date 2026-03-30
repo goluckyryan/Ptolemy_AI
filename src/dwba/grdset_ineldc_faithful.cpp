@@ -1347,8 +1347,7 @@ void DWBA::InelDcFaithful2()
                     for (int ix = 0; ix < 2; ++ix) {
                         double FIFO2, RP2, RT2;
                         bool ok = bsp_ISCTMN(2, RI, RO, XS[ix], FIFO2, RP2, RT2);
-                        if (IU == 10 && ISYNE == 1 && VVAL > 0.62 && VVAL < 0.72) {
-                        }
+
                         if (!ok) { bsprod_failed = true; break; }  // Fortran *435: exit DO 429 loop
                         if (std::fabs(FIFO2) > ULIM2) { above = true; break; }
                     }
@@ -1374,9 +1373,11 @@ void DWBA::InelDcFaithful2()
                                           + ST1*RI*RO*(1.0-DXV_scan)));
                     double RP = std::sqrt(std::max(0.0, (S2*RI)*(S2*RI) + (T2*RO)*(T2*RO)
                                           + ST2*RI*RO*(1.0-DXV_scan)));
-                    // BNDMXT = RLTMAX (asymptopia of target bound state)
-                    // BNDMXP = RLPMAX (asymptopia of projectile bound state)
-                    if (RT > RLTMAX || RP > RLPMAX) {
+                    // Fortran: IF (RT <= BNDMXT .AND. RP <= BNDMXP) GO TO 455
+                    // BNDMXT/BNDMXP = MaxR of bound state grids (50 fm from asymptopia=50)
+                    // RLTMAX/RLPMAX = radius of phi PEAK (~7 fm for l=4)
+                    // Must use BNDMXT/BNDMXP (grid extent) NOT RLTMAX/RLPMAX (peak)
+                    if (RT > BNDMXT || RP > BNDMXP) {
                         // Fortran: NBUMPS++; VVAL -= DV
                         VVAL = std::max(0.0, VVAL - DV_scan);
                     }
@@ -1445,6 +1446,7 @@ void DWBA::InelDcFaithful2()
         for (int k = 0; k < NPSUM; k++) {
             double width = LVMAX_arr[k+1] - LVMIN_arr[k+1];
             WVTS[k] = (width > 1e-12) ? 1.0 / (width * width) : 1.0;
+
         }
         
         // Build Y matrix: 3 columns × NPSUM rows (column-major)
@@ -2013,6 +2015,7 @@ void DWBA::InelDcFaithful2()
                         for (int IH = 0; IH < IHMAX; ++IH) {
                             double A12_val = EvalA12(A12_table[IH], PHIT, PHI);
                             LHSM1[IH+1] += (float)(PVPDX * A12_val);
+
                         }
                     }
                     // End DO 489
@@ -2029,11 +2032,7 @@ void DWBA::InelDcFaithful2()
                     for (int IH = 1; IH <= IHMAX; ++IH)
                         SMHVL[IH-1][IU] = LHINT[IH] * RIOEX;
 
-                    // FORTRAN_SMHVL_OVERRIDE: apply Fortran SMHVL for all IV, IU
-                    {
-                                        // ── Fortran SMHVL override (all 40×40 IV×IU, 2 IH values) ──────────────
 
-                    }
 
                     if (LI == 3 && IV == 1 && IU == 4) {
                                             }
@@ -2184,13 +2183,29 @@ void DWBA::InelDcFaithful2()
             }  // End IV loop (DO 859)
 
 
-                // ── Override I_accum with Fortran values for Li < 15 ──
+                // ── Override I_accum with Fortran values ──
+                #ifdef OVERRIDE_IACC_ALL
+                {
+                    #include "/tmp/ftn_iacc_all.h"
+                    for (int fi = 0; fi < N_FTN_IACC_ALL; ++fi) {
+                        if (FTN_IACC_ALL[fi].Li != LI) continue;
+                        for (auto& [key, val] : I_accum) {
+                            int Lo = lolx_pairs[key.IH].Lo;
+                            int Lx = lolx_pairs[key.IH].Lx;
+                            if (key.JPI == FTN_IACC_ALL[fi].JPI && key.JPO == FTN_IACC_ALL[fi].JPO
+                                && Lo == FTN_IACC_ALL[fi].Lo && Lx == FTN_IACC_ALL[fi].Lx) {
+                                val.first  = FTN_IACC_ALL[fi].Ire;
+                                val.second = FTN_IACC_ALL[fi].Iim;
+                            }
+                        }
+                    }
+                }
+                #endif
                 #ifdef OVERRIDE_IACC_LI15
                 if (LI < 15) {
                     #include "/tmp/ftn_iacc_override.h"
                     for (int fi = 0; fi < N_FTN_IACC; ++fi) {
                         if (FTN_IACC[fi].Li != LI) continue;
-                        // Find matching AccKey
                         for (auto& [key, val] : I_accum) {
                             int Lo = lolx_pairs[key.IH].Lo;
                             int Lx = lolx_pairs[key.IH].Lx;
