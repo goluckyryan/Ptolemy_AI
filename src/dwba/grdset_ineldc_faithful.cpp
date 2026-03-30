@@ -1930,7 +1930,10 @@ void DWBA::InelDcFaithful2()
                 for (int Lx = LxMin_bs; Lx <= LxMax_bs; Lx += 2) {
                     if (Lx < std::abs(LI - Lo)) continue;
                     if (Lx > LI + Lo) continue;
-                    if ((lT + lP + LI + Lo + Lx) % 2 != 0) continue;
+                    // Parity: Fortran checks (lT+lP+LI+Lo) even — triangle coupling parity
+                    // The CG(LI,0;Lo,0|Lx,0) requires LI+Lo+Lx even, which combined with
+                    // CG(lT,0;lP,0|Lx,0) requiring lT+lP+Lx even, gives lT+lP+LI+Lo even.
+                    if ((lT + lP + LI + Lo) % 2 != 0) continue;
                     lolx_pairs.push_back({Lo, Lx});
                 }
             }
