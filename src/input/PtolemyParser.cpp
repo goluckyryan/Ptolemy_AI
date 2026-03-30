@@ -7,11 +7,13 @@
 #include "PtolemyParser.h"
 #include "Isotope.h"
 #include "ptolemy_mass_table.h"
+#include "elastic.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <iomanip>
 #include <sstream>
 #include <stdexcept>
 
@@ -190,6 +192,7 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
                 dwba.SetTargetBoundState(bs_nodes, bs_l, bs_j, bs_binding, bsPot);
             } else if (section == INCOMING) {
                 dwba.SetIncomingPotential(inPot);
+                if (isElastic_) elastic_pot_ = inPot;
             } else if (section == OUTGOING) {
                 dwba.SetOutgoingPotential(outPot);
             }
@@ -326,10 +329,10 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
                     if (key == "ANGLEMIN")       { angleMin = val; anglesSet = true; }
                     else if (key == "ANGLEMAX")  { angleMax = val; anglesSet = true; }
                     else if (key == "ANGLESTEP") { angleStep = val; anglesSet = true; }
-                    else if (key == "ELAB")      dwba.SetEnergy(val);
+                    else if (key == "ELAB")      { dwba.SetEnergy(val); elastic_Elab_ = val; }
                     else if (key == "LMIN")      dwba.SetLmin((int)val);
-                    else if (key == "LMAX")      dwba.SetLmax((int)val);
-                    else if (key == "ASYMPTOPIA") dwba.SetAsymptopia(val);
+                    else if (key == "LMAX")      { dwba.SetLmax((int)val); elastic_Lmax_ = (int)val; }
+                    else if (key == "ASYMPTOPIA") { dwba.SetAsymptopia(val); elastic_asymptopia_ = val; }
                     else if (key == "LSTEP")     {} // default 1
                     else if (key == "MAXLEXTRAP") {} // ignore
                     else if (key == "PRINT")     {} // ignore for now
@@ -353,6 +356,11 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
     // Apply angles
     if (anglesSet) {
         dwba.SetAngles(angleMin, angleMax, angleStep);
+        if (isElastic_) {
+            elastic_angleMin_ = angleMin;
+            elastic_angleMax_ = angleMax;
+            elastic_angleStep_ = angleStep;
+        }
     }
 
 }
@@ -447,6 +455,20 @@ void PtolemyParser::ParseReactionLine(const std::string &line, DWBA &dwba) {
     std::string ejt  = MapIsotope(ejectile);
     std::string res  = MapIsotope(residual);
 
+    // Detect elastic scattering: ejectile == projectile
+    if (ejt == prj) {
+        isElastic_ = true;
+        elastic_target_ = tgt;
+        elastic_proj_ = prj;
+        Isotope projIso(prj);
+        Isotope tgtIso(tgt);
+        elastic_Ap_ = projIso.A;
+        elastic_Zp_ = projIso.Z;
+        elastic_At_ = tgtIso.A;
+        elastic_Zt_ = tgtIso.Z;
+        std::cerr << "Elastic scattering detected: " << prj << " + " << tgt << std::endl;
+    }
+
     // SetReaction(target, projectile, ejectile, recoil)
     // In Ptolemy .in: Target(proj,light_out)Residual
     // SetReaction convention: ejectile=heavy_residual, recoil=light_outgoing
@@ -478,16 +500,16 @@ void PtolemyParser::ParseReactionLine(const std::string &line, DWBA &dwba) {
                     // "ELAB = 20" or "ELAB =20"
                     std::string valStr = next.substr(1);
                     if (valStr.empty() && ss >> valStr) {}
-                    try { dwba.SetEnergy(std::stod(valStr)); } catch (...) {}
+                    try { double e = std::stod(valStr); dwba.SetEnergy(e); elastic_Elab_ = e; } catch (...) {}
                 }
             } else if (utok == "ELAB=" && ss >> next) {
                 // "ELAB= 20"
-                try { dwba.SetEnergy(std::stod(next)); } catch (...) {}
+                try { double e = std::stod(next); dwba.SetEnergy(e); elastic_Elab_ = e; } catch (...) {}
             }
             continue;
         }
         if (ParseKeyVal(tok, key, val)) {
-            if (key == "ELAB") dwba.SetEnergy(val);
+            if (key == "ELAB") { dwba.SetEnergy(val); elastic_Elab_ = val; }
         }
     }
 }
@@ -532,4 +554,128 @@ void PtolemyParser::ParseParameterSet(const std::string &line, DWBA &dwba) {
     }
 }
 
+// ── RunElastic: perform elastic scattering calculation using ElasticSolver ──
 
+void PtolemyParser::RunElastic(const DWBA& dwba) {
+    if (!isElastic_) return;
+
+    ElasticSolver solver;
+    solver.SetSystem(elastic_Ap_, elastic_Zp_, elastic_At_, elastic_Zt_, elastic_Elab_);
+
+    // Grid: use Raphael-like defaults (h=0.1 fm, Rmax=30 fm)
+    double h = 0.1;
+    int N = 300;
+    if (elastic_asymptopia_ > 0) {
+        N = (int)(elastic_asymptopia_ / h + 0.5);
+        if (N < 200) N = 200;
+    }
+    solver.SetGrid(h, N);
+
+    // Lmax
+    if (elastic_Lmax_ > 0) {
+        solver.SetLmax(elastic_Lmax_);
+    } else {
+        solver.SetLmax(-1);  // auto
+    }
+
+    // Add potentials from the INCOMING OM
+    const auto& p = elastic_pot_;
+    if (p.V != 0 || p.VI != 0)
+        solver.AddVolumeWS({-std::abs(p.V), -std::abs(p.VI)}, p.R0, p.A);
+    if (p.VSI != 0)
+        solver.AddSurfaceWS({0.0, -std::abs(p.VSI)}, p.RSI0, p.ASI);
+    if (p.VSO != 0 || p.VSOI != 0)
+        solver.AddSpinOrbit({-std::abs(p.VSO), -std::abs(p.VSOI)}, p.RSO0, p.ASO);
+    if (p.RC0 > 0)
+        solver.AddCoulomb(p.RC0);
+
+    // Compute
+    solver.CalcKinematics();
+    solver.CalcScatteringMatrix();
+
+    // Print header
+    std::cout << std::endl;
+    std::cout << "REACTION: " << elastic_proj_ << " + " << elastic_target_
+              << "  ELASTIC SCATTERING" << std::endl;
+    std::cout << "ELAB = " << std::fixed << std::setprecision(3) << elastic_Elab_ << " MeV" << std::endl;
+    solver.PrintKinematics();
+
+    // Print optical potential
+    std::cout << std::endl;
+    std::cout << "OPTICAL MODEL POTENTIAL:" << std::endl;
+    if (p.V != 0 || p.VI != 0)
+        std::cout << "  Volume WS:   V=" << p.V << "  R0=" << p.R0 << "  A=" << p.A
+                  << "  VI=" << p.VI << std::endl;
+    if (p.VSI != 0)
+        std::cout << "  Surface WS:  VSI=" << p.VSI << "  RSI0=" << p.RSI0 << "  ASI=" << p.ASI << std::endl;
+    if (p.VSO != 0 || p.VSOI != 0)
+        std::cout << "  Spin-Orbit:  VSO=" << p.VSO << "  RSO0=" << p.RSO0 << "  ASO=" << p.ASO
+                  << "  VSOI=" << p.VSOI << std::endl;
+    if (p.RC0 > 0)
+        std::cout << "  Coulomb:     RC0=" << p.RC0 << std::endl;
+
+    // Print S-matrix (magnitude and phase)
+    std::cout << std::endl;
+    solver.PrintSMatrix();
+
+    // Print DCS table
+    double thMin = elastic_angleMin_;
+    double thMax = elastic_angleMax_;
+    double thStep = elastic_angleStep_;
+    if (thMin < 0.5) thMin = thStep;  // avoid θ=0
+
+    double k = solver.k();
+    double eta = solver.eta();
+
+    std::cout << std::endl;
+    std::cout << std::setw(8) << "ANGLE" << std::setw(14) << "SIGMA/RUTH"
+              << std::setw(14) << "SIGMA_CM" << std::setw(14) << "RUTHERFORD" << std::endl;
+    std::cout << std::setw(8) << "(deg)" << std::setw(14) << ""
+              << std::setw(14) << "(mb/sr)" << std::setw(14) << "(mb/sr)" << std::endl;
+
+    double totalReaction = 0;
+    for (double theta = thMin; theta <= thMax + 0.001; theta += thStep) {
+        double sigma = solver.DCSUnpolarized(theta);
+
+        // Rutherford cross section
+        double th_rad = theta * M_PI / 180.0;
+        double sin2 = std::sin(th_rad / 2.0);
+        double ruth = (eta * eta) / (4.0 * k * k * sin2 * sin2 * sin2 * sin2) * 10.0;
+        // fm²/sr → mb/sr: multiply by 10
+
+        double ratio = (ruth > 0) ? sigma / ruth : 0;
+
+        std::cout << std::fixed << std::setprecision(2) << std::setw(8) << theta
+                  << std::setprecision(4) << std::setw(14) << ratio
+                  << std::scientific << std::setprecision(4) << std::setw(14) << sigma
+                  << std::setw(14) << ruth << std::endl;
+    }
+
+    // Total reaction cross section from S-matrix
+    // σ_R = (π/k²) Σ_{L,J} (2J+1) (1 - |S_{LJ}|²)
+    double sigmaR = 0;
+    double spin = solver.S();
+    int Lmax = 0;
+    // Find Lmax from S-matrix
+    for (int L = 0; L < 200; L++) {
+        bool found = false;
+        for (int dj2 = -(int)(2*spin); dj2 <= (int)(2*spin); dj2 += 2) {
+            int twoJ = 2*L + dj2;
+            if (twoJ < 0) continue;
+            auto S = solver.GetSMatrix(L, twoJ);
+            if (std::abs(S) > 1e-15 || L < 5) {
+                found = true;
+                double J = twoJ / 2.0;
+                sigmaR += (2*J + 1) * (1.0 - std::norm(S));
+            }
+        }
+        if (!found && L > 5) break;
+        Lmax = L;
+    }
+    sigmaR *= M_PI / (k * k) / (2.0 * spin + 1.0) * 10.0;  // fm² → mb
+
+    std::cout << std::endl;
+    std::cout << std::fixed << std::setprecision(3);
+    std::cout << "TOTAL REACTION CROSS SECTION = " << sigmaR << " mb" << std::endl;
+    std::cout << std::endl;
+}

@@ -115,7 +115,7 @@ void DWBA::WavSet(Channel &ch) {
 //                         JP=2L   → spin_dot_L = -1    (J=L);
 //                         JP=2L-2 → spin_dot_L = -(L+1) (J=L-1)
 // ---------------------------------------------------------------------------
-void DWBA::WavElj(Channel &ch, int L, int Jp) {
+void DWBA::WavElj(Channel &ch, int L, int Jp, bool skipSO, bool scanMode) {
   int N = ch.NSteps;
   double h = ch.StepSize;
   double h2 = h * h;
