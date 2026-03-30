@@ -536,13 +536,12 @@ void DWBA::WavElj(Channel &ch, int L, int Jp, bool skipSO, bool scanMode) {
         Rcwfn(rho_ext, ch.eta, L, L, FC_ext, FCP_ext, GC_ext, GCP_ext);
         double FL_ext = FC_ext[L];
         double GL_ext = GC_ext[L];
-        // Unnormalized chi at r_ext: same asymptotic as at matching point
-        // u_unnorm = 0.5*((1+S)*F + i*(1-S)*G) at large r
+        // Normalized chi at r_ext: (A1+iA2) is already the normalized form
+        // because u[N]*alpha = (A1n+iA2n), and the asymptotic form at any r
+        // uses the same (1+S)/2 and (1-S)/2 coefficients.
         double A1_ext = 0.5 * (FL_ext * (1.0 + SJR) + SJI * GL_ext);
         double A2_ext = 0.5 * (GL_ext * (1.0 - SJR) + SJI * FL_ext);
-        // Normalized: chi = (A1+iA2) * alpha
-        std::complex<double> chi_ext(A1_ext, A2_ext);
-        ch.WaveFunction[I] = chi_ext * alpha;
+        ch.WaveFunction[I] = {A1_ext, A2_ext};
       }
     }
   }

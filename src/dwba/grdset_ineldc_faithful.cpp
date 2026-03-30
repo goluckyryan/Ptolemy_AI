@@ -2039,13 +2039,12 @@ void DWBA::InelDcFaithful2()
                 }  // End IU loop (DO 549)
 
 #ifdef DUMP_CMPTED
-                // Dump SMHVL for comparison with Fortran CMPTED
+                // Dump SMHVL for comparison with Fortran
                 if (LI == 0 && IV == 1) {
-                    for (int IH = 0; IH < IHMAX; ++IH) {
-                        for (int iu = 1; iu <= NPSUM; ++iu) {
-                            fprintf(stderr, "CPP_CMPTED LI=%d IV=%d IH=%d IU=%d  %.5E\n",
-                                    LI, IV, IH, iu, SMHVL[IH][iu]);
-                        }
+                    // SMHVL[IH=0][IU=1..NPSUM] — matches FTN_SMHVL0
+                    for (int iu = 1; iu <= NPSUM; ++iu) {
+                        fprintf(stderr, "CPP_SMHVL0 IU=%3d S1=%16.8E\n",
+                                iu, SMHVL[0][iu]);
                     }
                 }
 #endif
@@ -2075,6 +2074,16 @@ void DWBA::InelDcFaithful2()
                     for (int iu2 = 0; iu2 < NPSUMI; ++iu2)
                         SMIVL[IH][iu2+1] = Y_out[iu2];
                 }
+
+#ifdef DUMP_CMPTED
+                // Dump SMIVL after spline — matches FTN_SMIVL0
+                if (LI == 0 && IV == 1) {
+                    for (int iu = 1; iu <= NPSUMI; ++iu) {
+                        fprintf(stderr, "CPP_SMIVL0 IU=%3d Usi=%10.4f V=%16.8E\n",
+                                iu, SMIPT[iu-1], SMIVL[0][iu]);
+                    }
+                }
+#endif
 
                 // ── DO 789 IU = 1, NPSUMI (chi integration) ──────────────────
                 // IPLUNK = NPSUMI*(IV-1) + IU  (1-based)
@@ -2172,6 +2181,71 @@ void DWBA::InelDcFaithful2()
                             }
                         }
                     }
+#ifdef DUMP_CMPTED
+                    // Per-IU running I_accum dump for LI=0
+                    if (LI == 0 && IV == 1 && !I_accum.empty()) {
+                        auto it0 = I_accum.begin();
+                        fprintf(stderr, "CPP_IU0 IU=%3d Ire=%16.8E Iim=%16.8E TERM=%12.4E\n",
+                                IU, it0->second.first, it0->second.second, TERM);
+                    }
+                    // Dump chi array values around NSTEP boundary for LI=0
+                    if (LI == 0 && IV == 1 && IU == 42) {
+                        auto itA = chi_a_map.begin();
+                        const auto& tabA = itA->second;
+                        fprintf(stderr, "CPP_CHITAB chi_a around NSTEP boundary:\n");
+                        for (int idx = 235; idx <= 250 && idx < (int)tabA.size(); ++idx) {
+                            fprintf(stderr, "  [%d] r=%.4f  (%.8e, %.8e)\n",
+                                    idx, idx*h_a, tabA[idx].real(), tabA[idx].imag());
+                        }
+                    }
+                    // Dump chi products and DW at IU=42-44 for LI=0
+                    if (LI == 0 && IV == 1 && IU >= 42 && IU <= 44) {
+                        // Dump first JPI's chi_a at RI and first chi_b at RO
+                        auto itA = chi_a_map.begin();
+                        double ridxA = RI_c / h_a;
+                        int iaiA = (int)(ridxA + 0.5);
+                        auto itB = chi_b_map.begin();
+                        double ridxB = RO_c / h_b;
+                        int iaiB = (int)(ridxB + 0.5);
+                        // Interpolate chi_a
+                        std::complex<double> ca{0,0}, cb{0,0};
+                        {
+                            const auto& tab = itA->second;
+                            int mx = (int)tab.size()-3;
+                            if (iaiA>=2 && iaiA<=mx) {
+                                double P=ridxA-iaiA, PS=P*P;
+                                double X1=P*(PS-1)/24,X2=X1+X1,X3=X1*P;
+                                double X4=X2+X2-0.5*P,X5=X4*P;
+                                double C1=X3-X2,C5=X3+X2,C3=X5-X3,C2=X5-X4,C4=X5+X4;
+                                C3=C3+C3+1;
+                                ca = C1*tab[iaiA-2]-C2*tab[iaiA-1]+C3*tab[iaiA]-C4*tab[iaiA+1]+C5*tab[iaiA+2];
+                            }
+                        }
+                        {
+                            const auto& tab = itB->second;
+                            int mx = (int)tab.size()-3;
+                            if (iaiB>=2 && iaiB<=mx) {
+                                double P=ridxB-iaiB, PS=P*P;
+                                double X1=P*(PS-1)/24,X2=X1+X1,X3=X1*P;
+                                double X4=X2+X2-0.5*P,X5=X4*P;
+                                double C1=X3-X2,C5=X3+X2,C3=X5-X3,C2=X5-X4,C4=X5+X4;
+                                C3=C3+C3+1;
+                                cb = C1*tab[iaiB-2]-C2*tab[iaiB-1]+C3*tab[iaiB]-C4*tab[iaiB+1]+C5*tab[iaiB+2];
+                            }
+                        }
+                        double DWR = ca.real()*cb.real()+ca.imag()*cb.imag();  // Wait, DW = chi_b * conj(chi_a)?
+                        // Actually: DWR = FOR*FIR - FOI*FII  (chi_b × chi_a, not conjugate)
+                        double FIR=ca.real(), FII=ca.imag(), FOR2=cb.real(), FOI2=cb.imag();
+                        DWR = FOR2*FIR - FOI2*FII;
+                        double DWI2 = FOR2*FII + FOI2*FIR;
+                        fprintf(stderr, "CPP_CHI IU=%3d RI=%.4f RO=%.4f iaiA=%d iaiB=%d\n"
+                                "  chi_a=(%.8e,%.8e) chi_b=(%.8e,%.8e)\n"
+                                "  DWR=%.8e DWI=%.8e SMIVL=%.8e TERM=%.8e\n",
+                                IU, RI_c, RO_c, iaiA, iaiB,
+                                ca.real(), ca.imag(), cb.real(), cb.imag(),
+                                DWR, DWI2, SMIVL[0][IU], TERM);
+                    }
+#endif
                 }  // End IU chi loop (DO 789)
 
                 // Debug STEP_E: running I_accum[II=1] after each IV
