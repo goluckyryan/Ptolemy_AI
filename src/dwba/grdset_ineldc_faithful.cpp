@@ -2008,8 +2008,7 @@ void DWBA::InelDcFaithful2()
 
                         if (PVPDX == 0.0) continue;
 
-                        if (LI == 3 && IU == 11 && IV == 1) {
-                        }
+
 
                         // Accumulate into LHSM1[IH] += PVPDX * A12(PHIT, PHI)
                         for (int IH = 0; IH < IHMAX; ++IH) {
@@ -2273,9 +2272,13 @@ void DWBA::InelDcFaithful2()
 
                         // Debug: dump raw I_accum (before phase/ATERM)
 #ifdef DUMP_IACC
-                        fprintf(stderr, "CPP_IACC LI=%d IH=%d JPI=%d JPO=%d SR=%.6e SI=%.6e MAG=%.6e\n",
-                                LI, IH, JPI_v, JPO,
-                                I_raw.real(), I_raw.imag(), std::abs(I_raw));
+                        {
+                            int Lo_d = lolx_pairs[IH].Lo;
+                            int Lx_d = lolx_pairs[IH].Lx;
+                            fprintf(stderr, "CPP_IACC LI=%d JPI=%d Lo=%d JPO=%d Lx=%d SR=%.6e SI=%.6e MAG=%.6e\n",
+                                    LI, JPI_v, Lo_d, JPO, Lx_d,
+                                    I_raw.real(), I_raw.imag(), std::abs(I_raw));
+                        }
 #endif
 
                         std::complex<double> Integral = I_raw * phase_factor;
