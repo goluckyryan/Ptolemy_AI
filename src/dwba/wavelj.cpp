@@ -151,8 +151,6 @@ void DWBA::WavElj(Channel &ch, int L, int Jp, bool skipSO, bool scanMode) {
   double SDOTL_raw =
       0.25 * double(Jp * (Jp + 2) - JSP_ch * (JSP_ch + 2)) - DL2;
   double spin_dot_L = (JSP_ch > 0 && !skipSO) ? SDOTL_raw / JSP_ch : 0.0;
-  fprintf(stderr, "WAVELJ_DBG L=%d Jp=%d skipSO=%d spin_dot_L=%.6f SDOTL_raw=%.6f JSP_ch=%d\n",
-          L, Jp, skipSO, spin_dot_L, SDOTL_raw, JSP_ch);
 
   // Physical constants (same as dwba.cpp globals)
   // Must match Ptolemy's constants exactly (source.f line 14066-14067)
@@ -303,8 +301,6 @@ void DWBA::WavElj(Channel &ch, int L, int Jp, bool skipSO, bool scanMode) {
     double thisr_ftn = std::abs(u[i+1].real()) + std::abs(u[i+1].imag());
     if (thisr_ftn > BIGNUM) {
       // Rescale: multiply ALL stored values by 1/thisr (Fortran L1 norm)
-      fprintf(stderr, "WAVELJ_RESCALE L=%d i=%d r=%.3f |u|_L2=%.3e |u|_L1=%.3e ratio=%.6f\n",
-              L, i+1, (i+1)*h, mag, thisr_ftn, mag/thisr_ftn);
       double inv_mag = 1.0 / thisr_ftn;  // USE L1 NORM like Fortran!
       for (int j = ISTRT; j <= i + 1; ++j) u[j] *= inv_mag;
       // Track ISTRT: find first nonzero (inner region is naturally small)
