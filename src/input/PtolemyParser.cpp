@@ -168,8 +168,7 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
                 // Auto-compute binding energy if not explicitly given
                 if (bs_binding < 1e-6 && !rxn_target.empty() && !rxn_residual.empty()) {
                     // Compute BE from Ptolemy mass excesses (AME2003), matching Fortran SETCHN:
-                    // E = ME(residual) - ME(transferred) - ME(core) - Ex
-                    // transferred = residual - core (e.g., neutron for d,p)
+                    // BE = Sn - Ex = (ME_core + ME_trans - ME_res) - Ex
                     Isotope core(rxn_target);
                     Isotope residual(rxn_residual);
                     int A_trans = residual.A - core.A;
@@ -177,7 +176,8 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
                     double ME_core = PtolemyMass::MassExcess_MeV(core.Z, core.A);
                     double ME_res  = PtolemyMass::MassExcess_MeV(residual.Z, residual.A);
                     double ME_trans = PtolemyMass::MassExcess_MeV(Z_trans, A_trans);
-                    bs_binding = -(ME_res - ME_trans - ME_core - rxn_excitation);
+                    // BE = Sn - Ex = (ME_core + ME_trans - ME_res) - Ex
+                    bs_binding = ME_core + ME_trans - ME_res - rxn_excitation;
                     std::cerr << "Auto-computed target binding energy: "
                               << bs_binding << " MeV (Sn of " << rxn_residual
                               << ", Ex=" << rxn_excitation
