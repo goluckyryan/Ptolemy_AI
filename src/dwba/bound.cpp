@@ -171,14 +171,20 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
   double kappa  = std::sqrt(2.0 * mu_MeV * bindingEnergy) / HBARC_L;
   double DL2    = l * (l + 1.0);
 
-  int    NSTEPS = ch.NSteps;
   double h      = ch.StepSize;
+  // Ptolemy BOUND: NSTEPS = ASYMPT/STEPSZ + 1.5 (not +0.5 like WavSet)
+  int    NSTEPS = static_cast<int>(ch.MaxR / h + 1.5);
   double h2     = h * h;
 
   std::cout << "Bound State (Ptolemy BOUND): E=" << -bindingEnergy
             << " MeV, kappa=" << kappa << " fm^-1"
             << ", L=" << l << ", J=" << j
             << ", mu=" << ch.mu << " AMU" << std::endl;
+#ifdef DUMP_BOUND
+  fprintf(stderr, "DBG_BS: mu_MeV=%.6f AFAC=%.8f kappa=%.8f DL2=%.1f\n",
+          mu_MeV, AFAC, kappa, DL2);
+  fprintf(stderr, "DBG_BS: NSTEPS=%d h=%.8f\n", NSTEPS, h);
+#endif
 
   // ---- Build V1 and V2 potential arrays (0-indexed, size NSTEPS+5) ----
   // Ptolemy BOUND: V2[I] = WS(r)/1  (WOODSX type=1, depth=-1 → returns +f_WS)
@@ -220,36 +226,16 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
     double ex_c = (r > 1e-15) ? std::exp((r - R_nuc) / ch.Pot.A) : 1e100;
     V2[I] = 1.0 / (1.0 + ex_c);
 
-    // SO: WOODSX type=2, V=-1 → LWF1 = 2*exp/((1+exp)²·ASO·r)  (positive)
-    // Ptolemy BOUND: V1 += ALS * LWF1 (ALS = VSO*ALS_raw, LWF1 > 0)
-    // In Ptolemy NF: X = V*LV2 + V1, LV2 < 0 (WOODSX type1 V=-1)
-    //   → effective V_SO in SE = -(-AFAC*V1) = AFAC*V1 = AFAC*ALS*LWF1
-    // In C++ NF: X = V0*V2 + V1, V2 > 0 (opposite sign to Ptolemy LV2)
-    //   → effective V_SO in SE = -(-AFAC*V1) = AFAC*V1   (same sign as Ptolemy)
-    //   BUT V2 > 0 while LV2 < 0: C++ WS is attractive via -AFAC*(+V0*V2) < 0
-    //   while Ptolemy WS is attractive via -AFAC*(V*LV2 < 0) = -AFAC*(negative) > 0 -- WAIT
-    //
-    // KEY: In C++ NF, -AFAC*X appears with a MINUS sign:
-    //   NF = 2 + h²*(κ²  -AFAC*X + DL²/r²)
-    // For bound-state oscillation inside well we need NF < 2:
-    //   → -AFAC*X < 0  → X > 0
-    // C++ V0*V2 > 0 ✓; V1 sign must NOT make X < 0 (can reduce X, but not flip it).
-    //
-    // Effective physical potential: V_eff = -X / AFAC
-    //   V_WS_eff  = -V0*V2/AFAC  < 0  (attractive, correct)
-    //   V_SO_eff  = -V1/AFAC = -ALS*f_so/AFAC
-    //
-    // For 0d5/2 (j=l+½): SO should be attractive (lowers energy).
-    //   ALS = VSO*ALS_raw = (-6)*(+2) = -12; f_so > 0
-    //   V_SO_eff = -(-12)*f_so/AFAC = +12*f_so/AFAC > 0  (REPULSIVE — WRONG)
-    //
-    // Fix: negate V1 SO term so V_SO_eff = -(-ALS*f_so) = ALS*f_so/AFAC < 0 (attractive ✓)
-    //   i.e., V1[I] -= ALS * f_so
+    // SO: WOODSX type=2, V=-1 → returns +2*exp/((1+exp)²·ASO·r)  (positive)
+    // Fortran BOUND: V1[I] += ALS * LWF1   (where LWF1 > 0)
+    // So V1[I] = -VC + ALS * f_SO
+    // Verified: WOODSX type=1 with V=-1 gives +f_WS (positive), so V2 = +f_WS
+    // Both V1 and V2 use the same sign convention → V1[I] += ALS * f_SO
     if (ch.Pot.VSO != 0.0 && r > 1e-15) {
       double ex_s = std::exp((r - R_SO) / ch.Pot.ASO);
       double den  = 1.0 + ex_s;
       double f_so = (2.0 / (ch.Pot.ASO * r)) * ex_s / (den * den);
-      V1[I] -= ALS * f_so;   // minus sign: corrects SO sign convention in C++ Numerov
+      V1[I] += ALS * f_so;   // matches Fortran BOUND: V1 += ALS * LWF1
     }
   }
 
@@ -258,6 +244,23 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
   if (NMTOP < 20) NMTOP = 20;
   if (NMTOP > NSTEPS - 5) NMTOP = NSTEPS - 5;
   int NMBOT = std::max(NMTOP - 20, 3);
+
+#ifdef DUMP_BOUND
+  fprintf(stderr, "DBG_BS: NMTOP=%d NMBOT=%d R_nuc=%.6f R_SO=%.6f\n",
+          NMTOP, NMBOT, R_nuc, R_SO);
+  fprintf(stderr, "DBG_BS: ALS_raw=%.8f ALS=%.8f VSO=%.4f JP=%d JSP=%d\n",
+          ALS_raw, ALS, ch.Pot.VSO, JP, JSP);
+  fprintf(stderr, "DBG_BS: ZP=%.0f ZT=%.0f A_target=%d\n", ZP, ZT, ch.Target.A);
+  for (int I = 0; I <= 3; I++) {
+    fprintf(stderr, "DBG_BS: V1[%d]=%.10e V2[%d]=%.10e (r=%.6f)\n", I, V1[I], I, V2[I], I*h);
+  }
+  // Near nuclear surface
+  int i90 = static_cast<int>(R_nuc/h);
+  for (int I = i90-1; I <= i90+2; I++) {
+    if (I >= 0 && I <= NSTEPS)
+      fprintf(stderr, "DBG_BS: V1[%d]=%.10e V2[%d]=%.10e (r=%.6f)\n", I, V1[I], I, V2[I], I*h);
+  }
+#endif
 
   // ---- V search via bisection (Ptolemy BOUND searches V to match derivatives) ----
   // We find V such that PHI = DROUT - DRIN = 0
@@ -405,9 +408,26 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
   double V_lo = -1.0, V_hi = -1.0, phi_lo = 0.0, phi_hi = 0.0;
   double prev_phi = 1e30;
   int    found_n  = -1;
+
+#ifdef DUMP_BOUND
+  // Debug: evaluate at Fortran's converged V to see what C++ PHI gives
+  {
+    int dbg_nodes = 0;
+    double dbg_phi = eval_bound(45.654, false, nullptr, &dbg_nodes);
+    fprintf(stderr, "DBG_BOUND V=45.654 PHI=%e nodes=%d (Fortran converges here)\n", dbg_phi, dbg_nodes);
+    dbg_phi = eval_bound(48.758, false, nullptr, &dbg_nodes);
+    fprintf(stderr, "DBG_BOUND V=48.758 PHI=%e nodes=%d (C++ converges here)\n", dbg_phi, dbg_nodes);
+  }
+#endif
+
   for (double Vt = 10.0; Vt <= 300.0; Vt += 2.0) {
     int cur_nodes = 0;
     double phi = eval_bound(Vt, false, nullptr, &cur_nodes);
+#ifdef DUMP_BOUND
+    if (Vt >= 40.0 && Vt <= 56.0) {
+      fprintf(stderr, "DBG_BOUND_SCAN V=%.1f PHI=%e nodes=%d\n", Vt, phi, cur_nodes);
+    }
+#endif
     if (prev_phi != 1e30 && phi*prev_phi < 0.0) {
       // This bracket has node count == cur_nodes (the higher-V side)
       // Use cur_nodes as the node count for the bracket

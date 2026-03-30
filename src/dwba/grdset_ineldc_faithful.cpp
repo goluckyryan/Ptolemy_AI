@@ -2040,6 +2040,18 @@ void DWBA::InelDcFaithful2()
 
                 }  // End IU loop (DO 549)
 
+#ifdef DUMP_CMPTED
+                // Dump SMHVL for comparison with Fortran CMPTED
+                if (LI == 0 && IV == 1) {
+                    for (int IH = 0; IH < IHMAX; ++IH) {
+                        for (int iu = 1; iu <= NPSUM; ++iu) {
+                            fprintf(stderr, "CPP_CMPTED LI=%d IV=%d IH=%d IU=%d  %.5E\n",
+                                    LI, IV, IH, iu, SMHVL[IH][iu]);
+                        }
+                    }
+                }
+#endif
+
                 // ── DO 609 IH = 1, IHMAX (spline SMHVL → SMIVL) ─────────────
                 // Fortran: CALL SPLNCB(NPSUM, SMHPT, SMHVL[IH][*], work...)
                 //          CALL INTRPC(NPSUM, SMHPT, SMHVL, work..., NPSUMI, SMIPT, SMIVL[IH][*])
