@@ -34,6 +34,23 @@ A C++ translation of the Fortran [Ptolemy](https://www.phy.anl.gov/theory/resear
 
 Requires a C++17 compiler. No external dependencies.
 
+### Prerequisites
+
+**Ubuntu/Debian:**
+```bash
+sudo apt install build-essential gfortran
+# For 32-bit Fortran reference binary (optional):
+sudo apt install gfortran-multilib gcc-multilib libc6-dev-i386
+```
+
+**Fedora/RHEL:**
+```bash
+sudo dnf install gcc-c++ gcc-gfortran
+# For 32-bit: sudo dnf install glibc-devel.i686 libgfortran.i686
+```
+
+### C++ Code
+
 ```bash
 g++ -O2 -std=c++17 -Iinclude \
   src/main.cpp \
@@ -56,6 +73,19 @@ g++ -O2 -std=c++17 -Iinclude \
   src/input/PtolemyParser.cpp \
   -o ptolemy++ -lm
 ```
+
+### Fortran Reference Binary (32-bit)
+
+The original Fortran Ptolemy must be built as a **32-bit** binary due to integer/pointer size assumptions in the allocator system.
+
+```bash
+cd fortran
+make        # builds ./ptolemy (32-bit ELF)
+```
+
+Requires `gfortran` with 32-bit multilib support. The `logfac_` size warning during linking is harmless and can be ignored.
+
+⚠️ **Do not build 64-bit** — the code uses `EQUIVALENCE` between `REAL*4` and `REAL*8` arrays with integer packing that breaks on 64-bit.
 
 ## Usage
 
