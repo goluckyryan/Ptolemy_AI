@@ -668,9 +668,9 @@ int main() {
             // Apply to ALL even-LI pairs within Lmax range
             int LDEL = LO - LI;
             int Lmax_elastic_est = 26;
-            bool ENABLE_COULIN = (iret_coulin == 0) && (LI % 2 == 0) && (LI <= Lmax_elastic_est + LX);
+            bool ENABLE_COULIN = (iret_coulin == 0) && (LI <= Lmax_elastic_est + LX);  // ALL LI (Fortran LSTEP=1)
             bool ENABLE_FFI_DIRECT = false;
-            bool valid_for_coulin = (LI % 2 == 0) && std::abs(LDEL) <= LX && (LI <= Lmax_elastic_est + LX);
+            bool valid_for_coulin = std::abs(LDEL) <= LX && (LI <= Lmax_elastic_est + LX);  // ALL LI
             if (ENABLE_COULIN) {
                 auto [id, il] = getCoulinIdx(LI, LO);
 
@@ -678,10 +678,16 @@ int main() {
                 // CL1XX = -R2S4 * COULIN_tail.XX  (Fortran sign: CL1FF = -R2S(4)*FF)
                 std::complex<double> SIN_el = dwba.Incoming.SMatrix[LI];
                 std::complex<double> SOUT_el = dwba.Outgoing.SMatrix[LO];
-                double cl1ff = -R2S4 * coulinTail.FF[id + il * coulinTail.ldldim];
-                double cl1fg = -R2S4 * coulinTail.FG[id + il * coulinTail.ldldim];
-                double cl1gf = -R2S4 * coulinTail.GF[id + il * coulinTail.ldldim];
-                double cl1gg = -R2S4 * coulinTail.GG[id + il * coulinTail.ldldim];
+                // Sign convention: our COULIN returns FF with opposite sign from Fortran
+                // (same as pureFF: physical integral is positive, our coulin returns negative)
+                // Fortran: CL1FF = -R2S4 * FF_physical;  our: coulinTail.FF = -FF_physical
+                // => cl1ff = -R2S4 * (-FF_phys) = +R2S4 * FF_physical = +R2S4 * coulinTail.FF
+                // BUT coulinTail.FF is NEGATIVE (same sign as coulinPure.FF)
+                // So cl1ff = +R2S4 * coulinTail.FF matches Fortran's CL1FF = -R2S4 * FF_physical
+                double cl1ff = +R2S4 * coulinTail.FF[id + il * coulinTail.ldldim];
+                double cl1fg = +R2S4 * coulinTail.FG[id + il * coulinTail.ldldim];
+                double cl1gf = +R2S4 * coulinTail.GF[id + il * coulinTail.ldldim];
+                double cl1gg = +R2S4 * coulinTail.GG[id + il * coulinTail.ldldim];
                 std::complex<double> one(1.0, 0.0), imag_i(0.0, 1.0);
                 IRTOIN = 0.25 * C * BETARAT * (
                     (one+SOUT_el)*(one+SIN_el)*cl1ff
