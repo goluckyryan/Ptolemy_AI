@@ -60,3 +60,13 @@ fort.*
 # ── Fortran output ──
 *.out
 ptolemy++
+# Testing data — not for git
+fortran_inel_ref.dat
+fortran_inel_debug.err
+fortran_smat_data.h
+fortran_coulin_ref.f
+fortran_toth_hi.h
+fortran_smat_hi.h
+*.dat
+*.err
+fort.15
