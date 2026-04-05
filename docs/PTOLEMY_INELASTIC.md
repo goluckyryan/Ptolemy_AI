@@ -3,7 +3,7 @@
 **Dudu's guide for Ryan 🐱**
 *Companion to `PTOLEMY_THEORY.md` (covers elastic + transfer DWBA)*
 *Reaction: 206Hg(d,d')206Hg\*(4⁺, Ex=1.0 MeV, BELX=0.12, Elab=14.78 MeV)*
-*Last updated: 2026-04-05*
+*Last updated: 2026-04-05 (afternoon)*
 
 ---
 
@@ -631,13 +631,36 @@ Deformation (BELX=0.12 e²·fm⁸, J_f=4):
   in the recursion, not overwritten by it. Our port may overwrite seeds during accumulation.
 - See Fortran COULIN lines 9628–9650 for the downward recursion and label 800 for the accuracy check.
 
-**Why direct alternatives don't work:**
-- `FF_pure_coulomb(0,4)` from Fortran = -4.79e-5 (highly cancelling integral)
-- Direct Clints from turning point: gives +7e-6 (outer) + (-4.73e-4) (inner) = -4.66e-4 (10× too large)
-- Clints with different starting radii: oscillates from +1.6e-3 to -5.7e-4 (not converging)
-- The COULIN recursion specifically avoids these cancellation errors by building up from
-  analytically-known Clints seeds at the boundary and recursing to lower L values
-- Without the stable recursion, no simple direct approach gives the required precision
+**Update (2026-04-05 afternoon) — Major new findings with correct eta:**
+
+All earlier analysis used wrong eta=0.417 instead of correct **eta=4.65** (206Hg Coulomb parameter).
+With correct eta, the situation is completely different:
+
+**Sign convention discovered:**
+- Our COULIN returns pureFF with OPPOSITE sign from Fortran's physical convention
+- Fix: `cl2ff = +R2S4 * pureFF` (not -R2S4 as in Fortran's CL2FF = -R2S4 * FF)
+- With this sign flip: `FFI = C * BETARAT * (+R2S4) * pureFF` (negative when pureFF > 0)
+- Result: `INUC = ICOMP - FFI_negative = ICOMP + |FFI| > ICOMP` ✓ (Fortran NUCLEAR > INTEGRAL)
+
+**pureFF stability with correct eta:**
+- `pureFF(0,4) = +4.78e-5` (Fortran: +4.83e-5, **1% off ✅**) — stable across all LMXMX
+- `pureFF(2,2) = +8.02e-5` (Fortran: +4.83e-5, **66% off** — 2.9× too large)
+- Verified: S(0,4) = 0.0444 ≈ Fortran NUCLEAR = 0.04431 **perfectly** with sign-flipped FFI
+
+**Key insights with correct eta:**
+- The COULIN inner loop (II=0) covers r=0.4 to 11 fm because F_0(eta=4.65) reaches <1e-6 only at r<0.4 fm
+- For (0,4): step-0 contribution (+4.44e-5) + Clints seed (+1.30e-5) ≈ correct
+- For (2,2): inner loop overestimates by 2.9× (root cause under investigation)
+- Seed-restore stability fix: prevents recursion from overwriting il=0,1 with noise amplified from top seeds
+
+**Why partial fix makes DCS worse:**
+- Applying FFI to only some (LI,LO) pairs creates inconsistency in BETCAL coherent sum
+- Must correct ALL pairs simultaneously for DCS to improve
+- Current state: ENABLE_COULIN=false, baseline 1.72%/11.2% preserved
+
+**Committed changes (38fa0cc):**
+- `coulin.cpp`: __float128 recursion, seed-restore stability fix
+- `test_inelastic.cpp`: ENABLE_COULIN=false (all corrections disabled)
 
 ### 12.3 Remaining DCS Error
 
