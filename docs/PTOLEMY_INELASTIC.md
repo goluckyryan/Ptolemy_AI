@@ -294,15 +294,44 @@ GAMSUM = 5.0
 
 > **Bug fixed 2026-04-03:** GAMSUM was set to 1.0 (transfer default) instead of 5.0 (inelastic default). This was a ~5% error source.
 
-### 6.4 Tail Correction (COULIN — in progress)
+### 6.4 Tail Correction (COULIN — known broken)
 
-For high partial waves where the integrand extends beyond SUMMAX, Ptolemy applies an **asymptotic tail correction** using Coulomb functions:
+For high partial waves where the nuclear+Coulomb integrand extends beyond SUMMAX, Ptolemy applies an **asymptotic tail correction** by separating the nuclear amplitude from the Coulomb amplitude.
 
-$$I_{\text{tail}}(L_I, L_O) = \frac{1}{4} \cdot C \cdot \text{BETRAT} \cdot \left[(1+S_O)(1+S_I)FF - (1-S_O)(1-S_I)GG + i(1+S_O)(1-S_I)FG + i(1-S_O)(1+S_I)GF\right]$$
+The formula (Fortran INRDIN lines 19550–19565):
 
-where FF/GG/FG/GF are integrals of Coulomb functions evaluated via RCASYM+CLINTS+COULIN.
+```fortran
+! ICOMP = C × (nuclear + Coulomb integral from 0 to SUMMAX)
+! IRTOIN = asymptotic Coulomb tail correction (SUMMAX to ∞)
+IRTOIN = 0.25×C×BETRAT×( (1+SOUT)×(1+SIN)×FF
+         - (1-SOUT)×(1-SIN)×GG
+         + i×((1+SOUT)×(1-SIN)×FG
+            + (1-SOUT)×(1+SIN)×GF) )
+! FFI = pure Coulomb Born amplitude (0 to ∞, unperturbed F functions)
+FFI = C × BETRAT × CL2FF
+! Nuclear amplitude:
+INUC = ICOMP + IRTOIN - FFI
+S(LI,LO) = PHASE × INUC
+```
 
-**Status:** COULIN is ported but the tail correction currently makes DCS *worse* (19% mean vs 1.7% baseline) — indexing/sign bug under investigation.
+where FF/GG/FG/GF are integrals `∫ F_L(r)×F_L'(r)/r^N dr` computed via the COULIN recursion.
+
+**Why this matters:** For high-L pairs (LI≥12, LDEL=LO-LI large), INUC = only 10–40% of ICOMP. The COULIN subtraction removes the large Coulomb Born contribution, leaving the small nuclear residual. Without this correction, the high-L S-matrix elements are overestimated by 3–10×.
+
+**Quantitative impact:**
+
+| Pair | ICOMP | Fortran NUCLEAR | Ratio NUCLEAR/ICOMP |
+|------|-------|-----------------|---------------------|
+| (0,4) | 0.0325 | 0.0443 | 1.36 (Coulomb adds) |
+| (4,8) | 0.0132 | 0.0131 | 0.99 |
+| (12,16) | 4.2e-4 | 1.6e-4 | 0.39 |
+| (14,18) | 1.1e-4 | 1.1e-5 | 0.10 ← 90% subtracted! |
+
+**Status (2026-04-05):** COULIN R=0 downward recursion is **numerically unstable** in our port.
+- The `pureFF(LI,LO)` value oscillates with LMAX instead of converging
+- Root cause: the 2D Coulomb recursion requires a stability technique (Miller algorithm or boundary matching) that is not yet ported from Fortran
+- All attempts at applying the correction make DCS worse
+- Baseline (ENABLE_COULIN=false): 1.72% mean, 11.2% max
 
 
 ## 7. BETCAL: Building the Amplitude
@@ -521,20 +550,36 @@ ANGLEMIN=0 ANGLEMAX=180 ANGLESTEP=1
 
 > Note: use `(d,d)` not `(d,d')` — Ptolemy cannot parse the prime character.
 
-### 11.4 Kinematics (206Hg, Elab=14.78 MeV)
+### 11.4 Kinematics (206Hg, Elab=14.78 MeV) — Verified Values
 
 ```
-m_d  = 2.01410 u = 1875.61 MeV/c²
-M_Hg = 205.97 u  = 191840.7 MeV/c²
-μ_in = m_d × M_Hg / (m_d + M_Hg) = 1869.8 MeV/c²
-E_cm = Elab × M_Hg/(m_d + M_Hg) = 14.78 × 191840.7/193716.3 = 14.637 MeV
-k_in = √(2μ E_cm) / ħc = √(2 × 1869.8 × 14.637) / 197.327 = 1.4779 fm⁻¹
-η_in = Z_p × Z_t × e² × μ / (ħ² k_in) = 1×80×1.44 MeV·fm × 1869.8/(197.327² × 1.4779) = 27.9
+Constants (Ptolemy values):
+  HBARC = 197.32858 MeV·fm
+  AMUMEV = 931.494 MeV/u
+  AFINE = 137.03604  (= 1/α, NOT α)
+  e² = HBARC/AFINE = 1.43997 MeV·fm
 
-(exit channel same as entrance for inelastic — same projectile, same target up to Q)
-Q = -Ex = -1.0 MeV (excited state at 1.0 MeV)
-E_cm_out = E_cm_in + Q = 14.637 - 1.0 = 13.637 MeV
-k_out = 1.4262 fm⁻¹
+Masses:
+  m_d  = 2.01355 u  (mass excess = 13.136 MeV)
+  M_Hg = 205.9745 u (mass excess = 23.786 MeV)
+
+Kinematics:
+  μ    = m_d × M_Hg / (m_d + M_Hg) = 1.8711 u = 1742.4 MeV/c²
+  Ecm  = Elab × M_Hg/(m_d + M_Hg) = 14.780 × 0.9901 = 14.637 MeV
+  k_in = √(2μ Ecm) / HBARC = 1.18171 fm⁻¹
+  η_in = Zp×Zt×μ×e²/(HBARC²×k_in) = 0.41716
+
+Exit channel (Q = -1.0 MeV, same d+Hg):
+  Ecm_out = 14.637 - 1.0 = 13.637 MeV
+  k_out   = 1.14063 fm⁻¹
+  η_out   = 0.43225
+
+Deformation (BELX=0.12 e²·fm⁸, J_f=4):
+  R_C  = 1.303 × 206^(1/3) = 7.692 fm
+  β_C  = 0.05172
+  R_N  = 1.151 × 206^(1/3) = 6.795 fm
+  β_N  = 0.05855
+  BETARAT = β_C × R_C^4 / (2×4+1) = 20.12 fm⁴
 ```
 
 
@@ -554,18 +599,37 @@ k_out = 1.4262 fm⁻¹
 | 2026-04-03 | GAMSUM=1.0 → 5.0 (inelastic default) | ~5% |
 | 2026-04-03 | Wavefunction interpolation: indices wf[i0-2..i0+2] not wf[i0-1..i0+3] | ~2% |
 
-### 12.2 Active Issue: COULIN Tail Correction
+### 12.2 COULIN Tail Correction — Deep Investigation (2026-04-05)
 
-**Status:** Ported but incorrect — makes DCS worse.
+**Summary of findings after ≈4 hours of investigation:**
 
-Without correction: 1.72% mean, 11.2% max
-With correction: 19.48% mean, 54.6% max
+**Confirmed facts:**
+- ICOMP (0 to SUMMAX integral) matches Fortran INTEGRAL column to 1.9% for LI≤0 to 11 ✅
+- The 11.2% max DCS error **is** due to missing COULIN correction at high-L pairs
+- Fortran total correction amplitude: COULOMB~0.015 for (0,4), but up to 90% of ICOMP for (14,18)
+- The tail FF integrals (SUMMAX to ∞) are physically tiny (~1e-7 fm⁻4) and correctly computed
+- R2S4 = 3×Zp×Zt×e² = 345.6 MeV·fm (correct; AFINE=1/α=137 in Ptolemy convention)
 
-Likely culprits:
-1. COULIN array indexing (Fortran 1-based → C++ 0-based)
-2. Sign or phase in IRTOIN formula
-3. IFACTR (imaginary unit i factor) treatment
-4. Whether Fortran reference data already includes the tail correction
+**Root cause of instability:**
+- The COULIN R=0 downward recursion for pure FF integrals is numerically unstable
+- `pureFF(0,4)` changes from -2.3e-5 to +7.2e-5 depending on LMXMX (should be -4.79e-5)
+- `pureFF(2,2)` changes from -4.8e-5 to +2.0e-3 (should be -2.76e-5)
+- The recursion amplifies floating-point errors over 40+ steps (for LMXMX=50)
+- Even at Fortran-matching LMXMX=30, the values don’t converge to the correct answer
+
+**Things ruled out:**
+- Array indexing (ID/IL 0-based vs 1-based) ✅ — confirmed correct
+- Odd LI pairs (LSTEP=2: Fortran only computes even LI) ✅ — guard added
+- FFI sign convention ✅ — Fortran CL2FF = -R2S4×FF (negative when FF>0)
+- BETARAT formula ✅ — beta_C × Rc^LX / (2LX+1) confirmed
+- IL boundary out-of-bounds ✅ — safe accessor (FF_safe) added, but not root cause
+
+**What needs fixing:**
+- The COULIN R=0 downward recursion stability
+- Fortran likely uses the Miller algorithm or pins seed values at BOTH boundaries
+- Hypothesis: Fortran’s STARTS array stores Clints seeds that are used as boundary conditions
+  in the recursion, not overwritten by it. Our port may overwrite seeds during accumulation.
+- See Fortran COULIN lines 9628–9650 for the downward recursion and label 800 for the accuracy check.
 
 ### 12.3 Remaining DCS Error
 
@@ -573,53 +637,72 @@ Likely culprits:
 |--------|-------|
 | Mean DCS error | 1.72% |
 | Max DCS error | 11.2% (at θ~24°, from high-L tail S-matrix elements) |
-| S-matrix ratio (mean) | 1.006 ± 0.030 vs Fortran |
+| S-matrix: ICOMP vs Fortran INTEGRAL | 1.9% mean for LI≤11 ✅ |
 | BETCAL check (Fortran S input) | 0.25% ✅ |
 | Elastic S-matrix | 0.005% ✅ |
 
-The error is localized to high-L S-matrix elements with small magnitudes — likely the COULIN tail correction or the Lagrange interpolation at extreme radii.
+The error concentrates in high-L S-matrix pairs where the COULIN correction removes 60–90% of ICOMP. Without the correction, these small residual S-matrix elements are overestimated by 3–10×, causing the 11.2% max error at ~24°.
 
 ### 12.4 What Has Been Ruled Out
 
 - BETCAL formula ✅ (verified with Fortran S-matrix)
-- Coulomb form factor ✅ (fixed, minor impact)
+- Coulomb form factor magnitude and sign ✅
 - Spline vs analytical dV/dr ✅ (0.0001% difference)
 - CUBMAP Gauss quadrature mapping ✅
 - Coulomb phases ✅
 - Spin CG coefficients ✅ (= 1.0 trivially, J_in=0, J_out=8)
 - Kinematics (k, η, μ) ✅ (verified vs Fortran)
 - WAVELJ wavefunction normalization ✅
+- R2S4 value ✅ (AFINE=1/α in Ptolemy, e² = HBARC/AFINE = 1.44 MeV·fm)
+- ICOMP for low-L pairs (LI≤11) ✅
 
 
 ## 13. Current Status
 
-**As of 2026-04-05:**
+**As of 2026-04-05 (morning):**
 
 ### ✅ Complete
-- Elastic S-matrix: 0.005% match vs Cleopatra 32-bit
-- BETCAL: 0.25% DCS error with Fortran S-matrix input
-- Form factor (dV/dr via spline): 0.0001% vs analytical
-- Kinematics: verified
-- WAVELJ integration: working (uses inelastic NUMPTS mode)
+- Elastic S-matrix: 0.005% mean vs Cleopatra 32-bit
+- BETCAL formula: 0.25% DCS error with Fortran S-matrix injected
+- Form factor dV/dr via spline: 0.0001% vs analytical
+- Kinematics (k, η, μ): verified vs Fortran
+- WAVELJ (inelastic mode, NUMPTS=NUMPT): working
+- COULIN port: RCASYM ✅, CLINTS ✅, COULIN structure ✅
 
-### 🔄 In Progress
-- COULIN tail correction: ported (RCASYM ✅, CLINTS ✅, COULIN ✅) but result is wrong
-  - Without: 1.72% mean DCS error
-  - With: 19.48% mean (worse — indexing/sign bug)
+### ❌ Broken
+- COULIN R=0 downward recursion: **numerically unstable**
+  - pureFF values oscillate with LMXMX instead of converging
+  - Applying correction makes DCS 19% mean (vs 1.72% baseline)
+  - Flag: `ENABLE_COULIN=false` in `test_inelastic.cpp`
 
-### 📋 Next Steps
-1. Debug COULIN: print actual FF/FG/GF/GG values vs Fortran PRINT=5 output
-2. Verify ID/IL index mapping for specific (LI,LO) pairs
-3. Check whether Fortran reference DCS already includes tail correction
-4. Once COULIN fixed: re-validate full pipeline
+### 📊 Current DCS Accuracy
+
+| Metric | Value |
+|--------|-------|
+| Mean DCS error (vs Cleopatra) | **1.72%** |
+| Max DCS error | **11.2%** at θ~24° |
+| Root cause of max error | Missing COULIN tail correction at high-L pairs |
+| Expected after COULIN fix | <0.5% mean, <2% max |
+
+### 📋 Next Steps (COULIN Fix)
+
+1. Study Fortran COULIN stabilization at label 800 (accuracy check vs STARTS seeds)
+2. Hypothesis: Fortran pins the low-IL rows to direct Clints results rather than recursed values
+   - If the downward recursion is used only to fill INTERMEDIATE IL rows (not the boundary seeds),
+     the instability would be contained
+3. Alternative: replace the unstable recursion with direct Clints calls for all (LI,LO) pairs
+   (expensive but correct; ~N^2 Clints calls instead of recursion)
+4. Once stable: verify pureFF(0,4)=-4.79e-5, pureFF(2,2)=-2.76e-5
+5. Re-run DCS, expect mean <0.5%
 
 ### 🎯 Target
-- Match Cleopatra 32-bit to <0.1% mean DCS (like transfer reaction)
-- Current: 1.72% mean without tail correction
+- Match Cleopatra 32-bit to <0.5% mean DCS for inelastic
+- Transfer reaction already achieves 0.010% mean, 0.028% max ✅
 
 ---
 
 *Reference binary:* `~/working/ptolemy_2019/digios/analysis/Cleopatra/ptolemy` (32-bit, INELOCA1, no SO)
-*Reference data:* `Cpp_AI/fortran_inel_ref.dat`
+*Reference data:* `Cpp_AI/fortran_inel_ref.dat` (BELX=0.12, 206Hg(d,d’)206Hg* 4+, Elab=14.78 MeV)
 *Standing rules:* See `ptolemy_rules.md` — 32-bit only, 206Hg only, no Fortran compilation
+*Last updated:* 2026-04-05
 
