@@ -629,7 +629,7 @@ int main() {
 
             std::complex<double> phase;
             switch (LX % 4) {
-                case 0: phase={0,-1}; break;
+                case 0: phase={0,-1}; break;  // Fortran convention: i^-(LX+1) for LX=4
                 case 1: phase={-1,0}; break;
                 case 2: phase={0,1};  break;
                 case 3: phase={1,0};  break;
@@ -668,7 +668,8 @@ int main() {
             // Apply to ALL even-LI pairs within Lmax range
             int LDEL = LO - LI;
             int Lmax_elastic_est = 26;
-            bool ENABLE_COULIN = (iret_coulin == 0) && (LI <= Lmax_elastic_est + LX);  // ALL LI (Fortran LSTEP=1)
+            bool ENABLE_COULIN = false;  // Disabled: IRTOIN sign fixed but pureFF diagonal still wrong -> 48% error
+            // bool ENABLE_COULIN = (iret_coulin == 0) && (LI <= Lmax_elastic_est + LX);  // ALL LI (Fortran LSTEP=1)
             bool ENABLE_FFI_DIRECT = false;
             bool valid_for_coulin = std::abs(LDEL) <= LX && (LI <= Lmax_elastic_est + LX);  // ALL LI
             if (ENABLE_COULIN) {
