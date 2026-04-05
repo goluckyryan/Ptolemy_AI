@@ -631,6 +631,14 @@ Deformation (BELX=0.12 e²·fm⁸, J_f=4):
   in the recursion, not overwritten by it. Our port may overwrite seeds during accumulation.
 - See Fortran COULIN lines 9628–9650 for the downward recursion and label 800 for the accuracy check.
 
+**Why direct alternatives don't work:**
+- `FF_pure_coulomb(0,4)` from Fortran = -4.79e-5 (highly cancelling integral)
+- Direct Clints from turning point: gives +7e-6 (outer) + (-4.73e-4) (inner) = -4.66e-4 (10× too large)
+- Clints with different starting radii: oscillates from +1.6e-3 to -5.7e-4 (not converging)
+- The COULIN recursion specifically avoids these cancellation errors by building up from
+  analytically-known Clints seeds at the boundary and recursing to lower L values
+- Without the stable recursion, no simple direct approach gives the required precision
+
 ### 12.3 Remaining DCS Error
 
 | Metric | Value |
