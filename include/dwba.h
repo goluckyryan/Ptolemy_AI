@@ -131,9 +131,10 @@ public:
   double GetAngleStep() const { return AngleStep; }
 
   friend class DWBATest;  // for wftest_main.cpp validation
-private:
-  // Internal state
+public:
+  // Internal state (public for inelastic test access)
   Channel Incoming, Outgoing;
+private:
   BoundState TargetBS, ProjectileBS;
   double AngleMin, AngleMax, AngleStep;
   double Ex;
@@ -149,9 +150,11 @@ private:
   // Nuclear spins (set by parser or defaulted in Calculate/CalculateZR)
   double SpinTarget   = -1.0;   // J of target nucleus A (-1 = not set, use heuristic)
   double SpinResidual = -1.0;   // J of residual nucleus B (-1 = not set, use heuristic)
+  public:
   int    LminSet      = -1;     // lmin for incoming partial wave (-1 = use default 0)
   int    LmaxSet      = -1;     // lmax for incoming partial wave (-1 = use default 40)
   double AsymptopiaSet = -1.0;  // asymptopia in fm (-1 = use default 30)
+private:
   double SctAsySet     = -20.0; // scattering asymptopia from preset (DPSB default = -20 fm)
                                 // negative = allow L-dependent turning point extension
 
@@ -168,10 +171,12 @@ private:
   double ProjectileWFSpam  = 1.0;
   bool   ProjectileWFLoaded = false;
 
-  // Methods corresponding to Fortran subroutines
+public:
+  // Methods corresponding to Fortran subroutines (public for inelastic)
   void WavSet(Channel &ch);
   void WavPot(Channel &ch);
   void WavElj(Channel &ch, int L, int Jp, bool skipSO = false, bool scanMode = false);
+private:
   void GrdSet();
   void InelDc();
   void InelDcZR();  // Zero-Range transfer integral

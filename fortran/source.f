@@ -3975,6 +3975,13 @@ C                                                                        3530
             PHASE = SPHASE(KOFFS,I) + SIGIN(LI+1) + SIGOT(LO+1)
             SMATR = AMAG * DSIN( PHASE )
             SMATI = -AMAG * DCOS( PHASE )
+C           Debug: dump SMAG for all LX
+            IF (LI.LE.6 .AND. LO.LE.10)
+     1        WRITE(0,9703) LI, LO, LX, AMAG, SPHASE(KOFFS,I),
+     2              SIGIN(LI+1), SIGOT(LO+1)
+ 9703       FORMAT("FTN_SM LI=",I2," LO=",I2," LX=",I2,
+     1             " MAG=",E14.7," SPH=",F10.5,
+     2             " sI=",F10.5," sO=",F10.5)
             GO TO 250
 C
 C     FOR ELASTIC SCATTERING, S COMES FROM S.                            3540   
@@ -4009,6 +4016,13 @@ C
      1            + TEMPS(I+MX)*SMATR
                BETAS(2,KOFFZ+MX,ILO) = BETAS(2,KOFFZ+MX,ILO)             3570   
      1            + TEMPS(I+MX)*SMATI
+C           Debug per-KOFFS contribution for LO=4, LX=4
+               IF (LO.EQ.4 .AND. LX.EQ.4 .AND. MX.EQ.4)
+     1           WRITE(0,9704) LI,LO,MX,KOFFS,TEMPS(I+MX),
+     2             SMATR,SMATI,TEMPS(I+MX)*SMATR,TEMPS(I+MX)*SMATI
+ 9704          FORMAT("FTN_CONT LI=",I2," LO=",I2," MX=",I1,
+     1           " K=",I1," T=",E12.5," SR=",E12.5," SI=",E12.5,
+     2           " TR=",E12.5," TI=",E12.5)
  269        CONTINUE
 C
  299     CONTINUE
@@ -4053,6 +4067,11 @@ C
             BETAI = TEMPS(MX+1)*BETAI
             BETAS(1,KOFFS,ILO) = BETAR
             BETAS(2,KOFFS,ILO) = BETAI
+C           Debug: dump ALL beta values for inelastic (LX=4)
+            IF (.NOT.ELSW .AND. LX.EQ.4 .AND. LO.LE.10)
+     1        WRITE(0,9702) MX, LO, BETAR, BETAI
+ 9702       FORMAT('FTN_BETA_LX4 MX=',I1,' LO=',I2,
+     1             ' BR=',E15.8,' BI=',E15.8)
 C
             IF ( PRNTSW)  write (6, 393) JTOCS(3,KOFFS), JTOCS(4,KOFFS),
      1         LX, MX, LO, BETAR, BETAI
@@ -5025,9 +5044,6 @@ C
       NBNDS(ICHANB) = NODES
       JBNDS(ICHANB) = JP
       BNDMAX(ICHANB) = ASYMPT
-      write(0,'(A,I2,A,F10.4,A,F10.4,A,I5)')
-     &  'FTN_BNDMAX(',ICHANB,')=',ASYMPT,
-     &  ' STEPSZ=',STEPSZ,' NSTEPS=',NSTEPS
       BNDSTP(ICHANB) = STEPSZ
       NSTPBD(ICHANB) = NSTEPS
       RBNDS(ICHANB) = R
@@ -5420,8 +5436,6 @@ C
  229  CONTINUE
 C
       IF (PINFSW)  write (6, 233) VMAXS, RLMAXS
-      write(0,'(A,2G15.5,A,2G15.5)') 'FTN_RLMAXS V=',VMAXS,
-     &  ' RL=',RLMAXS
  233  FORMAT ( ' PROJECTILE AND TARGET FORMFACTOR MAXIMA:',
      1    2G15.5 /
      1  ' LOCATION OF PROJECTILE AND TARGET FORM-FACTOR MAXIMA:',
@@ -18603,8 +18617,6 @@ C
  273  FORMAT ( '0MAX(RI PSI PHI V PHI PSI RO) OCCURS AT',
      1    ' SUM, DIF, RP, RT =', 4F8.2, 5X, 'VALUE =', G13.3 )
       RVRLIM = DWCUT*WVWMAX
-      write(0,'(A,G15.5,A,G15.5,A,G15.5)')
-     &  'FTN_WVWMAX=',WVWMAX,' DWCUT=',DWCUT,' RVRLIM=',RVRLIM
 C
 C     STEP OUT FROM  U = 0  LOOKING FOR SUMMIN.
 C     WE LOOK FOR U SUCH THAT                                           15960   
@@ -18697,9 +18709,6 @@ C
      1      RTMAX
  367     FORMAT ( 6G13.3 )
          IF ( WVWMAX .GE. RVRLIM  .OR.  U .LT. ULIM )  GO TO 365
-         write(0,'(A,F8.3,A,E12.4,A,E12.4,A,2F8.3,A,2F8.3)')
-     &     'FTN_SCAN U=',U,' WVM=',WVWMAX,' RVR=',RVRLIM,
-     &     ' RP,RT=',RP,RT,' RLM=',RLMAXS(1),RLMAXS(2)
          IF ( RP .GT. RLMAXS(1)  .AND.  RT .GT. RLMAXS(2) )  GO TO 380  16050   
  365     U = U + USTEP
          GO TO 350
@@ -18719,8 +18728,6 @@ C
       IF ( SUMMAX .EQ. UNDEF )  SUMMAX = U
       IF ( PINFSW )  write (6, 381) U, SUMMAX
  381  FORMAT ( ' SUMMAX:  PROPOSED =', G14.5, 5X, 'USED =', G14.5 )
-      write(0,'(A,F10.4,A,F10.4,A,F10.4)')
-     &  'FTN_SUMMAX proposed=',U,' used=',SUMMAX,' SUMMID=',SUMMID
 C
 C     COMPUTE SUMMID AS THE FIRST MOMENT OF U.                          16070   
 C
@@ -32395,8 +32402,6 @@ C     DEFINE THE REDUCED MASS IF NECESSARY                              28030
 C
  370  IF ( AM .NE. UNDEF )  GO TO 380
       AM = AMUMEV * TMP*TMT/(TMP+TMT)
-      write(0,'(A,E18.12,A,E18.12,A,E18.12)')
-     &  'FTN_MKIN TMP=',TMP,' TMT=',TMT,' AM=',AM
 C
 C     FIND ELAB TO ECM CONVERSION
 C
@@ -32455,9 +32460,6 @@ C
  484  CONTINUE
       Q = AMXCS(1) - AMXCS(2) + AMXCS(3) - AMXCS(4)                     28090   
  495  E = ECM + Q
-      write(0,'(A,4E18.10,A,E18.10,A,E18.10)')
-     &  'FTN_Q AMXCS=',AMXCS(1),AMXCS(2),AMXCS(3),AMXCS(4),
-     &  ' Q=',Q,' ECM=',ECM
       GO TO 500
 C
 C     AT LAST E IS DEFINED.  FOR INCOMING WAVE DEFINE ECM, ELAB
@@ -35819,14 +35821,6 @@ C     REAL VALUES.
 C
       SDOTL = .25*(JP*(JP+2) - JSPS(NWP)*(JSPS(NWP)+2)) - DLSQ
       SDOTL = SDOTL / JSPS(NWP)
-      IF (L.EQ.1 .AND. JP.EQ.1 .AND. NWP.EQ.2) THEN
-        write(0,'(A,E18.12,A,E18.12)') 'FTN_SDOTL= ',SDOTL,' DL2= ',
-     &    DLSQ
-        write(0,'(A,E18.12)') 'FTN_H2= ',H*H
-        write(0,'(A,I5,A,I5,A,E18.12)') 'FTN_NSTEP= ',NSTEP,
-     &    ' ISTRT= ',ISTRT,' STEPSZ= ',STEPSZ
-        CALL FLUSH(0)
-      ENDIF
       IF ( ISORS(NWP) .EQ. 0 )  GO TO 240
       LSOR = Z(ISORS(NWP))
       DO 239  I = ISTRT, NSTEP
@@ -35886,19 +35880,7 @@ C
 C
 C     COMPUTE FIRST TWO XSI'S
 C
-C --- Surgical W(I) dump for L=1 JP=1 NWP=2 ---
-C     (placed at label 300 so it's reached from all code paths)
- 300  IF (L.EQ.1 .AND. JP.EQ.1 .AND. NWP.EQ.2) THEN
-        DO 27701 I = ISTRT, NSTEP
-          IF (MOD(I,50).EQ.0 .OR. I.LE.5 .OR. I.EQ.NSTEP
-     &        .OR. I.EQ.NSTEP-4) THEN
-            write(0,'(A,I5,F10.4,2E18.12)') 'FTN_W ',I,I*STEPSZ,
-     &        WAVR(I+4), WAVI(I+4)
-          ENDIF
-27701   CONTINUE
-        CALL FLUSH(0)
-      ENDIF
-      II = ISTRT+1
+ 300  II = ISTRT+1
       DO 309  I = ISTRT, II
          WAVR(I+3) =
      1      TWELTH*( WAVR(I+1)*WAVR(I+4) - WAVI(I+1)*WAVI(I+4) )
@@ -36028,19 +36010,6 @@ C                                                                       30860
 C     END OF THE INTEGRATION
 C
  500  T2=second()
-C --- Surgical u(I) dump for L=1 JP=1 NWP=2 ---
-      IF (L.EQ.1 .AND. JP.EQ.1 .AND. NWP.EQ.2) THEN
-        write(0,'(A,2E18.12)') 'FTN_IC u0= ',WAVR(1),WAVI(1)
-        write(0,'(A,2E18.12)') 'FTN_IC u1= ',WAVR(2),WAVI(2)
-        DO 50001 I = 2, NSTEP
-          IF (MOD(I,50).EQ.0 .OR. I.LE.5 .OR. I.EQ.NSTEP
-     &        .OR. I.EQ.NSTEP-4) THEN
-            write(0,'(A,I5,F10.4,2E18.12)') 'FTN_U ',I,
-     &        I*STEPSZ,WAVR(I+1), WAVI(I+1)
-          ENDIF
-50001   CONTINUE
-        CALL FLUSH(0)
-      ENDIF
       TIMES(2)=TIMES(2)+T2-T1
       NUMWAV = NUMWAV + 1
       NUMLOP = NUMLOP + (NSTEP-NFIRST+1)
@@ -36079,26 +36048,10 @@ C     TRANSLATE THE ELASTIC S-MATRICES TO THE LX SYSTEM AND SAVE THEM.
 C
       SJR = ( CR*A1 + CI*A2 ) / ( A1*A1 + A2*A2 )                       30900   
       SJI = ( CI*A1 - CR*A2 ) / ( A1*A1 + A2*A2 )
-C --- Surgical S-matrix dump for L=1 JP=1 NWP=2 ---
-      IF (L.EQ.1 .AND. JP.EQ.1 .AND. NWP.EQ.2) THEN
-        write(0,'(A,2E18.12,A,F12.8)') 'FTN_SMAT2 SR=',
-     &    SJR,SJI,' |S|=',DSQRT(SJR**2+SJI**2)
-        write(0,'(A,4E18.12)') 'FTN_COUL F1=',F1,G1,F,G
-        write(0,'(A,I5,A,I5)') 'FTN_MATCH NSTEP=',
-     &    NSTEP,' NBAKCM=',NBAKCM
-        write(0,'(A,2E18.12)') 'FTN_U_N  ',
-     &    WAVR(NSTEP+1),WAVI(NSTEP+1)
-        write(0,'(A,2E18.12)') 'FTN_U_NB ',
-     &    WAVR(NSTEP+1-NBAKCM),WAVI(NSTEP+1-NBAKCM)
-        CALL FLUSH(0)
-      ENDIF
       LINDXE = FACFR4*Z(IINDXE(NWP))-FACFR4+1
       IF ( (NWP .NE. 2)  .OR.  (PROBLM .NE. 24))
      1  CALL JPTOLX ( L, L, JP, NWP, SJR, SJI,
      1   ILLOC(LINDXE), ALLOC(Z(ISMATS(NWP))) )
-      write(0,'(A,I2,A,I3,A,I3,2E18.10,A,F12.8)')
-     &  'FTN_SMAT ch=',NWP-1,' L=',L,' JP=',JP,SJR,SJI,
-     &  ' MAG=',DSQRT(SJR**2+SJI**2)
 C
 C  NORMALIZATION HERE
 C
@@ -37861,8 +37814,6 @@ C
       NSTPSS(ICHANW) = NSTEP
       NSTP2S(ICHANW) = NSTEP
       AKS(ICHANW) = UK
-      write(0,'(A,I2,A,E18.12,A,E18.12,A,E18.12)')
-     &  'FTN_WAVSET ch=',ICHANW-1,' k=',UK,' E=',E,' mu=',AM
       REDMS(ICHANW) = AM                                                32300   
       RATMSS(ICHANW) = RATMAS
       JSPS(ICHANW) = JSP
