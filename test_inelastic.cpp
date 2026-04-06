@@ -960,7 +960,7 @@ int main() {
             // Apply to ALL even-LI pairs within Lmax range
             int LDEL = LO - LI;
             int Lmax_elastic_est = 26;
-            bool ENABLE_COULIN = false;  // Disabled: our Gauss quadrature is precise enough that COULIN correction is not needed (and over-corrects)
+            bool ENABLE_COULIN = true;  // IRTOIN only (no FFI), all LI
             bool ENABLE_FFI_DIRECT = false;  // Disabled: was overriding COULIN FFI with wrong sign
             bool valid_for_coulin = std::abs(LDEL) <= LX && (LI <= Lmax_elastic_est + LX);  // ALL LI up to 30
             if (ENABLE_COULIN && valid_for_coulin) {
@@ -1078,7 +1078,7 @@ int main() {
             // Use: cl2ff = -R2S4 * raw_pureFF; FFI = C*BETARAT*cl2ff
             // INUC = ICOMP + IRTOIN - FFI (Fortran formula, applied as-is)
             std::complex<double> ITOTAL = ICOMP + IRTOIN;
-            std::complex<double> INUC = ITOTAL - FFI;  // Fortran: INUC = ITOTAL - FFI
+            std::complex<double> INUC = ITOTAL;  // IRTOIN only, no FFI  // Fortran: INUC = ITOTAL - FFI
             std::complex<double> S = phase * INUC;
 
             if (LI <= 10 || (LI >= 20 && LI <= 30 && LO == LI + LX)) {
@@ -1124,9 +1124,10 @@ int main() {
     double FACTOR_BET = 0.5 / k_in;
     int MX_max = LX;
 
-    // beta[MX][LO] as complex arrays
+    // beta[MX][LO] as complex arrays — extend to LIMOST+LX to accommodate extrapolated values
+    int LOMAX_EXT = 154 + LX + 1;  // max LO from extrapolation
     std::vector<std::vector<std::complex<double>>> beta_arr(MX_max+1,
-        std::vector<std::complex<double>>(Lmax+1, {0.0, 0.0}));
+        std::vector<std::complex<double>>(LOMAX_EXT, {0.0, 0.0}));
 
     // Build lookup map: (LI,LO) -> complex S value
     std::map<std::pair<int,int>, std::complex<double>> Smap;
@@ -1134,7 +1135,58 @@ int main() {
         Smap[{s.LI, s.LO}] = s.val;
     }
 
-#if 0  // Disabled: geometric extrapolation is unreliable; COULIN handles high-L tail
+    // ===== Thiele CF extrapolation of S-matrix to high LI =====
+    // Fortran INTRCF: fits continued fraction to known S(LI) for each delta,
+    // then evaluates at LI = Lmax+1 .. LIMOST (typically ~154)
+    {
+        // Forward declarations for Thiele CF
+        extern int ThieleCF_Setup(int, std::vector<std::complex<double>>&, std::vector<std::complex<double>>&);
+        extern std::complex<double> ThieleCF_Eval(int, const std::vector<std::complex<double>>&, const std::vector<std::complex<double>>&, std::complex<double>);
+
+        int LIMOST = 154;  // Fortran max L for S-matrix extrapolation
+        int LXMAX_CF = LX;  // minimum LI to use as CF input (skip small L)
+        int extrap_count = 0;
+        
+        for (int delta = -LX; delta <= LX; delta += 2) {
+            // Collect known S-matrix values for this delta
+            std::vector<std::complex<double>> cf_xs, cf_ys;
+            for (int LI = 0; LI <= Lmax; LI++) {
+                int LO = LI + delta;
+                if (LO < 0 || LO > Lmax) continue;
+                auto it = Smap.find({LI, LO});
+                if (it == Smap.end()) continue;
+                if (LI < LXMAX_CF) continue;  // skip small L for CF fit
+                cf_xs.push_back(std::complex<double>((double)LI, 0.0));
+                cf_ys.push_back(it->second);
+            }
+            if (cf_xs.size() < 3) continue;
+            
+            // Make copies for CF setup (it modifies in-place)
+            auto xs_work = cf_xs;
+            auto ys_work = cf_ys;
+            int nmax = ThieleCF_Setup((int)xs_work.size(), xs_work, ys_work);
+            
+            // Extrapolate to LI = Lmax+1 .. LIMOST
+            for (int LI = Lmax + 1; LI <= LIMOST; LI++) {
+                int LO = LI + delta;
+                if (LO < 0) continue;
+                auto S_extrap = ThieleCF_Eval(nmax, xs_work, ys_work, 
+                                              std::complex<double>((double)LI, 0.0));
+                double S_mag = std::abs(S_extrap);
+                if (LI <= Lmax + 5 || LI % 20 == 0) {
+                    std::cerr << "CF delta=" << delta << " LI=" << LI << " |S|=" << S_mag 
+                              << " ph=" << std::arg(S_extrap) << std::endl;
+                }
+                if (!std::isfinite(S_mag) || S_mag > 10.0) break;  // relaxed: allow some overshoot
+                if (S_mag < 1e-15) break;  // negligible
+                Smap[{LI, LO}] = S_extrap;
+                extrap_count++;
+            }
+        }
+        std::cerr << "Thiele CF extrapolation: " << extrap_count << " new S-matrix elements (Lmax=" << Lmax << " -> " << LIMOST << ")" << std::endl;
+    }
+
+#if 0  // Disabled: geometric extrapolation replaced by Thiele CF above
     // ===== Geometric extrapolation of S-matrix to high LI =====
     // For each delta, use ratio S(LI)/S(LI-2) from last 3 known points to extrapolate
     {
@@ -1240,15 +1292,12 @@ int main() {
     }
 #else
     // For each (LO, delta): accumulate into beta[MX][LO]
-    for (int LO = 0; LO <= Lmax; LO++) {
-        for (int delta = -LX; delta <= LX; delta += 2) {
-            int LI = LO - delta;
-            if (LI < 0 || LI > Lmax) continue;
+    // Loop over ALL Smap entries (includes extrapolated high-L values)
+    for (auto& [key, Sval] : Smap) {
+        int LI = key.first, LO = key.second;
+        if (LO < 0 || LO >= LOMAX_EXT) continue;
+        {
 
-            auto it = Smap.find({LI, LO});
-            if (it == Smap.end()) continue;
-
-            std::complex<double> Sval = it->second;
             double SMAG = std::abs(Sval);
             double SPHASE = std::arg(Sval);
             if (SMAG < 1e-30) continue;
@@ -1278,7 +1327,7 @@ int main() {
 
     // sqrt-factorial normalization for MX > 0
     for (int MX = 1; MX <= MX_max; MX++) {
-        for (int LO = MX; LO <= Lmax; LO++) {
+        for (int LO = MX; LO < LOMAX_EXT; LO++) {
             double sqfac = 1.0;
             for (int m = 1; m <= MX; m++)
                 sqfac /= std::sqrt((double)(LO+m) * (LO-m+1));
@@ -1293,7 +1342,7 @@ int main() {
         double dcs = 0.0;
         for (int MX = 0; MX <= MX_max; MX++) {
             std::complex<double> amp(0.0, 0.0);
-            for (int LO = MX; LO <= Lmax; LO++) {
+            for (int LO = MX; LO < LOMAX_EXT; LO++) {
                 double bmag = std::abs(beta_arr[MX][LO]);
                 if (bmag < 1e-30 || !std::isfinite(bmag)) continue;
                 amp += beta_arr[MX][LO] * AssocLegP(LO, MX, costh);
