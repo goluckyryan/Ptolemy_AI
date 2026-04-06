@@ -383,7 +383,7 @@ These were all verified during Sessions 17-25:
 6. **CG argument:** CG(LI,0; LX,MX; LO,MX) - not CG(LX,MX; LI,0; LO,MX)
 7. **MX weight:** w(MX)=2 for MX>0, w(0)=1 in DCS sum (factor FMNEG in Fortran)
 
-> **Verified:** BETCAL produces 0.25% DCS error when fed the Fortran S-matrix directly (session 43). The remaining error is in the radial integral.
+> **Verified (2026-04-06):** BETCAL produces 0.033% mean DCS error when fed Fortran's SMATR/SMATI from BETCAL debug output (FTN_SM injection). All components — CG, PLM, sigma, sqrt-factorial — verified correct vs Fortran. See section 12.6.
 
 
 ## 8. AMPCAL + XSECTN: DCS Assembly
@@ -493,12 +493,15 @@ This convention is **identical** to the elastic solver - verified to match at r 
 
 ### 10.3 S-Matrix Accuracy
 
-| Component | Error vs Cleopatra 32-bit |
-|-----------|--------------------------|
+| Component | Error vs Fortran |
+|-----------|------------------|
 | Elastic S-matrix | 0.005% mean ✅ |
-| Inelastic S-matrix (INRDIN) | 0.6% × (1.006 ± 0.030) - systematic bias |
+| INRDIN radial integral (ICOMP) | <0.05% ✅ (injection test 2026-04-05) |
+| BETCAL SMATR per (LI,LO) pair | 0.02% ✅ (vs FTN_SM debug output 2026-04-06) |
+| Full DCS with Fortran BETCAL input | 0.033% mean, 1.5% max at 0° ✅ |
+| Full DCS baseline (COULIN off) | 1.72% mean, 11.2% max at 24° |
 
-The inelastic S-matrix has a mean ratio of 1.006 vs Fortran with σ=0.030. High-L tail elements (small magnitudes) have the largest fractional errors and dominate the 11.2% max DCS error.
+The baseline 1.72% error is entirely from the missing COULIN tail correction for high-L pairs, not from any error in the radial integral or BETCAL formula. See sections 12.5 and 12.6 for the injection test results.
 
 
 ## 11. C++ Implementation Notes
@@ -518,17 +521,27 @@ The inelastic S-matrix has a mean ratio of 1.006 vs Fortran with σ=0.030. High-
 ### 11.2 Build Command
 
 ```bash
-cd ~/working/ptolemy_2019/Cpp_AI && g++ -std=c++17 -O2 -I include \
+cd ~/working/ptolemy_2019/Cpp_AI
+# stub_zr.cpp: cat > /tmp/stub_zr.cpp << 'STUB'
+# #include "dwba.h"
+# void DWBA::InelDcZR() {}
+# STUB
+
+g++ -O2 -std=c++17 -Iinclude \
   test_inelastic.cpp \
-  src/dwba/dwba.cpp src/dwba/bound.cpp src/dwba/coulin.cpp \
-  src/dwba/rcwfn.cpp src/dwba/math_utils.cpp \
-  src/dwba/wavelj.cpp src/dwba/setup.cpp src/dwba/potential_eval.cpp \
-  src/dwba/spline.cpp src/dwba/xsectn.cpp \
-  src/dwba/grdset.cpp src/dwba/ineldc.cpp \
-  src/dwba/a12.cpp src/dwba/av18_potential.cpp \
-  src/input/Isotope.cpp \
+  src/elastic/elastic.cpp src/dwba/rcwfn.cpp \
+  src/dwba/math_utils.cpp src/dwba/coulin.cpp src/dwba/dwba.cpp \
+  src/dwba/grdset.cpp src/dwba/setup.cpp src/dwba/wavelj.cpp \
+  src/dwba/spline.cpp src/dwba/potential_eval.cpp src/dwba/ineldc.cpp \
+  src/dwba/xsectn.cpp src/dwba/a12.cpp src/dwba/bound.cpp \
+  src/input/Isotope.cpp src/input/Potentials.cpp \
   /tmp/stub_zr.cpp \
-  -o test_inelastic_coulin -lm
+  -o test_inel -lm
+
+# Optional flags:
+#   -DINJECT_TOTA   : inject Fortran TOTA pairs (phase*ITOTAL) from /tmp/tota_ext.txt
+#   -DINJECT_SM     : inject Fortran BETCAL SMATR/SMATI from /tmp/ftn_sm_lx4.txt
+#   -DTRUNCATE_R4   : simulate Fortran REAL*4 SMAG/SPHASE precision
 ```
 
 ### 11.3 Fortran Reference Input
