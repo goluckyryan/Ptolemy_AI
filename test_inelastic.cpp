@@ -10,6 +10,9 @@
 #include "ptolemy_mass_table.h"
 #include "coulin.h"
 #include <map>
+#include <set>
+#include <fstream>
+#include <sstream>
 // Forward declaration for Rcwfn (defined in src/dwba/rcwfn.cpp)
 int Rcwfn(double rho, double eta, int lmin, int lmax, std::vector<double>& FC,
           std::vector<double>& FCP, std::vector<double>& GC, std::vector<double>& GCP, double accur);
@@ -20,36 +23,153 @@ static const double AMUMEV = 931.50160;   // Ptolemy value
 static const double AFINE = 1.0/137.03604; // Ptolemy value
 static const double EMASS = 0.5110034;    // electron mass in MeV
 
-// Coulomb phase shift σ_L = arg(Γ(L+1+iη))
-// Uses Stirling approximation at N0=200, same as ElasticSolver::CoulombPhase
+// Coulomb phase shift σ_L — exact port of Fortran DSGMAL from fortlib.f
+// Uses rational polynomial approximation for σ_0(eta), then recursion σ_L = σ_{L-1} + atan(eta/L)
+// Matches Fortran BETCAL exactly (avoids ~1e-5 rad error from Stirling approximation)
 static double CoulombPhaseShift(int L, double eta) {
-    int N0 = 200;
-    double sum_atan = 0;
-    for (int n = 1; n <= N0; ++n) sum_atan += std::atan(eta / n);
-    double x = N0 + 1, y = eta;
-    double theta_N0 = (x-0.5)*std::atan2(y, x) + y/2.0*std::log(x*x + y*y) - y;
-    double sig = theta_N0 - sum_atan;
-    for (int n = 1; n <= L; ++n) sig += std::atan(eta / n);
+    // Rational polynomial coefficients from DSGMAL (fortlib.f)
+    static const double P[26] = {
+         3.10165781012994887e-09,  3.01594747899910910e-06,  2.05644287153878958e-04,
+         4.44558861472056296e-03,  4.24137251918122321e-02,  2.06378868197296478e-01,
+         5.46892269520120738e-01,  7.94948065779220198e-01,  5.93131560870811980e-01,
+         1.77060007536960065e-01,
+         2.41087856973594357e-09,  9.32656994995955490e-07,  7.58581379314270606e-05,
+         2.00706718860656989e-03,  1.88924467702797066e-02,  4.44315921800891838e-02,
+        -1.59601618385062274e-01, -6.85141773275969618e-01, -5.77201920703612828e-01,
+         1.39541051788112899e+02,  1.09052269358000365e+03,  4.85358524121951234e+02,
+        -6.58758053903885070e+02, -4.13023138385032667e+01,  9.22933578234238228e+00,
+        -9.99999999999999944e-01
+    };
+    static const double Q[23] = {
+         1.62632093394676580e-06,  1.80858599479503871e-04,  5.77143957513920856e-03,
+         7.87659072077549621e-02,  5.45157981064667799e-01,  2.08553610110275223e+00,
+         4.57313299223146097e+00,  5.69717859194618481e+00,  3.73731134057316638e+00,
+         8.41871279655082615e-10,  5.25199068334112846e-07,  6.38793895356789098e-05,
+         2.62822889969226652e-03,  4.48275937331078468e-02,  3.45389220533413407e-01,
+         1.22326029540586134e+00,  1.88103263084231598e+00,
+        -1.41115652526220753e+02, -9.96536251962568770e+02, -5.35816773446634613e+02,
+         6.54427162588470765e+02,  4.21589251537016345e+01, -9.31266911567572087e+00
+    };
+    static const double EZ  = 1.80554707160510697;
+    static const double EZ1 = 1.80554771423339844;
+    static const double EZ2 = 6.42628291517623633e-07;
+
+    double X = std::abs(eta), XSQ = X*X;
+    int I, J, K, M; double RSQ;
+    if (X <= 2.0) { I=7; J=0; K=0; M=1; RSQ=XSQ; }
+    else if (X <= 4.0) { I=6; J=10; K=9; M=2; RSQ=XSQ; }
+    else { I=4; J=19; K=17; M=3; RSQ=1.0/XSQ; }
+
+    double QSUM = Q[K];
+    for (int l = K; l < K+I+1; l++) QSUM = QSUM*RSQ + Q[l+1];
+    double PSUM = P[J];
+    for (int l = J; l < J+I+2; l++) PSUM = PSUM*RSQ + P[l+1];
+    double R = PSUM / (QSUM*RSQ + 1.0);
+
+    double sig0;
+    if (M==1) sig0 = X*R*(X+EZ)*((X-EZ1)+EZ2);
+    else if (M==2) sig0 = X*R;
+    else sig0 = std::atan(X)/2.0 + X*(std::log(1.0+XSQ)/2.0 + R);
+
+    // σ_L = σ_0 + sum_{n=1}^{L} atan(|eta|/n)
+    double sig = sig0;
+    for (int n = 1; n <= L; n++) sig += std::atan(X / (double)n);
+
+    // Sign: for eta < 0, σ_L > 0 are negated
+    if (eta < 0.0) sig = -sig;
     return sig;
 }
 
 // CG coefficient for integer arguments
+// ===== Thiele Continued Fraction (port of Fortran CCNFRC/CCONTF) =====
+// Setup: modifies xs,ys in-place to store CF coefficients
+static void ccnfrc(std::vector<std::complex<double>>& xs,
+                   std::vector<std::complex<double>>& ys) {
+    int N = (int)xs.size();
+    if (N == 0) return;
+    const double TINY = 1e-14;
+    // Find largest |y|
+    int K = 0;
+    double comp = -1;
+    for (int i = 0; i < N; i++) {
+        double s = std::norm(ys[i]);
+        if (s > comp) { comp = s; K = i; }
+    }
+    if (K != 0) { std::swap(ys[0],ys[K]); std::swap(xs[0],xs[K]); }
+    // Compute subsequent candidates
+    comp = -1; K = 1;
+    for (int i = 1; i < N; i++) {
+        auto d = 1.0 - ys[0]/ys[i];
+        ys[i] = d;
+        double s = std::norm(d);
+        if (s > comp) { comp = s; K = i; }
+    }
+    int nmax = N-1;
+    for (int j = 1; j < N; j++) {
+        std::swap(ys[j],ys[K]); std::swap(xs[j],xs[K]);
+        auto yj = ys[j]/(xs[j-1]-xs[j]);
+        ys[j] = yj;
+        if (j == N-1) break;
+        if (comp < TINY) { nmax = j; break; }
+        comp = -1; K = j+1;
+        auto xjp = xs[j-1];
+        for (int i = j+1; i < N; i++) {
+            auto d = 1.0 + yj*(xs[i]-xjp)/ys[i];
+            ys[i] = d;
+            double s = std::norm(d);
+            if (s > comp) { comp = s; K = i; }
+        }
+    }
+    ys.resize(nmax+1); xs.resize(nmax+1);
+}
+
+// Evaluate: return CF value at x using coefficients from ccnfrc
+static std::complex<double> ccontf(const std::vector<std::complex<double>>& xs,
+                                    const std::vector<std::complex<double>>& ys,
+                                    std::complex<double> x) {
+    int nmax = (int)ys.size()-1;
+    if (nmax < 1) return ys.empty() ? 0.0 : ys[0];
+    std::complex<double> y(0.0);
+    for (int j = 0; j < nmax; j++) {
+        int k = nmax - j;
+        y = ys[k]*(x - xs[k-1])/(1.0+y);
+    }
+    return ys[0]/(1.0+y);
+}
+
+// ===== Stable CG coefficient using log-gamma, scaled to avoid overflow.
+// Computes CG(j1,j2;m1,m2|J,M) for integer arguments (j2 small, j1 large).
+// Uses term-by-term log-scale Racah sum with relative scaling.
 static double CG_int(int j1, int j2, int m1, int m2, int J, int M) {
     if (M != m1+m2) return 0.0;
     if (J < std::abs(j1-j2) || J > j1+j2) return 0.0;
     if (std::abs(m1) > j1 || std::abs(m2) > j2 || std::abs(M) > J) return 0.0;
-    auto fac = [](int n) -> double {
-        double f = 1.0; for (int i = 2; i <= n; i++) f *= i; return f;
-    };
-    double sum = 0.0;
-    for (int k = 0; k <= j1+j2+J; k++) {
+    // Collect log-magnitudes and signs of each Racah term
+    auto lfac = [](int n) { return std::lgamma(n+1.0); };
+    // Common log-prefactor (delta × norm), split to avoid overflow:
+    // log|CG|^2 = lnD*2 + lnN^2 / prefac^2 — instead work with log terms directly
+    double lnpre = 0.5*(lfac(j1+j2-J)+lfac(j1-j2+J)+lfac(-j1+j2+J)-lfac(j1+j2+J+1)
+                   +std::log(2*J+1.0)+lfac(J+M)+lfac(J-M)
+                   +lfac(j1-m1)+lfac(j1+m1)+lfac(j2-m2)+lfac(j2+m2));
+    // Collect all log|term| values to find max for scaling
+    std::vector<std::pair<double,int>> terms; // (log|term|, sign)
+    for (int k = 0; k <= j2+std::min(j1,J); k++) {
         int n1=j1+j2-J-k, n2=j1-m1-k, n3=j2+m2-k, n4=J-j2+m1+k, n5=J-j1-m2+k;
         if (n1<0||n2<0||n3<0||n4<0||n5<0) continue;
-        sum += (k%2==0?1.0:-1.0) / (fac(k)*fac(n1)*fac(n2)*fac(n3)*fac(n4)*fac(n5));
+        double lterm = -(lfac(k)+lfac(n1)+lfac(n2)+lfac(n3)+lfac(n4)+lfac(n5));
+        int sign = (k%2==0)?1:-1;
+        terms.push_back({lterm, sign});
     }
-    double delta = fac(j1+j2-J)*fac(j1-j2+J)*fac(-j1+j2+J) / fac(j1+j2+J+1);
-    double norm = (2*J+1)*fac(J+M)*fac(J-M)*fac(j1-m1)*fac(j1+m1)*fac(j2-m2)*fac(j2+m2);
-    return sum * std::sqrt(delta * norm);
+    if (terms.empty()) return 0.0;
+    double lmax = terms[0].first;
+    for (auto& t : terms) lmax = std::max(lmax, t.first);
+    double sum = 0.0;
+    for (auto& t : terms) sum += t.second * std::exp(t.first - lmax);
+    // result = exp(lnpre + lmax) * sum
+    double lresult = lnpre + lmax;
+    if (lresult > 700) return 0.0;  // overflow guard — CG should be small here
+    if (lresult < -700) return 0.0; // underflow
+    return std::exp(lresult) * sum;
 }
 
 static double LegP(int L, double x) {
@@ -168,7 +288,7 @@ int main() {
     // Convert: beta_C = (4*pi/(3*Z)) * sqrt(BELX) / (Rc/10)^LX / CG_spin
     // Then beta_N = beta_C * Rc / R_real (equal deformation lengths)
     double BELX = 0.12;
-    int Lmax = 50;
+    int Lmax = 50;  // our INGRST range; Fortran extrapolates to ~154 via INTRCF
 
     // OM parameters - incoming
     double V_in=96.891, r0_in=1.151, a_in=0.793;
@@ -802,7 +922,7 @@ int main() {
     std::cerr << std::endl;
 
     // ===== BETCAL: accumulate beta(MX, LO) from ALL (LI,LO) pairs =====
-    // Verified formula matching Fortran Ptolemy to 0.88%
+    // Matches Fortran BETCAL: BETAS[MX][LO] = sum_LI FACTOR*(2LI+1)*CG*(SMAG*sin(SPHASE+sigma))
     double FACTOR_BET = 0.5 / k_in;
     int MX_max = LX;
 
@@ -816,7 +936,112 @@ int main() {
         Smap[{s.LI, s.LO}] = s.val;
     }
 
-    // For each LO, loop over all delta channels
+#if 0  // Disabled: geometric extrapolation is unreliable; COULIN handles high-L tail
+    // ===== Geometric extrapolation of S-matrix to high LI =====
+    // For each delta, use ratio S(LI)/S(LI-2) from last 3 known points to extrapolate
+    {
+        int LI_extrap_max = Lmax;
+        for (int delta = -LX; delta <= LX; delta += 2) {
+            if ((delta + LX) % 2 != 0) continue;
+            // Gather last few known pairs for this delta
+            std::vector<std::pair<int,std::complex<double>>> known;
+            for (int LI = 0; LI <= Lmax; LI++) {
+                int LO = LI + delta;
+                if (LO < 0 || LO > Lmax) continue;
+                auto it = Smap.find({LI, LO});
+                if (it == Smap.end()) continue;
+                if (std::abs(it->second) < 1e-10) continue;
+                known.push_back({LI, it->second});
+            }
+            if ((int)known.size() < 3) continue;
+            // Compute average ratio from last 3 pairs
+            int n = known.size();
+            std::complex<double> avg_ratio(0,0);
+            int cnt = 0;
+            for (int i = n-3; i < n-1; i++) {
+                if (std::abs(known[i].second) < 1e-30) continue;
+                avg_ratio += known[i+1].second / known[i].second;
+                cnt++;
+            }
+            if (cnt == 0) continue;
+            avg_ratio /= (double)cnt;
+            if (!std::isfinite(std::abs(avg_ratio)) || std::abs(avg_ratio) >= 1.0) continue;
+            // Extrapolate
+            int li_last = known.back().first;
+            auto S_last = known.back().second;
+            int step = (known.size() >= 2) ? (known[1].first - known[0].first) : 2;
+            if (step <= 0) step = 2;
+            for (int LI = li_last + step; LI <= LI_extrap_max; LI += step) {
+                int LO = LI + delta;
+                if (LO < 0 || LO > LI_extrap_max) break;
+                if (Smap.count({LI, LO})) continue;
+                auto S_extrap = S_last * avg_ratio;
+                double S_mag = std::abs(S_extrap);
+                if (!std::isfinite(S_mag) || S_mag > std::abs(S_last)) break;
+                if (S_mag < 1e-10) break;
+                Smap[{LI, LO}] = S_extrap;
+                S_last = S_extrap;
+            }
+        }
+        std::cerr << "Geometric extrapolation: Smap now has " << Smap.size() << " pairs\n";
+    }
+#endif
+
+#ifdef INJECT_TOTA
+    // Override Smap with Fortran TOTA values (phase*ITOTAL, sigma not yet applied)
+    // Format: TOTA  LI  LO  LX  Re  Im
+    {
+        std::ifstream fin("/tmp/tota_ext.txt");
+        if (!fin) { std::cerr << "ERROR: cannot open /tmp/tota_ext.txt\n"; return 1; }
+        std::string line;
+        int count = 0;
+        while (std::getline(fin, line)) {
+            if (line.substr(0,4) != "TOTA") continue;
+            std::istringstream ss(line);
+            std::string tag;
+            int li, lo, lx;
+            double re, im;
+            if (!(ss >> tag >> li >> lo >> lx >> re >> im)) continue;
+            Smap[{li, lo}] = std::complex<double>(re, im);
+            count++;
+        }
+        std::cerr << "INJECT_TOTA: loaded " << count << " pairs from /tmp/tota_ext.txt\n";
+    }
+#endif
+
+#ifdef INJECT_SM
+    // Inject Fortran BETCAL SMATR/SMATI directly (pre-sigma-rotated, 15-digit)
+    // Format: FTN_SM LI LO LX SMATR SMATI
+    // SR/SI already have sigma_in+sigma_out applied — skip sigma here
+    {
+        std::map<std::pair<int,int>, std::pair<double,double>> SMmap;
+        std::ifstream fin("/tmp/ftn_sm_lx4.txt");
+        std::string line;
+        int cnt=0;
+        while (std::getline(fin,line)) {
+            std::istringstream ss(line);
+            std::string tag; int li,lo,lx; double sr,si;
+            if (!(ss>>tag>>li>>lo>>lx>>sr>>si)) continue;
+            SMmap[{li,lo}]={sr,si};
+            cnt++;
+        }
+        std::cerr<<"INJECT_SM: loaded "<<cnt<<" pairs\n";
+        // Accumulate beta from all (LI,LO) pairs in FTN_SM
+        for (auto& kv : SMmap) {
+            int LI=kv.first.first, LO=kv.first.second;
+            double SR=kv.second.first, SI=kv.second.second;
+            if (std::abs(SR)+std::abs(SI)<1e-30) continue;
+            int MX_lim=std::min(LX,LO);
+            for (int MX=0; MX<=MX_lim; MX++) {
+                double cg=CG_int(LI,LX,0,MX,LO,MX);
+                if (std::abs(cg)<1e-15) continue;
+                double TEMPS=FACTOR_BET*(2*LI+1)*cg;
+                beta_arr[MX][LO]+=std::complex<double>(TEMPS*SR,TEMPS*SI);
+            }
+        }
+    }
+#else
+    // For each (LO, delta): accumulate into beta[MX][LO]
     for (int LO = 0; LO <= Lmax; LO++) {
         for (int delta = -LX; delta <= LX; delta += 2) {
             int LI = LO - delta;
@@ -830,36 +1055,40 @@ int main() {
             double SPHASE = std::arg(Sval);
             if (SMAG < 1e-30) continue;
 
-            // Coulomb phase rotation
-            double sigma_in = CoulombPhaseShift(LI, eta_in);
+#ifdef TRUNCATE_R4
+            SMAG   = (double)(float)SMAG;
+            SPHASE = (double)(float)SPHASE;
+#endif
+
+            double sigma_in  = CoulombPhaseShift(LI, eta_in);
             double sigma_out = CoulombPhaseShift(LO, eta_out);
             double PH = SPHASE + sigma_in + sigma_out;
-            double SR = SMAG * std::sin(PH);
+            double SR =  SMAG * std::sin(PH);
             double SI = -SMAG * std::cos(PH);
 
-            // Accumulate into all MX channels
             int MX_lim = std::min(LX, LO);
             for (int MX = 0; MX <= MX_lim; MX++) {
                 double cg = CG_int(LI, LX, 0, MX, LO, MX);
                 if (std::abs(cg) < 1e-15) continue;
                 double TEMPS = FACTOR_BET * (2*LI+1) * cg;
+                if (!std::isfinite(TEMPS)) continue;
                 beta_arr[MX][LO] += std::complex<double>(TEMPS * SR, TEMPS * SI);
             }
         }
     }
+#endif
 
     // sqrt-factorial normalization for MX > 0
     for (int MX = 1; MX <= MX_max; MX++) {
         for (int LO = MX; LO <= Lmax; LO++) {
             double sqfac = 1.0;
-            for (int m = 1; m <= MX; m++) {
+            for (int m = 1; m <= MX; m++)
                 sqfac /= std::sqrt((double)(LO+m) * (LO-m+1));
-            }
             beta_arr[MX][LO] *= sqfac;
         }
     }
 
-    // ===== DCS: 10 * sum_MX w(MX) * |sum_LO beta[MX][LO] * P_LO^MX(costh)|^2 =====
+    // ===== DCS: 10 * sum_MX FMNEG(MX) * |sum_LO beta[MX][LO] * P_LO^MX(costh)|^2 =====
     std::cout << std::fixed;
     for (double th = 0.0; th <= 180.01; th += 1.0) {
         double costh = std::cos(th * PI / 180.0);
@@ -867,9 +1096,9 @@ int main() {
         for (int MX = 0; MX <= MX_max; MX++) {
             std::complex<double> amp(0.0, 0.0);
             for (int LO = MX; LO <= Lmax; LO++) {
-                if (std::abs(beta_arr[MX][LO]) < 1e-30) continue;
-                double plm = AssocLegP(LO, MX, costh);
-                amp += beta_arr[MX][LO] * plm;
+                double bmag = std::abs(beta_arr[MX][LO]);
+                if (bmag < 1e-30 || !std::isfinite(bmag)) continue;
+                amp += beta_arr[MX][LO] * AssocLegP(LO, MX, costh);
             }
             double w = (MX == 0) ? 1.0 : 2.0;
             dcs += w * std::norm(amp);
