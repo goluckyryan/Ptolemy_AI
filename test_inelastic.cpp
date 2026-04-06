@@ -379,6 +379,37 @@ int main() {
     std::cerr << "WAVELJ h_in=" << h_in << " h_out=" << h_out
               << " N_in=" << N_in << " N_out=" << N_out << std::endl;
 
+    // Check chi normalization at large r (L=4)
+    {
+        int L=4;
+        // Need to compute L=4 first
+        dwba.WavElj(dwba.Incoming, L, 2*L+2);
+        if ((int)dwba.Incoming.SMatrix.size() <= L) {
+            std::cerr << "SMatrix too small for L=" << L << std::endl;
+        } else {
+        auto S = dwba.Incoming.SMatrix[L];
+        for (double r = 15.0; r <= 19.0; r += 1.0) {
+            int idx = (int)(r / h_in);
+            if (idx >= (int)dwba.Incoming.WaveFunction.size()) continue;
+            auto chi = dwba.Incoming.WaveFunction[idx];
+            double rho = k_in * r;
+            std::vector<double> FC, FCP, GC, GCP;
+            Rcwfn(rho, eta_in, L, L, FC, FCP, GC, GCP, 1e-14);
+            double F_val = FC[L], G_val = GC[L];
+            double exp_r = 0.5 * (F_val * (1.0 + S.real()) + S.imag() * G_val);
+            double exp_i = 0.5 * (G_val * (1.0 - S.real()) + S.imag() * F_val);
+            double rat_r = (std::abs(exp_r) > 1e-30) ? chi.real() / exp_r : 0;
+            double rat_i = (std::abs(exp_i) > 1e-30) ? chi.imag() / exp_i : 0;
+            std::cerr << "CHI_NORM L=" << L << " r=" << r 
+                      << std::scientific << std::setprecision(6)
+                      << " chi=(" << chi.real() << "," << chi.imag() << ")"
+                      << " exp=(" << exp_r << "," << exp_i << ")"
+                      << std::fixed << std::setprecision(6)
+                      << " ratio=(" << rat_r << "," << rat_i << ")" << std::endl;
+        }
+        } // else
+    }
+
     // ===== Form factor =====
     double R_real = r0_in * R0mass;
     double R_imag = ri0_in * R0mass;
@@ -541,7 +572,14 @@ int main() {
             hc = beta_C * 3.0*Zp*Zt*e2 * RcLX / ((2*LX+1) * std::pow(r, LX+1));
         else
             hc = beta_C * 3.0*Zp*Zt*e2 * std::pow(r, LX) / ((2*LX+1) * std::pow(R_coul, LX+1));
-        H_c_wt[i] = hc * wt;
+        H_c_wt[i] = hc * wt;  // Coulomb form factor RESTORED
+        if (i == 0) {
+            std::cerr << "HC_DEBUG i=0 r=" << r << " wt=" << wt
+                      << " hc=" << hc << " H_c_wt=" << H_c_wt[i]
+                      << " Rc=" << R_coul << " RcLX=" << RcLX
+                      << " beta_C=" << beta_C << " e2=" << e2
+                      << " Zp=" << Zp << " Zt=" << Zt << std::endl;
+        }
     }
 
     // Cubic spline interpolation matching Ptolemy SPLNCB+INTRPC
@@ -655,7 +693,7 @@ int main() {
     // LMXMX_cl = 30: gives best pureFF values simultaneously for all pairs
     // At LMAX=30: FF(0,4)=+4.78e-5(Ftn:+4.83e-5), FF(2,2)=-4.22e-5(Ftn:+4.83e-5, sign diff)
     // The sign difference in FF(2,2) still gives correct correction direction (see comment below)
-    int LMXMX_cl = 30;
+    int LMXMX_cl = 30;  // Keep at 30 — recursion unstable at larger values
     std::cerr << "LMXMX_cl = " << LMXMX_cl << std::endl;
     double ACCINE = 1.0e-6;
     double COULML = 0.3;
@@ -698,6 +736,28 @@ int main() {
         return {ID, IL};
     };
 
+    // ===== Inject 32-bit Fortran COULIN values if requested =====
+#ifdef INJECT_FTN_COULIN
+    // Read Fortran pureFF and tail values from /tmp/ftn32_coulin.txt
+    // Format: LI LO pureFF tailFF tailFG tailGF tailGG
+    struct FtnCoulin { double pureFF, tailFF, tailFG, tailGF, tailGG; };
+    std::map<std::pair<int,int>, FtnCoulin> ftnCoulinMap;
+    {
+        std::ifstream fin("/tmp/ftn32_coulin.txt");
+        std::string line;
+        int cnt=0;
+        while (std::getline(fin, line)) {
+            std::istringstream ss(line);
+            int li, lo;
+            double pff, tff, tfg, tgf, tgg;
+            if (!(ss >> li >> lo >> pff >> tff >> tfg >> tgf >> tgg)) continue;
+            ftnCoulinMap[{li, lo}] = {pff, tff, tfg, tgf, tgg};
+            cnt++;
+        }
+        std::cerr << "INJECT_FTN_COULIN: loaded " << cnt << " pairs" << std::endl;
+    }
+#endif
+
     // ===== Radial integrals & S-matrix =====
     double factor = std::sqrt(k_in * k_out / (Ecm_in * Ecm_out * PI));
 
@@ -738,13 +798,103 @@ int main() {
             // Gauss quadrature: I = sum H(r_i)*chi_out(r_i)*chi_in(r_i)
             // H_*_wt arrays already have Gauss weights baked in
             std::complex<double> integral(0,0);
+            std::complex<double> integral_coul(0,0);
             for (int i = 0; i < NUMPT; i++) {
                 double r = gl_pts[i];
                 if (r <= 0) continue;
                 auto chi_in_val = interpSpline(wf_in, h_in, r);
                 auto chi_out_val = interpSpline(wf_out, h_out, r);
+                // chi vs F diagnostic for LI=0,LO=4 at a few r values
+                if (LI==0 && LO==4 && (i==NUMPT/4 || i==NUMPT/2 || i==3*NUMPT/4)) {
+                    std::vector<double> FC,FCP,GC,GCP;
+                    Rcwfn(k_in*r, eta_in, 0, 0, FC, FCP, GC, GCP, 1e-10);
+                    std::vector<double> FC2,FCP2,GC2,GCP2;
+                    Rcwfn(k_out*r, eta_out, 4, 4, FC2, FCP2, GC2, GCP2, 1e-10);
+                    double F_in = FC[0], F_out = FC2[4];
+                    std::cerr << "CHI_VS_F r=" << r
+                              << " chi_in=(" << chi_in_val.real() << "," << chi_in_val.imag() << ")"
+                              << " F_in=" << F_in
+                              << " chi_out=(" << chi_out_val.real() << "," << chi_out_val.imag() << ")"
+                              << " F_out=" << F_out
+                              << " |chi_in|/F_in=" << std::abs(chi_in_val)/std::abs(F_in)
+                              << " |chi_out|/F_out=" << std::abs(chi_out_val)/std::abs(F_out)
+                              << std::endl;
+                }
                 std::complex<double> H(H_r_wt[i]+H_c_wt[i], H_i_wt[i]);
                 integral += H * chi_out_val * chi_in_val;
+                // DEBUG: separate Coulomb integral
+                if (LI <= 10) {
+                    std::complex<double> Hc_only(H_c_wt[i], 0.0);
+                    static thread_local std::complex<double> coul_integral;
+                    if (i == 0) coul_integral = {0,0};
+                    coul_integral += Hc_only * chi_out_val * chi_in_val;
+                    if (i == NUMPT-1 && (LO == LI+LX || LO == LI-LX || LO == LI)) {
+                        double coul_mag = std::abs(coul_integral);
+                        // Compare with COULIN pureFF-based: FFI/C = BETARAT * R2S4 * pureFF
+                        auto [id2, il2] = getCoulinIdx(LI, LO);
+                        double cpp_pureFF = coulinPure.FF[id2 + il2 * coulinPure.ldldim];
+                        double ffi_over_c = BETARAT * R2S4 * cpp_pureFF;
+                        std::cerr << "COULNORM LI=" << LI << " LO=" << LO
+                                  << std::scientific << std::setprecision(6)
+                                  << " coul_int=" << coul_mag
+                                  << " ffi/C=" << std::abs(ffi_over_c)
+                                  << " ratio=" << std::fixed << std::setprecision(4)
+                                  << coul_mag / std::abs(ffi_over_c)
+                                  << std::endl;
+                    }
+                }
+                // Debug: separate Coulomb-only integral
+                integral_coul += H_c_wt[i] * chi_out_val * chi_in_val;
+            }
+
+            // Diagnostic: compare chi*chi/r^5 with F*F/r^5 at same Gauss points
+            if (LI == 0 && LO == 4) {
+                double sum_chi2 = 0, sum_F2 = 0;
+                for (int i = 0; i < NUMPT; i++) {
+                    double r = gl_pts[i];
+                    if (r <= 0) continue;
+                    auto chi_in_v = interpSpline(wf_in, h_in, r);
+                    auto chi_out_v = interpSpline(wf_out, h_out, r);
+                    double chi_prod = chi_in_v.real()*chi_out_v.real() - chi_in_v.imag()*chi_out_v.imag();
+                    double wt = gl_wts[i];
+                    sum_chi2 += wt * chi_prod / std::pow(r, LX+1);
+                    // Also compute F*F/r^5 at same point
+                    std::vector<double> FI, FIP, GI, GIP, FO2, FOP2, GO2, GOP2;
+                    Rcwfn(k_in*r, eta_in, 0, LI, FI, FIP, GI, GIP, 1e-10);
+                    Rcwfn(k_out*r, eta_out, 0, LO, FO2, FOP2, GO2, GOP2, 1e-10);
+                    if (LI < (int)FI.size() && LO < (int)FO2.size()) {
+                        sum_F2 += wt * FI[LI] * FO2[LO] / std::pow(r, LX+1);
+                    }
+                }
+                // Also compute complex chi product
+                double sum_chi2_im = 0;
+                for (int i = 0; i < NUMPT; i++) {
+                    double r = gl_pts[i];
+                    if (r <= 0) continue;
+                    auto ci = interpSpline(wf_in, h_in, r);
+                    auto co = interpSpline(wf_out, h_out, r);
+                    double im = ci.real()*co.imag() + ci.imag()*co.real();
+                    sum_chi2_im += gl_wts[i] * im / std::pow(r, LX+1);
+                }
+                // Direct check: BETARAT*R2S4*sum_chi2 should = coul_integral
+                double check = BETARAT * R2S4 * sum_chi2;
+                // Print first H_c_wt value for manual verification
+                double r0 = gl_pts[0];
+                double hc_manual = beta_C * 3.0*Zp*Zt*e2 * std::pow(R_coul,LX) / ((2*LX+1)*std::pow(r0,LX+1));
+                std::cerr << "NORM_DIAG H_c_wt[0]=" << H_c_wt[0] << " manual_hc*wt=" << hc_manual*gl_wts[0]
+                          << " r[0]=" << r0 << " wt[0]=" << gl_wts[0] << std::endl;
+                std::cerr << std::scientific << std::setprecision(6);
+                std::cerr << "NORM_DIAG check: BETARAT*R2S4*sum_chi2=" << check
+                          << " actual_coul_int_re=" << integral_coul.real()
+                          << " ratio=" << check/integral_coul.real() << std::endl;
+                std::cerr << "NORM_DIAG (0,4): Re(chi2)=" << sum_chi2
+                          << " Im(chi2)=" << sum_chi2_im
+                          << " |chi2|=" << std::sqrt(sum_chi2*sum_chi2+sum_chi2_im*sum_chi2_im)
+                          << " F2=" << sum_F2
+                          << " Re_ratio=" << sum_chi2/sum_F2
+                          << " |chi2|/F2=" << std::sqrt(sum_chi2*sum_chi2+sum_chi2_im*sum_chi2_im)/sum_F2
+                          << " F2/pureFF=" << sum_F2/4.778e-5
+                          << std::endl;
             }
 
             std::complex<double> phase;
@@ -769,6 +919,28 @@ int main() {
             // ICOMP = factor * |cg| * integral (from 0 to SUMMAX)
             double C = factor * std::abs(cg);
             std::complex<double> ICOMP = C * std::complex<double>(integral.real(), integral.imag());
+            std::complex<double> ICOMP_coul = C * integral_coul;
+            // Debug: pure Coulomb FFI from COULIN
+            double pFF_this = 0.0;
+            if (iret_coulin2 == 0 && std::abs(LO - LI) <= LX && LI <= 30) {
+                auto [idc,ilc] = getCoulinIdx(LI, LO);
+                pFF_this = coulinPure.FF[idc + ilc * coulinPure.ldldim];
+            }
+            double FFI_mag = std::abs(C * BETARAT * R2S4 * pFF_this);
+            if (LI <= 10) {
+                double coul_re = C * integral_coul.real();
+                double coul_im = C * integral_coul.imag();
+                double ffi_real = C * BETARAT * R2S4 * pFF_this;  // FFI is real
+                std::cerr << "NORM LI=" << LI << " LO=" << LO
+                          << std::scientific << std::setprecision(5)
+                          << " coul_re=" << coul_re
+                          << " coul_im=" << coul_im
+                          << " |coul|=" << std::abs(ICOMP_coul)
+                          << " ffi_real=" << ffi_real
+                          << " re_ratio=" << std::fixed << std::setprecision(4)
+                          << (std::abs(ffi_real) > 1e-30 ? coul_re/ffi_real : 0.0)
+                          << std::endl;
+            }
 
             // Coulomb tail correction: IRTOIN + FFI
             // STATUS: All correction approaches are broken or inaccurate.
@@ -788,27 +960,45 @@ int main() {
             // Apply to ALL even-LI pairs within Lmax range
             int LDEL = LO - LI;
             int Lmax_elastic_est = 26;
-            bool ENABLE_COULIN = false;  // Disabled: IRTOIN sign fixed but pureFF diagonal still wrong -> 48% error
-            // bool ENABLE_COULIN = (iret_coulin == 0) && (LI <= Lmax_elastic_est + LX);  // ALL LI (Fortran LSTEP=1)
-            bool ENABLE_FFI_DIRECT = false;
-            bool valid_for_coulin = std::abs(LDEL) <= LX && (LI <= Lmax_elastic_est + LX);  // ALL LI
-            if (ENABLE_COULIN) {
+            bool ENABLE_COULIN = false;  // Disabled: our Gauss quadrature is precise enough that COULIN correction is not needed (and over-corrects)
+            bool ENABLE_FFI_DIRECT = false;  // Disabled: was overriding COULIN FFI with wrong sign
+            bool valid_for_coulin = std::abs(LDEL) <= LX && (LI <= Lmax_elastic_est + LX);  // ALL LI up to 30
+            if (ENABLE_COULIN && valid_for_coulin) {
+#ifdef INJECT_FTN_COULIN
+                // Use 32-bit Fortran COULIN values (pureFF and tail)
+                auto ftn_it = ftnCoulinMap.find({LI, LO});
+                if (ftn_it != ftnCoulinMap.end()) {
+                    const auto& fv = ftn_it->second;
+                    // Fortran: CL1XX = -R2S(4)*COULIN_tail.XX
+                    // R2S(4) is NEGATIVE (-3*Zp*Zt*e^2), so -R2S(4) = +|R2S4|
+                    // Our R2S4 = +3*Zp*Zt*e^2 (positive)
+                    // CL1FF = -R2S(4)*tailFF = +|R2S4|*tailFF = R2S4*tailFF
+                    double cl1ff = R2S4 * fv.tailFF;
+                    double cl1fg = R2S4 * fv.tailFG;
+                    double cl1gf = R2S4 * fv.tailGF;
+                    double cl1gg = R2S4 * fv.tailGG;
+                    std::complex<double> SIN_el = dwba.Incoming.SMatrix[LI];
+                    std::complex<double> SOUT_el = dwba.Outgoing.SMatrix[LO];
+                    std::complex<double> one(1.0, 0.0), imag_i(0.0, 1.0);
+                    IRTOIN = 0.25 * C * BETARAT * (
+                        (one+SOUT_el)*(one+SIN_el)*cl1ff
+                      - (one-SOUT_el)*(one-SIN_el)*cl1gg
+                      + imag_i*((one+SOUT_el)*(one-SIN_el)*cl1fg
+                               +(one-SOUT_el)*(one+SIN_el)*cl1gf)
+                    );
+                    // CL2FF = -R2S(4)*pureFF = +|R2S4|*pureFF = R2S4*pureFF
+                    double cl2ff = R2S4 * fv.pureFF;
+                    FFI = C * BETARAT * cl2ff;
+                }
+#else
                 auto [id, il] = getCoulinIdx(LI, LO);
-
-                // === IRTOIN: Coulomb tail (SUMMAX to inf) via coulinTail (R>0 upward recursion) ===
-                // CL1XX = -R2S4 * COULIN_tail.XX  (Fortran sign: CL1FF = -R2S(4)*FF)
+                                // IRTOIN from C++ COULIN tail
+                double cl1ff = R2S4 * coulinTail.FF[id + il * coulinTail.ldldim];
+                double cl1fg = R2S4 * coulinTail.FG[id + il * coulinTail.ldldim];
+                double cl1gf = R2S4 * coulinTail.GF[id + il * coulinTail.ldldim];
+                double cl1gg = R2S4 * coulinTail.GG[id + il * coulinTail.ldldim];
                 std::complex<double> SIN_el = dwba.Incoming.SMatrix[LI];
                 std::complex<double> SOUT_el = dwba.Outgoing.SMatrix[LO];
-                // Sign convention: our COULIN returns FF with opposite sign from Fortran
-                // (same as pureFF: physical integral is positive, our coulin returns negative)
-                // Fortran: CL1FF = -R2S4 * FF_physical;  our: coulinTail.FF = -FF_physical
-                // => cl1ff = -R2S4 * (-FF_phys) = +R2S4 * FF_physical = +R2S4 * coulinTail.FF
-                // BUT coulinTail.FF is NEGATIVE (same sign as coulinPure.FF)
-                // So cl1ff = +R2S4 * coulinTail.FF matches Fortran's CL1FF = -R2S4 * FF_physical
-                double cl1ff = +R2S4 * coulinTail.FF[id + il * coulinTail.ldldim];
-                double cl1fg = +R2S4 * coulinTail.FG[id + il * coulinTail.ldldim];
-                double cl1gf = +R2S4 * coulinTail.GF[id + il * coulinTail.ldldim];
-                double cl1gg = +R2S4 * coulinTail.GG[id + il * coulinTail.ldldim];
                 std::complex<double> one(1.0, 0.0), imag_i(0.0, 1.0);
                 IRTOIN = 0.25 * C * BETARAT * (
                     (one+SOUT_el)*(one+SIN_el)*cl1ff
@@ -816,18 +1006,13 @@ int main() {
                   + imag_i*((one+SOUT_el)*(one-SIN_el)*cl1fg
                            +(one-SOUT_el)*(one+SIN_el)*cl1gf)
                 );
-
-                // === FFI: Pure Coulomb FF (0 to inf) from coulinPure (COULIN R=0 with LMXMX=12) ===
-                // CL2FF = -R2S4 * FF_coulin (Fortran: CL2FF = -R2S(4)*FF where R2S(4)=-3ZpZte^2)
-                // At LMXMX=12: pureFF is ~5% accurate for (0,4), less so for diagonal pairs
-                if (iret_coulin2 == 0 && valid_for_coulin) {
-                    // COULIN returns FF with opposite sign from Fortran (Belling phase convention)
-                    // Fortran FF_coulin < 0 for physical pureFF > 0
-                    // So negate: CL2FF = -R2S4 * (-our_FF) = +R2S4 * our_FF
+                // FFI from C++ COULIN pure
+                if (iret_coulin2 == 0) {
                     double raw_pureFF = coulinPure.FF[id + il * coulinPure.ldldim];
-                    double cl2ff = R2S4 * raw_pureFF;   // +R2S4 (sign flip for COULIN convention)
+                    double cl2ff = R2S4 * raw_pureFF;  // Positive: matches Fortran -R2S(4)*FF where R2S(4)<0
                     FFI = C * BETARAT * cl2ff;
                 }
+#endif
             }
 
             // === FFI: Pure Coulomb FF (0 to inf) via DIRECT Clints call (stable, bypasses COULIN R=0 recursion) ===
@@ -879,7 +1064,7 @@ int main() {
                         }
                     }
                     // CL2FF = -R2S4 * ff (Fortran: CL2FF = -R2S(4)*FF, R2S(4)=-3ZpZte^2<0)
-                    double cl2ff = -R2S4 * ff;
+                    double cl2ff = +R2S4 * ff;  // Positive = Fortran convention
                     FFI = C * BETARAT * cl2ff;
                 }
             }
@@ -893,14 +1078,27 @@ int main() {
             // Use: cl2ff = -R2S4 * raw_pureFF; FFI = C*BETARAT*cl2ff
             // INUC = ICOMP + IRTOIN - FFI (Fortran formula, applied as-is)
             std::complex<double> ITOTAL = ICOMP + IRTOIN;
-            std::complex<double> INUC = ITOTAL - FFI;
+            std::complex<double> INUC = ITOTAL - FFI;  // Fortran: INUC = ITOTAL - FFI
             std::complex<double> S = phase * INUC;
 
-            std::cerr << "TAIL LI=" << LI << " LO=" << LO
-                      << " |ICOMP|=" << std::abs(ICOMP)
-                      << " |IRTOIN|=" << std::abs(IRTOIN)
-                      << " |FFI|=" << std::abs(FFI)
-                      << " |S|=" << std::abs(S) << std::endl;
+            if (LI <= 10 || (LI >= 20 && LI <= 30 && LO == LI + LX)) {
+                auto ITOTAL_here = ICOMP + IRTOIN;
+                auto INUC_here = ITOTAL_here - FFI;
+                double cancel = (std::abs(FFI) > 1e-30) ? std::abs(ICOMP)/std::abs(FFI) : 0.0;
+                std::cerr << std::setw(4) << LI << std::setw(4) << LO << std::setw(4) << LX
+                          << std::scientific << std::setprecision(4)
+                          << "  |ICOMP|=" << std::abs(ICOMP)
+                          << " ph=" << std::fixed << std::setprecision(3) << std::arg(ICOMP)
+                          << std::fixed << std::setprecision(2) << "  cn=" << cancel
+                          << std::scientific << std::setprecision(4)
+                          << "  |FFI|=" << std::abs(FFI)
+                          << "  |INUC|=" << std::abs(INUC_here)
+                          << " ph=" << std::fixed << std::setprecision(3) << std::arg(INUC_here)
+                          << std::scientific << std::setprecision(4)
+                          << "  |ITOT|=" << std::abs(ITOTAL_here)
+                          << " ph=" << std::fixed << std::setprecision(3) << std::arg(ITOTAL_here)
+                          << std::endl;
+            }
 
             Smat.push_back({LI, LO, S});
         }
