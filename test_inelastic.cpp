@@ -960,7 +960,7 @@ int main() {
             // Apply to ALL even-LI pairs within Lmax range
             int LDEL = LO - LI;
             int Lmax_elastic_est = 26;
-            bool ENABLE_COULIN = (LI >= 5);  // IRTOIN only (no FFI), all LI
+            bool ENABLE_COULIN = true;  // IRTOIN only (no FFI) for all LI + Thiele CF extrapolation
             bool ENABLE_FFI_DIRECT = false;  // Disabled: was overriding COULIN FFI with wrong sign
             bool valid_for_coulin = std::abs(LDEL) <= LX && (LI <= Lmax_elastic_est + LX);  // ALL LI up to 30
             if (ENABLE_COULIN && valid_for_coulin) {
