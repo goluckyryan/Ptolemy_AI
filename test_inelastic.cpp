@@ -1078,7 +1078,9 @@ int main() {
             // Use: cl2ff = -R2S4 * raw_pureFF; FFI = C*BETARAT*cl2ff
             // INUC = ICOMP + IRTOIN - FFI (Fortran formula, applied as-is)
             std::complex<double> ITOTAL = ICOMP + IRTOIN;
-            std::complex<double> INUC = ITOTAL;  // IRTOIN only, no FFI  // Fortran: INUC = ITOTAL - FFI
+            // IRTOIN adds Coulomb tail (SUMMAX→∞). FFI not needed (ICOMP captures 0→SUMMAX accurately).
+            // Use INUC = ITOTAL (= ICOMP + IRTOIN) without FFI subtraction.
+            std::complex<double> INUC = ITOTAL;
             std::complex<double> S = phase * INUC;
 
             if (LI <= 10 || (LI >= 20 && LI <= 30 && LO == LI + LX)) {
