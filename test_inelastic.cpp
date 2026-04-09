@@ -959,7 +959,7 @@ int main() {
             // Sign: cl2ff = +R2S4 * pureFF (COULIN sign opposite to physical)
             // Apply to ALL even-LI pairs within Lmax range
             int LDEL = LO - LI;
-            int Lmax_elastic_est = 26;
+            int Lmax_elastic_est = 25;  // Optimal IRTOIN cutoff (min 0.37% vs 0.62% at 26)
             bool ENABLE_COULIN = true;  // IRTOIN only (no FFI) for all LI + Thiele CF extrapolation
             bool ENABLE_FFI_DIRECT = false;  // Disabled: was overriding COULIN FFI with wrong sign
             bool valid_for_coulin = std::abs(LDEL) <= LX && (LI <= Lmax_elastic_est + LX);  // ALL LI up to 30
@@ -1137,55 +1137,96 @@ int main() {
         Smap[{s.LI, s.LO}] = s.val;
     }
 
-    // ===== Thiele CF extrapolation of S-matrix to high LI =====
-    // Fortran INTRCF: fits continued fraction to known S(LI) for each delta,
-    // then evaluates at LI = Lmax+1 .. LIMOST (typically ~154)
+    // ===== LINTRP-style power-law S-matrix extrapolation (Fortran LXTRP1/LXTRP2) =====
+    // Fit |S(L)| = A*(LMAX_fit/L)^B to decay region, then extrapolate to LIMOST.
+    // Phase: converges to -pi/2 (pure Coulomb) at large L.
+    // LIMOST: smallest L where |S| < |S_peak|/500.
     {
-        // Forward declarations for Thiele CF
-        extern int ThieleCF_Setup(int, std::vector<std::complex<double>>&, std::vector<std::complex<double>>&);
-        extern std::complex<double> ThieleCF_Eval(int, const std::vector<std::complex<double>>&, const std::vector<std::complex<double>>&, std::complex<double>);
-
-        int LIMOST = 154;  // Fortran max L for S-matrix extrapolation
-        int LXMAX_CF = LX;  // minimum LI to use as CF input (skip small L)
         int extrap_count = 0;
-        
+        const double SMLNUM = 1.0e-10;      // negligible S threshold
+        const double PEAK_FRAC = 1.0/500.0; // Fortran WEEBOY cutoff
+        const int LIMOST_MAX = 80;           // hard upper limit
+        const int NFIT = 4;                  // number of points for fit
+        const int FTN_LMAX = 26;             // Fortran's actual LMAX (use as fit endpoint)
+
         for (int delta = -LX; delta <= LX; delta += 2) {
-            // Collect known S-matrix values for this delta
-            std::vector<std::complex<double>> cf_xs, cf_ys;
-            for (int LI = 0; LI <= Lmax; LI++) {
-                int LO = LI + delta;
-                if (LO < 0 || LO > Lmax) continue;
-                auto it = Smap.find({LI, LO});
-                if (it == Smap.end()) continue;
-                if (LI < LXMAX_CF) continue;  // skip small L for CF fit
-                cf_xs.push_back(std::complex<double>((double)LI, 0.0));
-                cf_ys.push_back(it->second);
-            }
-            if (cf_xs.size() < 3) continue;
-            
-            // Make copies for CF setup (it modifies in-place)
-            auto xs_work = cf_xs;
-            auto ys_work = cf_ys;
-            int nmax = ThieleCF_Setup((int)xs_work.size(), xs_work, ys_work);
-            
-            // Extrapolate to LI = Lmax+1 .. LIMOST
-            for (int LI = Lmax + 1; LI <= LIMOST; LI++) {
+            // Collect magnitude & phase of known S(LI) for this delta
+            // Use LI from fit window: last NFIT values before FTN_LMAX where |S|>1e-6
+            std::vector<std::pair<int,double>> fit_mag, fit_ph;
+            double peak_mag = 0.0;
+            for (int LI = 0; LI <= FTN_LMAX; LI++) {
                 int LO = LI + delta;
                 if (LO < 0) continue;
-                auto S_extrap = ThieleCF_Eval(nmax, xs_work, ys_work, 
-                                              std::complex<double>((double)LI, 0.0));
-                double S_mag = std::abs(S_extrap);
-                if (LI <= Lmax + 5 || LI % 20 == 0) {
-                    std::cerr << "CF delta=" << delta << " LI=" << LI << " |S|=" << S_mag 
-                              << " ph=" << std::arg(S_extrap) << std::endl;
+                auto it = Smap.find({LI, LO});
+                if (it == Smap.end()) continue;
+                double m = std::abs(it->second);
+                peak_mag = std::max(peak_mag, m);
+                if (m > 1e-6) {
+                    fit_mag.push_back({LI, m});
+                    fit_ph.push_back({LI, std::arg(it->second)});
                 }
-                if (!std::isfinite(S_mag) || S_mag > 10.0) break;  // relaxed: allow some overshoot
-                if (S_mag < 1e-15) break;  // negligible
-                Smap[{LI, LO}] = S_extrap;
+            }
+            if ((int)fit_mag.size() < NFIT) continue;
+
+            // Use last NFIT points for power-law fit
+            int n = (int)fit_mag.size();
+            int start = n - NFIT;
+            double DLMAX = (double)FTN_LMAX;  // Fortran's reference LI
+
+            // Fit log|S| = logA + B*log(DLMAX/L) via log-linear regression
+            double sx=0,sy=0,sxx=0,sxy=0;
+            int npts=0;
+            for (int i=start; i<n; i++) {
+                double LI_i = fit_mag[i].first;
+                double x = std::log(DLMAX/LI_i);
+                double y = std::log(fit_mag[i].second);
+                if (!std::isfinite(x)||!std::isfinite(y)) continue;
+                sx+=x; sy+=y; sxx+=x*x; sxy+=x*y; npts++;
+            }
+            if (npts < 2) continue;
+            double denom = npts*sxx - sx*sx;
+            if (std::abs(denom) < 1e-30) continue;
+            double B_mag = (npts*sxy - sx*sy)/denom;
+            double A_mag = std::exp((sy - B_mag*sx)/npts);
+            if (B_mag < 0.001 || !std::isfinite(B_mag) || !std::isfinite(A_mag)) continue;
+
+            // Phase: at large L, converges to -pi/2. Use linear fit vs 1/L
+            // phase(L) = ph_inf + slope/L  (asymptotic)
+            double ph_inf = -M_PI/2.0;  // known asymptote
+            // Last known phase for continuity
+            double last_ph = fit_ph.back().second;
+            // Unwrap to be near -pi/2
+            while (last_ph - ph_inf >  M_PI) last_ph -= 2*M_PI;
+            while (last_ph - ph_inf < -M_PI) last_ph += 2*M_PI;
+
+            // Determine LIMOST for this delta
+            double weeboy = peak_mag * PEAK_FRAC;
+            int LIMOST_delta = LIMOST_MAX;
+            for (int LI = (int)DLMAX+1; LI <= LIMOST_MAX; LI++) {
+                double mag = A_mag * std::pow(DLMAX/LI, B_mag);
+                if (mag < weeboy || mag < SMLNUM) { LIMOST_delta = LI-1; break; }
+            }
+
+            // Extrapolate LI = DLMAX+1 .. LIMOST_delta
+            double prev_ph = last_ph;
+            for (int LI = (int)DLMAX+1; LI <= LIMOST_delta; LI++) {
+                int LO = LI + delta;
+                if (LO < 0) continue;
+                if (Smap.count({LI,LO})) continue;  // keep existing numerical values
+                double mag_ext = A_mag * std::pow(DLMAX/LI, B_mag);
+                if (!std::isfinite(mag_ext) || mag_ext < SMLNUM) break;
+                // Phase: linear interpolation toward -pi/2
+                double t = (LI - DLMAX) / (LIMOST_delta - DLMAX + 1.0);
+                double ph_ext = prev_ph + (ph_inf - prev_ph) * t;
+                // Unwrap
+                while (ph_ext - prev_ph >  M_PI) ph_ext -= 2*M_PI;
+                while (ph_ext - prev_ph < -M_PI) ph_ext += 2*M_PI;
+                prev_ph = ph_ext;
+                Smap[{LI,LO}] = std::polar(mag_ext, ph_ext);
                 extrap_count++;
             }
         }
-        std::cerr << "Thiele CF extrapolation: " << extrap_count << " new S-matrix elements (Lmax=" << Lmax << " -> " << LIMOST << ")" << std::endl;
+        std::cerr << "PowerLaw extrap: " << extrap_count << " new S-matrix elements" << std::endl;
     }
 
 #if 0  // Disabled: geometric extrapolation replaced by Thiele CF above
