@@ -135,22 +135,33 @@ void DWBA::WavElj(Channel &ch, int L, int Jp, bool skipSO, bool scanMode) {
   ch.WaveFunction.assign(N + 5, std::complex<double>(0.0, 0.0));
 
   // --- Spin-orbit coupling factor ---
-  int JSP_ch = (ch.JSPS > 0) ? ch.JSPS : 1;  // default to 1 if not set
+  // For spin-0 particles (alpha: JSPS=0), JP must equal 2*L exactly
+  int JSP_ch = ch.JSPS;  // 0=alpha/spin-0, 1=proton, 2=deuteron
+  if (JSP_ch < 0) JSP_ch = 1;  // safety
 
-  // Ptolemy WAVELJ: if SOSWS && JP outside valid range, return (invalid JP)
-  // JP must be in [|2L-JSPS|, 2L+JSPS] with same parity as JSPS
-  int JP_min_valid = std::abs(2 * L - JSP_ch);
-  int JP_max_valid = 2 * L + JSP_ch;
-  if (Jp < JP_min_valid || Jp > JP_max_valid || ((Jp + JSP_ch) % 2 != 0)) {
-    // Invalid JP for this channel — zero out wavefunction and return
+  // Ptolemy WAVELJ: JP must be in [|2L-JSPS|, 2L+JSPS] with same parity as JSPS
+  // For JSPS=0 (spin-0): JP must be exactly 2*L
+  int JP_min_valid, JP_max_valid;
+  if (JSP_ch == 0) {
+    JP_min_valid = 2 * L;
+    JP_max_valid = 2 * L;
+  } else {
+    JP_min_valid = std::abs(2 * L - JSP_ch);
+    JP_max_valid = 2 * L + JSP_ch;
+  }
+  if (Jp < JP_min_valid || Jp > JP_max_valid ||
+      (JSP_ch > 0 && (Jp + JSP_ch) % 2 != 0)) {
+    // Invalid JP — zero wavefunction
     ch.WaveFunction.assign(N + 5, std::complex<double>(0.0, 0.0));
     return;
   }
+  // For spin-orbit calculations, use JSP_ch=1 minimum to avoid div by zero
+  int JSP_eff = (JSP_ch > 0) ? JSP_ch : 1;
 
   double DL2 = (double)L * (L + 1);
   double SDOTL_raw =
-      0.25 * double(Jp * (Jp + 2) - JSP_ch * (JSP_ch + 2)) - DL2;
-  double spin_dot_L = (JSP_ch > 0 && !skipSO) ? SDOTL_raw / JSP_ch : 0.0;
+      0.25 * double(Jp * (Jp + 2) - JSP_eff * (JSP_eff + 2)) - DL2;
+  double spin_dot_L = (JSP_ch > 0 && !skipSO) ? SDOTL_raw / JSP_eff : 0.0;
 
   // Physical constants (same as dwba.cpp globals)
   // Must match Ptolemy's constants exactly (source.f line 14066-14067)

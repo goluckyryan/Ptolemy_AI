@@ -84,8 +84,7 @@ static void ApplyPotParam(ChannelPotential &pot, const std::string &key, double 
 void PtolemyParser::ParseFile(const std::string &filename, DWBA &dwba) {
     std::ifstream file(filename);
     if (!file.is_open()) {
-        std::cerr << "PtolemyParser: cannot open " << filename << "\n";
-        return;
+              return;
     }
 
     // Read all lines
@@ -181,8 +180,7 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
 
                     // BE = Sn - Ex = (ME_core + ME_trans - ME_res) - Ex
                     bs_binding = ME_core + ME_trans - ME_res - rxn_excitation;
-                    std::cerr << "Auto-computed target binding energy: "
-                              << bs_binding << " MeV (Sn of " << rxn_residual
+                                                << bs_binding << " MeV (Sn of " << rxn_residual
                               << ", Ex=" << rxn_excitation
                               << ") [ME: core=" << ME_core << " trans=" << ME_trans
                               << " res=" << ME_res << "]\n";
@@ -470,8 +468,7 @@ void PtolemyParser::ParseReactionLine(const std::string &line, DWBA &dwba) {
         elastic_Zp_ = projIso.Z;
         elastic_At_ = tgtIso.A;
         elastic_Zt_ = tgtIso.Z;
-        std::cerr << "Elastic scattering detected: " << prj << " + " << tgt << std::endl;
-    }
+          }
 
     // SetReaction(target, projectile, ejectile, recoil)
     // In Ptolemy .in: Target(proj,light_out)Residual
@@ -490,7 +487,7 @@ void PtolemyParser::ParseReactionLine(const std::string &line, DWBA &dwba) {
         // For collective inelastic (ejt==prj, BELx>0): Lx = int(residualJ)
         // e.g. "3-" → residualJ=3 → Lx=3 (E3 transition)
         // Only set if BELx already parsed OR if this is inelastic reaction
-        if (ejt == prj && excitation > 0.0) {
+              if (ejt == prj && excitation > 0.0) {
             dwba.Lx = (int)(residualJ + 0.5);  // round to nearest integer
         }
     }

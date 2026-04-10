@@ -310,6 +310,12 @@ void DWBA::InelDcCollective() {
     double eta_out = Zp * Zt * AFINE * mu / (HBARC * k_out);
     double R0mass  = std::pow((double)At, 1.0/3.0);
 
+    // ── Set JSPS from projectile (2*spin_proj) ──
+    // Alpha (A=4): spin=0 → JSPS=0; Deuteron (A=2): spin=1 → JSPS=2; Proton: JSPS=1
+    if (Ap == 4) { Incoming.JSPS = 0; Outgoing.JSPS = 0; }
+    else if (Ap == 2 && Zp == 1) { Incoming.JSPS = 2; Outgoing.JSPS = 2; }
+    // else keep default JSPS=1 (proton, 3He, etc.)
+
     // ── Channels already set up by Calculate() / WavSet() ──
     // For inelastic scattering, Fortran uses JSPS from the projectile spin
     // In our test drivers we hardcoded JSPS=2 (deuteron convention even for proton)
@@ -442,8 +448,9 @@ void DWBA::InelDcCollective() {
         // Real: -(H^2/12E) * WS_val(r)
         V_real_grid[i] = -H2over12E * WS_val(r, V_in, R_real, a_in);
         // Imag: volume + surface COMBINED into one array (Fortran convention!)
-        V_imag_grid[i] = -H2over12E * (WS_val(r, Vi_in, R_imag, ai_in)
-                                       + SurfWS_val(r, Vsi_in, R_surf, asi_in));
+        // Guard: only add surface term if Vsi > 0 and asi > 0 (avoid div by zero)
+        double surf_i = (Vsi_in > 0 && asi_in > 0) ? SurfWS_val(r, Vsi_in, R_surf, asi_in) : 0.0;
+        V_imag_grid[i] = -H2over12E * (WS_val(r, Vi_in, R_imag, ai_in) + surf_i);
     }
     
     // Fit natural cubic splines
@@ -473,7 +480,7 @@ void DWBA::InelDcCollective() {
         // Nuclear: -beta * R * dV/dr for each potential component
         double dvr = dWS(r, V_in, R_real, a_in);
         double dvi = dWS(r, Vi_in, R_imag, ai_in);
-        double dvs = dSurfWS(r, Vsi_in, R_surf, asi_in);
+        double dvs = (Vsi_in > 0 && asi_in > 0) ? dSurfWS(r, Vsi_in, R_surf, asi_in) : 0.0;
 
         Hnuc_r[i] = -beta * R_real * dvr;
         Hnuc_i[i] = -beta * R_imag * dvi - beta * R_surf * dvs;
@@ -541,6 +548,7 @@ void DWBA::InelDcCollective() {
         H_r_wt[i] = beta * factor_12EH2 * R_real * wt * XX_real;
         // Fortran uses R_imag for entire imaginary (vol+surf combined)
         H_i_wt[i] = beta * factor_12EH2 * R_imag * wt * XX_imag;
+
         
         // Coulomb multipole — matching Ptolemy INRDIN convention
         // INGRST stores: HCOUL = -WT * VC * XX  (no beta, no Rc^LX/(2LX+1))
@@ -680,7 +688,10 @@ void DWBA::InelDcCollective() {
                     double F_in = FC[0], F_out = FC2[4];
                 }
                 std::complex<double> H(H_r_wt[i]+H_c_wt[i], H_i_wt[i]);
-                integral += H * chi_out_val * chi_in_val;
+                auto contrib = H * chi_out_val * chi_in_val;
+                if (!std::isfinite(H_i_wt[i]) && LI==0 && LO==2) {
+                }
+                integral += contrib;
                 // Debug: separate Coulomb-only integral
                 integral_coul += H_c_wt[i] * chi_out_val * chi_in_val;
             }
@@ -839,9 +850,8 @@ void DWBA::InelDcCollective() {
         }
     }
 
-    // Build Smap from Smat for LINTRP/BETCAL
-    std::map<std::pair<int,int>, std::complex<double>> Smap;
-    for (const auto& s : Smat) { Smap[{s.LI, s.LO}] = s.val; }
+    if (!Smat.empty()) {
+    }
 
     // ===== LINTRP-style power-law S-matrix extrapolation (Fortran LXTRP1/LXTRP2) =====
     // Fit |S(L)| = A*(LMAX_fit/L)^B to decay region, then extrapolate to LIMOST.
@@ -1142,6 +1152,7 @@ void DWBA::InelDcCollective() {
         }
     }
 #else
+    }
     // For each (LO, delta): accumulate into beta[MX][LO]
     // Loop over ALL Smap entries (includes extrapolated high-L values)
     for (auto& [key, Sval] : Smap) {
@@ -1176,6 +1187,11 @@ void DWBA::InelDcCollective() {
     }
 #endif
 
+    // Check beta values
+    for (int MX=0; MX<=LX; MX++) {
+        double bsum=0; for (auto& b : beta_arr[MX]) bsum+=std::abs(b);
+    }
+        }
     // sqrt-factorial normalization for MX > 0
     for (int MX = 1; MX <= MX_max; MX++) {
         for (int LO = MX; LO < LOMAX_EXT; LO++) {
