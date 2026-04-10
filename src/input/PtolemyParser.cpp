@@ -492,7 +492,7 @@ void PtolemyParser::ParseReactionLine(const std::string &line, DWBA &dwba) {
         // Only set if BELx already parsed OR if this is inelastic reaction
         if (ejt == prj && excitation > 0.0) {
             dwba.Lx = (int)(residualJ + 0.5);  // round to nearest integer
-        }
+            std::cerr << "        }
     }
 
     // Check for ELAB= on the same line (handles "ELAB=20" and "ELAB= 20")
