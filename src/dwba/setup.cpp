@@ -311,9 +311,7 @@ void DWBA::Calculate() {
 
   // ── Inelastic collective branch ──
   if (BELx > 0.0) {
-    std::cerr << "[DWBA] Calling InelDcCollective..." << std::endl;
     InelDcCollective();
-    std::cerr << "[DWBA] InelDcCollective returned." << std::endl;
     return;
   }
 
