@@ -487,6 +487,12 @@ void PtolemyParser::ParseReactionLine(const std::string &line, DWBA &dwba) {
 
     if (residualJ >= 0) {
         dwba.SetResidualSpin(residualJ);
+        // For collective inelastic (ejt==prj, BELx>0): Lx = int(residualJ)
+        // e.g. "3-" → residualJ=3 → Lx=3 (E3 transition)
+        // Only set if BELx already parsed OR if this is inelastic reaction
+        if (ejt == prj && excitation > 0.0) {
+            dwba.Lx = (int)(residualJ + 0.5);  // round to nearest integer
+        }
     }
 
     // Check for ELAB= on the same line (handles "ELAB=20" and "ELAB= 20")

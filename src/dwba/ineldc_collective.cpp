@@ -638,6 +638,7 @@ void DWBA::InelDcCollective() {
     struct InelS { int LI, LO; std::complex<double> val; };
     std::vector<InelS> Smat;
 
+    std::cerr << "[InelDc] factor=" << factor << " Lmax=" << Lmax << " GAMSUM=" << GAMSUM << " NUMPT=" << NUMPT << std::endl;
     for (int LI = 0; LI <= Lmax; LI++) {
         int LO_min = std::abs(LI - LX);
         int LO_max = std::min(LI + LX, Lmax);
@@ -649,7 +650,7 @@ void DWBA::InelDcCollective() {
         int JP_in = Incoming.JSPS + 2 * LI;
         WavElj(Incoming, LI, JP_in);
         std::vector<std::complex<double>> wf_in = Incoming.WaveFunction;
-        if (wf_in.empty()) continue;
+        if (wf_in.empty()) { if(LI==0) std::cerr << "wf_in EMPTY! skipping." << std::endl; continue; }
 
         for (int LO = LO_min; LO <= LO_max; LO += 2) {
             if ((LI+LO+LX) % 2 != 0) continue;
@@ -839,6 +840,8 @@ void DWBA::InelDcCollective() {
         }
     }
 
+    for (int i=0; i<std::min((int)Smat.size(),5); i++) {
+    }
     // Build Smap from Smat for LINTRP/BETCAL
     std::map<std::pair<int,int>, std::complex<double>> Smap;
     for (const auto& s : Smat) { Smap[{s.LI, s.LO}] = s.val; }
