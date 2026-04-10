@@ -507,9 +507,17 @@ int main() {
     }
 
     // ===== Gauss quadrature grid (matching Ptolemy INRDIN) =====
-    double GAMSUM = 1.0;  // Fortran GAMMA=1.00 (from grid printout) — no PARAMETERSET → default
-    int NUMPT_calc = (int)((SUMMAX-SUMMIN) * (6.0*(k_in+k_out)/(4*PI)));
-    int NUMPT = std::max(NUMPT_calc, 15);
+    // Fortran PARAM subroutine (source.f line 28135):
+    //   GAMSUM = 5 if PARAMETERSET INELOCA1/2/3 is used (label 400 reached)
+    //   GAMSUM = 1 if no PARAMETERSET (program default, line 14158)
+    // p+16O has NO PARAMETERSET → GAMSUM = 1
+    // NUMPT = max(int((SUMMAX-SUMMIN)*SUMPTS*(k_in+k_out)/(4π)), NPSUM)
+    //   SUMPTS=6 (default), NPSUM=15 (default)
+    const double SUMPTS = 6.0;
+    const int NPSUM = 15;
+    double GAMSUM = 1.0;  // No PARAMETERSET → Fortran default GAMSUM=1
+    int NUMPT_calc = (int)((SUMMAX-SUMMIN) * (SUMPTS*(k_in+k_out)/(4*PI)));
+    int NUMPT = std::max(NUMPT_calc, NPSUM);
     std::cerr << "NUMPT=" << NUMPT << std::endl;
 
     std::vector<double> gl_pts(NUMPT), gl_wts(NUMPT);

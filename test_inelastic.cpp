@@ -509,9 +509,17 @@ int main() {
     }
 
     // ===== Gauss quadrature grid (matching Ptolemy INRDIN) =====
-    double GAMSUM = 5.0;  // Fortran default for inelastic (label 400)
-    int NUMPT_calc = (int)((SUMMAX-SUMMIN) * (6.0*(k_in+k_out)/(4*PI)));
-    int NUMPT = std::max(NUMPT_calc, 15);
+    // Fortran PARAM subroutine (source.f line 28135):
+    //   GAMSUM = 5 if PARAMETERSET INELOCA1/2/3 is used (label 400)
+    //   GAMSUM = 1 if no PARAMETERSET (program default, line 14158)
+    // 206Hg uses PARAMETERSET INELOCA1 → GAMSUM=5
+    // NUMPT = max(int((SUMMAX-SUMMIN)*SUMPTS*(k_in+k_out)/(4π)), NPSUM)
+    //   where SUMPTS=6 (default or GRIDIN(4,N)), NPSUM=15 (default)
+    const double SUMPTS = 6.0;  // Fortran default SUMPTS
+    const int NPSUM = 15;       // Fortran default NPSUM
+    double GAMSUM = 5.0;  // PARAMETERSET INELOCA1 → label 400 sets GAMSUM=5
+    int NUMPT_calc = (int)((SUMMAX-SUMMIN) * (SUMPTS*(k_in+k_out)/(4*PI)));
+    int NUMPT = std::max(NUMPT_calc, NPSUM);
     std::cerr << "NUMPT=" << NUMPT << std::endl;
 
     std::vector<double> gl_pts(NUMPT), gl_wts(NUMPT);
