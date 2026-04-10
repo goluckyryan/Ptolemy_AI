@@ -335,6 +335,9 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
                     else if (key == "ASYMPTOPIA") { dwba.SetAsymptopia(val); elastic_asymptopia_ = val; }
                     else if (key == "LSTEP")     {} // default 1
                     else if (key == "MAXLEXTRAP") {} // ignore
+                    else if (key == "BELX")      { dwba.BELx = val; }
+                    else if (key == "LX")        { dwba.Lx  = (int)val; }
+                    else if (key == "JBIGA")     {} // spin of target — handled by SetTargetSpin
                     else if (key == "PRINT")     {} // ignore for now
                 }
             } else {
@@ -455,8 +458,9 @@ void PtolemyParser::ParseReactionLine(const std::string &line, DWBA &dwba) {
     std::string ejt  = MapIsotope(ejectile);
     std::string res  = MapIsotope(residual);
 
-    // Detect elastic scattering: ejectile == projectile
-    if (ejt == prj) {
+    // Detect elastic scattering: ejectile == projectile AND no excitation (elastic) or Ex=0
+    // Note: inelastic (d,d') also has ejt==prj but with Ex>0 or BELX>0
+    if (ejt == prj && excitation == 0.0) {
         isElastic_ = true;
         elastic_target_ = tgt;
         elastic_proj_ = prj;
@@ -550,6 +554,10 @@ void PtolemyParser::ParseParameterSet(const std::string &line, DWBA &dwba) {
             else if (utoken == "NONLOCALITY") {} // ignore for now
             else if (utoken == "TMATCH")     { dwba.SetUseTMATCH(true); }
             else if (utoken == "WRONSKIAN")  { dwba.SetUseTMATCH(false); }
+            else if (utoken == "INELOCA1" || utoken == "INELOCA2" || utoken == "INELOCA3") {
+                dwba.ParameterSet = utoken;
+                // STEPSPER=15 for INELOCA (source.f:28049-28057)
+            }
         }
     }
 }

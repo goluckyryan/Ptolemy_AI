@@ -233,8 +233,15 @@ void DWBA::Calculate() {
   PrintParameters();
 
   // Setup grids and potentials
-  // Ptolemy step size for scattering channels: h = min(2π/k, 1.0) / STEPSPER (STEPSPER=8)
-  const int STEPSPER = 8;
+  // INELOCA parameterset: STEPSPER=15; default (transfer/dpsb): STEPSPER=8
+  // STEPSPER from Fortran PARAM subroutine:
+  // INELOCA*: STPSPR=15 (source.f:28049 RGRIDS(3,N)=15)  
+  // No PARAMETERSET, inelastic: STPSPR=10 (Fortran default for STPSPR, source.f:14132)
+  // Transfer/elastic (dpsb): STPSPR=8 (from GRIDEL/RGRIDS)
+  int STEPSPER;
+  if (ParameterSet.find("INELOCA") != std::string::npos) STEPSPER = 15;
+  else if (BELx > 0.0) STEPSPER = 10;  // inelastic, no PARAMETERSET
+  else STEPSPER = 8;                     // transfer/elastic
   Incoming.StepSize = std::min(2.0 * M_PI / Incoming.k, 1.0) / STEPSPER;
   Outgoing.StepSize = std::min(2.0 * M_PI / Outgoing.k, 1.0) / STEPSPER;
 
@@ -262,7 +269,10 @@ void DWBA::Calculate() {
     // SCTASY from DPSB preset = -20.0 (negative = allow L-adjust)
     double ASYMPT_base = std::abs(SctAsySet);  // = 20.0 fm
     int LMAX_eff = (LmaxSet >= 0) ? LmaxSet : 40;
-    bool allow_L_adjust = (SctAsySet < 0);  // negative SCTASY = allow
+    // For inelastic without PARAMETERSET: no L-adjustment (SCTASY > 0 in Fortran default)
+    // Fortran INELOCA sets SCTASY=-(GRIDIN(5,N)) which is -20 (allows adjustment)
+    // Without PARAMETERSET, no SCTASY override → use ASYMPT_base = 20, no adjust
+    bool allow_L_adjust = (SctAsySet < 0) && (ParameterSet.find("INELOCA") != std::string::npos || BELx == 0.0);
 
     // Incoming channel
     double RMAX_in = ASYMPT_base;
@@ -298,6 +308,14 @@ void DWBA::Calculate() {
 
   WavSet(Incoming);
   WavSet(Outgoing);
+
+  // ── Inelastic collective branch ──
+  if (BELx > 0.0) {
+    std::cerr << "[DWBA] Calling InelDcCollective..." << std::endl;
+    InelDcCollective();
+    std::cerr << "[DWBA] InelDcCollective returned." << std::endl;
+    return;
+  }
 
   // Setup Angular Integration Grid
   GrdSet();

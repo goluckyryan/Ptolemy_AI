@@ -154,6 +154,11 @@ private:
   int    LminSet      = -1;     // lmin for incoming partial wave (-1 = use default 0)
   int    LmaxSet      = -1;     // lmax for incoming partial wave (-1 = use default 40)
   double AsymptopiaSet = -1.0;  // asymptopia in fm (-1 = use default 30)
+  // Inelastic collective fields
+  int    Lx           = 4;     // multipole order for inelastic
+  double BELx         = 0.0;  // B(ELx) in e^2 barn^Lx (0 = transfer reaction)
+  std::string ParameterSet = "";  // PARAMETERSET keyword (e.g. INELOCA1)
+  double AsymptopiaSet_inel = 20.0; // SUMMAX for inelastic (from asymptopia keyword)
 private:
   double SctAsySet     = -20.0; // scattering asymptopia from preset (DPSB default = -20 fm)
                                 // negative = allow L-dependent turning point extension
@@ -179,6 +184,7 @@ public:
 private:
   void GrdSet();
   void InelDc();
+  void InelDcCollective();  // Collective inelastic DWBA
   void InelDcZR();  // Zero-Range transfer integral
   void GrdSetFaithful();   // faithful Fortran port (replaces GrdSet)
   void InelDcFaithful2();  // faithful Fortran port (replaces InelDc)
