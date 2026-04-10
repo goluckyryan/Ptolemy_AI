@@ -180,10 +180,6 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
 
                     // BE = Sn - Ex = (ME_core + ME_trans - ME_res) - Ex
                     bs_binding = ME_core + ME_trans - ME_res - rxn_excitation;
-                                                << bs_binding << " MeV (Sn of " << rxn_residual
-                              << ", Ex=" << rxn_excitation
-                              << ") [ME: core=" << ME_core << " trans=" << ME_trans
-                              << " res=" << ME_res << "]\n";
                 }
                 targetBS_n = bs_nodes; targetBS_l = bs_l; targetBS_j = bs_j;
                 targetBS_pot = bsPot;

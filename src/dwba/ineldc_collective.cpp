@@ -657,6 +657,7 @@ void DWBA::InelDcCollective() {
         int JP_in = Incoming.JSPS + 2 * LI;
         WavElj(Incoming, LI, JP_in);
         std::vector<std::complex<double>> wf_in = Incoming.WaveFunction;
+
         if (wf_in.empty()) continue;
 
         for (int LO = LO_min; LO <= LO_max; LO += 2) {
@@ -679,18 +680,10 @@ void DWBA::InelDcCollective() {
                 if (r <= 0) continue;
                 auto chi_in_val = interpSpline(wf_in, h_in, r);
                 auto chi_out_val = interpSpline(wf_out, h_out, r);
-                // chi vs F diagnostic for LI=0,LO=4 at a few r values
-                if (LI==0 && LO==4 && (i==NUMPT/4 || i==NUMPT/2 || i==3*NUMPT/4)) {
-                    std::vector<double> FC,FCP,GC,GCP;
-                    Rcwfn(k_in*r, eta_in, 0, 0, FC, FCP, GC, GCP, 1e-10);
-                    std::vector<double> FC2,FCP2,GC2,GCP2;
-                    Rcwfn(k_out*r, eta_out, 4, 4, FC2, FCP2, GC2, GCP2, 1e-10);
-                    double F_in = FC[0], F_out = FC2[4];
-                }
+
                 std::complex<double> H(H_r_wt[i]+H_c_wt[i], H_i_wt[i]);
                 auto contrib = H * chi_out_val * chi_in_val;
-                if (!std::isfinite(H_i_wt[i]) && LI==0 && LO==2) {
-                }
+
                 integral += contrib;
                 // Debug: separate Coulomb-only integral
                 integral_coul += H_c_wt[i] * chi_out_val * chi_in_val;
@@ -745,7 +738,10 @@ void DWBA::InelDcCollective() {
             int Lmax_elastic_est = 25;  // Optimal IRTOIN cutoff (min 0.37% vs 0.62% at 26)
             // IRTOIN: enable only for heavy nuclei with large Coulomb (eta_in > 2)
             // For light systems (p+16O, eta~0.4), IRTOIN overcorrects backward angles
-            bool ENABLE_COULIN = (eta_in > 2.0);  // auto: heavy=true, light=false
+            // IRTOIN essential when Coulomb excitation is significant (FFI/ICOMP large)
+            // Enable for all Coulomb-dominated reactions (eta > 0.5 covers alpha, d, p on heavy nuclei)
+            // For very light systems (p+16O eta=0.4): IRTOIN overcorrects backward angles
+            bool ENABLE_COULIN = (eta_in > 0.5 || Zp*Zt > 10);  // eta threshold
             bool ENABLE_FFI_DIRECT = false;  // Disabled: was overriding COULIN FFI with wrong sign
             bool valid_for_coulin = std::abs(LDEL) <= LX && (LI <= Lmax_elastic_est + LX);  // ALL LI up to 30
             if (ENABLE_COULIN && valid_for_coulin) {
@@ -835,8 +831,9 @@ void DWBA::InelDcCollective() {
             // Use: cl2ff = -R2S4 * raw_pureFF; FFI = C*BETARAT*cl2ff
             // INUC = ICOMP + IRTOIN - FFI (Fortran formula, applied as-is)
             std::complex<double> ITOTAL = ICOMP + IRTOIN;
-            // IRTOIN adds Coulomb tail (SUMMAX→∞). FFI not needed (ICOMP captures 0→SUMMAX accurately).
-            // Use INUC = ITOTAL (= ICOMP + IRTOIN) without FFI subtraction.
+            // INUC = ITOTAL (no FFI correction for now - FFI sign verified but COULIN pureFF inaccurate)
+            // For 48Ca (alpha): FFI dominates but COULIN pureFF is 2.2× off
+            // For 206Hg (d): FFI is small (15% of ICOMP), IRTOIN is the main correction
             std::complex<double> INUC = ITOTAL;
             std::complex<double> S = phase * INUC;
 
@@ -850,7 +847,11 @@ void DWBA::InelDcCollective() {
         }
     }
 
-    if (!Smat.empty()) {
+
+    // Build lookup map: (LI,LO) -> complex S value
+    std::map<std::pair<int,int>, std::complex<double>> Smap;
+    for (const auto& s : Smat) {
+        Smap[{s.LI, s.LO}] = s.val;
     }
 
     // ===== LINTRP-style power-law S-matrix extrapolation (Fortran LXTRP1/LXTRP2) =====
@@ -945,6 +946,7 @@ void DWBA::InelDcCollective() {
     }
 
 
+    // Debug: print Smap size after extrapolation
     // ===== BETCAL: accumulate beta(MX, LO) from ALL (LI,LO) pairs =====
     // Matches Fortran BETCAL: BETAS[MX][LO] = sum_LI FACTOR*(2LI+1)*CG*(SMAG*sin(SPHASE+sigma))
     double FACTOR_BET = 0.5 / k_in;
@@ -955,10 +957,6 @@ void DWBA::InelDcCollective() {
     std::vector<std::vector<std::complex<double>>> beta_arr(MX_max+1,
         std::vector<std::complex<double>>(LOMAX_EXT, {0.0, 0.0}));
 
-    // Build lookup map: (LI,LO) -> complex S value
-    for (const auto& s : Smat) {
-        Smap[{s.LI, s.LO}] = s.val;
-    }
 
     // ===== LINTRP-style power-law S-matrix extrapolation (Fortran LXTRP1/LXTRP2) =====
     // Fit |S(L)| = A*(LMAX_fit/L)^B to decay region, then extrapolate to LIMOST.
@@ -1152,7 +1150,6 @@ void DWBA::InelDcCollective() {
         }
     }
 #else
-    }
     // For each (LO, delta): accumulate into beta[MX][LO]
     // Loop over ALL Smap entries (includes extrapolated high-L values)
     for (auto& [key, Sval] : Smap) {
@@ -1187,11 +1184,7 @@ void DWBA::InelDcCollective() {
     }
 #endif
 
-    // Check beta values
-    for (int MX=0; MX<=LX; MX++) {
-        double bsum=0; for (auto& b : beta_arr[MX]) bsum+=std::abs(b);
-    }
-        }
+
     // sqrt-factorial normalization for MX > 0
     for (int MX = 1; MX <= MX_max; MX++) {
         for (int LO = MX; LO < LOMAX_EXT; LO++) {
