@@ -1,0 +1,14 @@
+HEADER: 32Si(d,d')32Si(4+, 4.0 MeV) Ed=40 MeV (20 MeV/u)
+REACTION: 32Si(d,d)32Si(4+ 4.000) ELAB= 40.000
+PARAMETERSET INELOCA1
+JBIGA=0
+BELX = 90.0
+anglemin=0 anglemax=180 anglestep=1
+
+INCOMING
+v=90.0 r0=1.17 a=0.76 vi=5.0 ri0=1.32 ai=0.58 vsi=9.5 rsi0=1.32 asi=0.58 rc0=1.30
+;
+OUTGOING
+;
+;
+end

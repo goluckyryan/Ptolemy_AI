@@ -1,0 +1,14 @@
+HEADER: 48Ca(a,a')48Ca(2+ 3.832 MeV) Ea=40 MeV (10 MeV/u)
+REACTION: 48Ca(a,a)48Ca(2+ 3.832) ELAB= 40.000
+PARAMETERSET INELOCA1
+JBIGA=0
+BELX = 36.0
+anglemin=0 anglemax=180 anglestep=1
+
+INCOMING
+v=175.0 r0=1.30 a=0.51 vi=10.0 ri0=1.40 ai=0.88 rc0=1.30
+;
+OUTGOING
+;
+;
+end

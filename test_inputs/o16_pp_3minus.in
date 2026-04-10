@@ -1,0 +1,13 @@
+HEADER: 16O(p,p')16O*(3-, 6.13 MeV) Ep=10 MeV
+REACTION: 16O(p,p)16O(3- 6.130) ELAB= 10.000
+JBIGA=0
+BELX = 8.2
+anglemin=0 anglemax=180 anglestep=1
+
+INCOMING
+v=48.0 r0=1.17 a=0.75 vi=3.5 ri0=1.32 ai=0.6 vsi=9.0 rsi0=1.32 asi=0.6 rc0=1.25
+;
+OUTGOING
+;
+;
+end
