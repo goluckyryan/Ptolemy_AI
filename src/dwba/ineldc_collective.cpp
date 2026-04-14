@@ -568,7 +568,7 @@ void DWBA::InelDcCollective() {
     }
 
 
-    auto interpSpline = [](const std::vector<std::complex<double>>& wf, double h_grid,
+        auto interpSpline = [](const std::vector<std::complex<double>>& wf, double h_grid,
                            double r) -> std::complex<double> {
         int N = (int)wf.size();
         double rbyh = r / h_grid;
@@ -659,6 +659,11 @@ void DWBA::InelDcCollective() {
         int JP_in = Incoming.JSPS + 2 * LI;
         WavElj(Incoming, LI, JP_in);
         std::vector<std::complex<double>> wf_in = Incoming.WaveFunction;
+        if (LI==0) {
+            auto S0 = (LI < (int)Incoming.SMatrix.size()) ? Incoming.SMatrix[LI] : std::complex<double>(0,0);
+            fprintf(stderr,"[SMAT] LI=0 JP_in=%d JSPS=%d |S|=%.6f phase=%.4f  wf_in.size=%zu\n",
+                JP_in, Incoming.JSPS, std::abs(S0), std::arg(S0), wf_in.size());
+        }
 
         if (wf_in.empty()) continue;
 
@@ -686,12 +691,11 @@ void DWBA::InelDcCollective() {
                 std::complex<double> H(H_r_wt[i]+H_c_wt[i], H_i_wt[i]);
                 auto contrib = H * chi_out_val * chi_in_val;
 
+
                 integral += contrib;
                 // Debug: separate Coulomb-only integral
                 integral_coul += H_c_wt[i] * chi_out_val * chi_in_val;
             }
-
-                        // Diagnostic: compare chi*chi/r^5 with F*F/r^5 at same Gauss points
 
             std::complex<double> phase;
             switch (LX % 4) {
@@ -701,41 +705,14 @@ void DWBA::InelDcCollective() {
                 case 3: phase={1,0};  break;
             }
 
-            // Print raw integral for comparison with Fortran INTEGRAL(0,SUMMAX)
-            double integ_mag = std::abs(integral);
-            double integ_phase = std::arg(integral);
-            // Fortran INTEGRAL = FACTOR * integral (no CG, no phase)
-            double ftn_integral_mag = factor * integ_mag;
-            double ftn_integral_phase = integ_phase;
-
             // ICOMP = factor * |cg| * integral (from 0 to SUMMAX)
             double C = factor * std::abs(cg);
             std::complex<double> ICOMP = C * std::complex<double>(integral.real(), integral.imag());
             std::complex<double> ICOMP_coul = C * integral_coul;
-            // Debug: pure Coulomb FFI from COULIN
-            double pFF_this = 0.0;
-            if (iret_coulin2 == 0 && std::abs(LO - LI) <= LX && LI <= 30) {
-                auto [idc,ilc] = getCoulinIdx(LI, LO);
-                pFF_this = coulinPure.FF[idc + ilc * coulinPure.ldldim];
-            }
-            double FFI_mag = std::abs(C * BETARAT * R2S4 * pFF_this);
+            (void)ICOMP_coul;
 
-            // Coulomb tail correction: IRTOIN + FFI
-            // STATUS: All correction approaches are broken or inaccurate.
-            // The pure Coulomb FF integral (FFI) requires highly cancelling computation
-            // that the Fortran COULIN recursion achieves stably but our alternatives don't.
-            // Direct Clints from outer turning point misses the inner region.
-            // Adding inner Gauss quadrature gives wrong normalization.
-            // COULIN R=0 recursion diverges with LMXMX.
-            // Baseline: ENABLE_COULIN=false, ENABLE_FFI_DIRECT=false -> 1.72% mean, 11.2% max.
             std::complex<double> IRTOIN(0.0, 0.0);
             std::complex<double> FFI(0.0, 0.0);
-            // COULIN: enabled with seed-restoration fix (STABILITY FIX in coulin.cpp)
-            // pureFF values now stable regardless of LMXMX:
-            //   FF(0,4) = +4.78e-5 (Fortran: +4.83e-5, 1% off) ✅
-            //   FF(2,2) = +8.02e-5 (Fortran: +4.83e-5, 66% off but correct sign) 
-            // Sign: cl2ff = +R2S4 * pureFF (COULIN sign opposite to physical)
-            // Apply to ALL even-LI pairs within Lmax range
             int LDEL = LO - LI;
             int Lmax_elastic_est = 25;  // Optimal IRTOIN cutoff (min 0.37% vs 0.62% at 26)
             // IRTOIN: enable only for heavy nuclei with large Coulomb (eta_in > 2)
@@ -744,7 +721,7 @@ void DWBA::InelDcCollective() {
             // Enable for all Coulomb-dominated reactions (eta > 0.5 covers alpha, d, p on heavy nuclei)
             // For very light systems (p+16O eta=0.4): IRTOIN overcorrects backward angles
             bool ENABLE_COULIN = (eta_in > 0.5 || Zp*Zt > 10);  // eta threshold
-            bool ENABLE_FFI_DIRECT = false;  // Disabled: was overriding COULIN FFI with wrong sign
+
             bool valid_for_coulin = std::abs(LDEL) <= LX && (LI <= Lmax_elastic_est + LX);  // ALL LI up to 30
             if (ENABLE_COULIN && valid_for_coulin) {
                 auto [id, il] = getCoulinIdx(LI, LO);
@@ -798,12 +775,6 @@ void DWBA::InelDcCollective() {
             std::complex<double> INUC = ITOTAL - phase * FFI;
             std::complex<double> S = phase * INUC;
 
-
-            if (LI <= 10 || (LI >= 20 && LI <= 30 && LO == LI + LX)) {
-                auto ITOTAL_here = ICOMP + IRTOIN;
-                auto INUC_here = ITOTAL_here - FFI;
-                double cancel = (std::abs(FFI) > 1e-30) ? std::abs(ICOMP)/std::abs(FFI) : 0.0;
-            }
 
             Smat.push_back({LI, LO, S});
         }

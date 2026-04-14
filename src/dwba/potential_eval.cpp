@@ -4,8 +4,9 @@
 #include <algorithm>
 
 // Compute Ptolemy R0MASS factor
-// R0MASS = A_heavy^(1/3) + A_light^(1/3) when A_light > 2.5
+// R0MASS = A_heavy^(1/3) + A_light^(1/3) when A_light > 2.5 (heavy-ion convention)
 // R0MASS = A_heavy^(1/3)                  when A_light <= 2.5
+// For alpha (Ap=4>2.5): R0MASS = At^(1/3)+Ap^(1/3) — matches Fortran elastic S-matrix
 static double computeR0MASS(double A_target, double A_projectile) {
     double A_heavy = std::max(A_target, A_projectile);
     double A_light = std::min(A_target, A_projectile);
