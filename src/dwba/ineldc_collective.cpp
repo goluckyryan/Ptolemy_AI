@@ -691,7 +691,6 @@ void DWBA::InelDcCollective() {
                 std::complex<double> H(H_r_wt[i]+H_c_wt[i], H_i_wt[i]);
                 auto contrib = H * chi_out_val * chi_in_val;
 
-
                 integral += contrib;
                 // Debug: separate Coulomb-only integral
                 integral_coul += H_c_wt[i] * chi_out_val * chi_in_val;
