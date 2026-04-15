@@ -26,6 +26,7 @@ public:
     void SetSystem(int Ap, int Zp, int At, int Zt, double Elab_MeV);
     void SetGrid(double h = 0.05, int N = 601);
     void SetLmax(int Lmax);   // -1 = auto
+    void SetWynn(bool enable) { useWynn_ = enable; }  // Enable Wynn epsilon series acceleration
 
     // --- Add potentials (Raphael-compatible interface) ---
     // V is a complex depth in MeV: real = real part, imag = imaginary part
@@ -120,6 +121,9 @@ private:
     double rc0_;           // Coulomb radius parameter
     bool   hasCoulomb_;
 
+    // Options
+    bool   useWynn_ = false;  // Enable Wynn epsilon series acceleration for nuclear amp
+
     // S-matrix: Smat_[L] is a vector of 2S+1 entries for J = L-S, ..., L+S
     // For spin-0: 1 entry.  spin-1/2: 2 entries (J=L+1/2, J=L-1/2).  spin-1: 3 entries.
     // Index: idx = J - (L - S)  i.e. J=L-S → idx=0, J=L → idx=S, J=L+S → idx=2S
@@ -152,4 +156,7 @@ private:
     std::complex<double> NuclearAmp(double v, double v0, double theta_deg) const;
     // Clebsch-Gordan coefficient (thin wrapper around math_utils)
     static double CG(double j1, double m1, double j2, double m2, double J, double M);
+    // Wynn epsilon algorithm: accelerate convergence of partial sum sequence
+    // Returns best estimate of the limit of the series {S_0, S_1, S_2, ...}
+    static std::complex<double> WynnEpsilon(const std::vector<std::complex<double>>& partial_sums);
 };

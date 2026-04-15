@@ -442,8 +442,6 @@ void DWBA::GrdSetFaithful()
 // ============================================================
 void DWBA::InelDcFaithful2()
 {
-    fprintf(stderr, "[GRDSET] S-matrix matching: %s\n",
-            useTMATCH ? "2-point (TMATCH/Fortran)" : "5-point Wronskian");
 
     const double PI      = 3.14159265358979323846;
     const double AMU_MEV = 931.5016;   // Ptolemy AMUMEV
@@ -466,9 +464,9 @@ void DWBA::InelDcFaithful2()
     double mA = ptolemy_mass_MeV((int)Incoming.Target.Z, Incoming.Target.A);
     double mb = ptolemy_mass_MeV((int)Outgoing.Projectile.Z, Outgoing.Projectile.A);
     double mB = ptolemy_mass_MeV((int)Outgoing.Target.Z, Outgoing.Target.A);
-    // Transferred particle: x = projectile - ejectile (e.g., neutron for d,p)
-    int Zx = (int)Incoming.Projectile.Z - (int)Outgoing.Projectile.Z;
-    int Ax = Incoming.Projectile.A - Outgoing.Projectile.A;
+    // Transferred particle: x = |projectile - ejectile| (works for both d,p and p,d)
+    int Zx = std::abs((int)Incoming.Projectile.Z - (int)Outgoing.Projectile.Z);
+    int Ax = std::abs(Incoming.Projectile.A - Outgoing.Projectile.A);
     double mx = ptolemy_mass_MeV(Zx, Ax);
     // Kinematic ratios (matching Fortran SETCHN BRATMS)
     // BRATMS(1) = AMX/AMB, BRATMS(2) = AMX/AMBIGA
@@ -506,8 +504,8 @@ void DWBA::InelDcFaithful2()
     Channel TgtBS_ch;
     TgtBS_ch.Pot    = TargetBS.Pot;
     TgtBS_ch.Target = Incoming.Target;
-    TgtBS_ch.Projectile.Z    = Incoming.Projectile.Z - Outgoing.Projectile.Z;
-    TgtBS_ch.Projectile.A    = Incoming.Projectile.A - Outgoing.Projectile.A;
+    TgtBS_ch.Projectile.Z    = Zx;
+    TgtBS_ch.Projectile.A    = Ax;
     TgtBS_ch.Projectile.Mass = mx;
     TgtBS_ch.mu   = mu_tgt;
     {
@@ -527,8 +525,8 @@ void DWBA::InelDcFaithful2()
     Channel PrjBS_ch;
     PrjBS_ch.Pot    = ProjectileBS.Pot;
     PrjBS_ch.Target = Outgoing.Projectile;
-    PrjBS_ch.Projectile.Z    = Incoming.Projectile.Z - Outgoing.Projectile.Z;
-    PrjBS_ch.Projectile.A    = Incoming.Projectile.A - Outgoing.Projectile.A;
+    PrjBS_ch.Projectile.Z    = Zx;
+    PrjBS_ch.Projectile.A    = Ax;
     PrjBS_ch.Projectile.Mass = mx;
     PrjBS_ch.mu   = mu_prj;
     {
@@ -685,8 +683,8 @@ void DWBA::InelDcFaithful2()
         // Wait — from Fortran AMBGA3=2.5198=16^(1/3), AMBGB3=2.5713=17^(1/3)
         // From Fortran: AMBIGA = 16, AMBIGB = 17.
         // In Ptolemy notation: AMBIGA = A (target), AMBIGB = B (residual) for stripping.
-        double A_a    = (double)Incoming.Projectile.A;  // deuteron = 2
-        double A_b    = A_a - (double)Outgoing.Projectile.A;  // neutron = 1
+        double A_a    = (double)Incoming.Projectile.A;  // e.g. deuteron=2, proton=1
+        double A_b    = (double)Ax;  // transferred particle A (abs, works for p,d too)
         double A_A    = (double)Incoming.Target.A;   // 16O = 16
         double A_B    = A_A + A_b;                   // 17O = 17
 
@@ -874,8 +872,6 @@ void DWBA::InelDcFaithful2()
     int NSTEP_scat = static_cast<int>(RMAX_scat / h_scat + 0.5);
     RMAX_scat = NSTEP_scat * h_scat;
     double SCTMAX_scan = RMAX_scat;
-    fprintf(stderr, "CPP_SCTMAX: SctAsy=%.1f, SCTMAX_scan=%.4f (NSTEP=%d, h=%.6f)\n",
-            SctAsySet, SCTMAX_scan, NSTEP_scat, h_scat);
     
     auto build_rpsi_table = [&](int L, int JPI, bool update_rofmax, bool no_SO = false) -> std::vector<double> {
         // Fortran GRDSET: STANSW=TRUE, SOSWS(1)=FALSE → chi computed WITHOUT spin-orbit
@@ -934,9 +930,6 @@ void DWBA::InelDcFaithful2()
     // Set SCTMAX = ASYMPS(1) = scattering asymptopia (Fortran: SCTMAX = ASYMPS(1) at line 18370)
     // This is where BSPROD switches from chi interpolation to chi(R) = R
     SCTMAX = SCTMAX_scan;
-    fprintf(stderr, "CPP_SCAN_CHI: ISCTMN size=%d, ISCTCR size=%d, h=%.6f, SCTMAX=%.4f, ROFMAX=%.4f, LCRIT=%d\n",
-            (int)chi_ISCTMN.size(), (int)chi_ISCTCR.size(), h_chi_scan,
-            SCTMAX, ROFMAX, LCRIT);
     // SUMMAX_from_chi = outgoing chi grid endpoint (Fortran SUMMAX = ABS(SCTASY) = outgoing grid end)
     // Fortran OUTGOING = 30.4 fm = (N_out-1) * h_out for the outgoing scattering channel.
     // We compute this by running WavElj once for the outgoing channel at L=0.
@@ -2041,16 +2034,6 @@ void DWBA::InelDcFaithful2()
 
                 }  // End IU loop (DO 549)
 
-#ifdef DUMP_CMPTED
-                // Dump SMHVL for comparison with Fortran
-                if (LI == 0 && IV == 1) {
-                    // SMHVL[IH=0][IU=1..NPSUM] — matches FTN_SMHVL0
-                    for (int iu = 1; iu <= NPSUM; ++iu) {
-                        fprintf(stderr, "CPP_SMHVL0 IU=%3d S1=%16.8E\n",
-                                iu, SMHVL[0][iu]);
-                    }
-                }
-#endif
 
                 // ── DO 609 IH = 1, IHMAX (spline SMHVL → SMIVL) ─────────────
                 // Fortran: CALL SPLNCB(NPSUM, SMHPT, SMHVL[IH][*], work...)
@@ -2078,15 +2061,6 @@ void DWBA::InelDcFaithful2()
                         SMIVL[IH][iu2+1] = Y_out[iu2];
                 }
 
-#ifdef DUMP_CMPTED
-                // Dump SMIVL after spline — matches FTN_SMIVL0
-                if (LI == 0 && IV == 1) {
-                    for (int iu = 1; iu <= NPSUMI; ++iu) {
-                        fprintf(stderr, "CPP_SMIVL0 IU=%3d Usi=%10.4f V=%16.8E\n",
-                                iu, SMIPT[iu-1], SMIVL[0][iu]);
-                    }
-                }
-#endif
 
                 // ── DO 789 IU = 1, NPSUMI (chi integration) ──────────────────
                 // IPLUNK = NPSUMI*(IV-1) + IU  (1-based)
@@ -2184,71 +2158,6 @@ void DWBA::InelDcFaithful2()
                             }
                         }
                     }
-#ifdef DUMP_CMPTED
-                    // Per-IU running I_accum dump for LI=0
-                    if (LI == 0 && IV == 1 && !I_accum.empty()) {
-                        auto it0 = I_accum.begin();
-                        fprintf(stderr, "CPP_IU0 IU=%3d Ire=%16.8E Iim=%16.8E TERM=%12.4E\n",
-                                IU, it0->second.first, it0->second.second, TERM);
-                    }
-                    // Dump chi array values around NSTEP boundary for LI=0
-                    if (LI == 0 && IV == 1 && IU == 42) {
-                        auto itA = chi_a_map.begin();
-                        const auto& tabA = itA->second;
-                        fprintf(stderr, "CPP_CHITAB chi_a around NSTEP boundary:\n");
-                        for (int idx = 235; idx <= 250 && idx < (int)tabA.size(); ++idx) {
-                            fprintf(stderr, "  [%d] r=%.4f  (%.8e, %.8e)\n",
-                                    idx, idx*h_a, tabA[idx].real(), tabA[idx].imag());
-                        }
-                    }
-                    // Dump chi products and DW at IU=42-44 for LI=0
-                    if (LI == 0 && IV == 1 && IU >= 42 && IU <= 44) {
-                        // Dump first JPI's chi_a at RI and first chi_b at RO
-                        auto itA = chi_a_map.begin();
-                        double ridxA = RI_c / h_a;
-                        int iaiA = (int)(ridxA + 0.5);
-                        auto itB = chi_b_map.begin();
-                        double ridxB = RO_c / h_b;
-                        int iaiB = (int)(ridxB + 0.5);
-                        // Interpolate chi_a
-                        std::complex<double> ca{0,0}, cb{0,0};
-                        {
-                            const auto& tab = itA->second;
-                            int mx = (int)tab.size()-3;
-                            if (iaiA>=2 && iaiA<=mx) {
-                                double P=ridxA-iaiA, PS=P*P;
-                                double X1=P*(PS-1)/24,X2=X1+X1,X3=X1*P;
-                                double X4=X2+X2-0.5*P,X5=X4*P;
-                                double C1=X3-X2,C5=X3+X2,C3=X5-X3,C2=X5-X4,C4=X5+X4;
-                                C3=C3+C3+1;
-                                ca = C1*tab[iaiA-2]-C2*tab[iaiA-1]+C3*tab[iaiA]-C4*tab[iaiA+1]+C5*tab[iaiA+2];
-                            }
-                        }
-                        {
-                            const auto& tab = itB->second;
-                            int mx = (int)tab.size()-3;
-                            if (iaiB>=2 && iaiB<=mx) {
-                                double P=ridxB-iaiB, PS=P*P;
-                                double X1=P*(PS-1)/24,X2=X1+X1,X3=X1*P;
-                                double X4=X2+X2-0.5*P,X5=X4*P;
-                                double C1=X3-X2,C5=X3+X2,C3=X5-X3,C2=X5-X4,C4=X5+X4;
-                                C3=C3+C3+1;
-                                cb = C1*tab[iaiB-2]-C2*tab[iaiB-1]+C3*tab[iaiB]-C4*tab[iaiB+1]+C5*tab[iaiB+2];
-                            }
-                        }
-                        double DWR = ca.real()*cb.real()+ca.imag()*cb.imag();  // Wait, DW = chi_b * conj(chi_a)?
-                        // Actually: DWR = FOR*FIR - FOI*FII  (chi_b × chi_a, not conjugate)
-                        double FIR=ca.real(), FII=ca.imag(), FOR2=cb.real(), FOI2=cb.imag();
-                        DWR = FOR2*FIR - FOI2*FII;
-                        double DWI2 = FOR2*FII + FOI2*FIR;
-                        fprintf(stderr, "CPP_CHI IU=%3d RI=%.4f RO=%.4f iaiA=%d iaiB=%d\n"
-                                "  chi_a=(%.8e,%.8e) chi_b=(%.8e,%.8e)\n"
-                                "  DWR=%.8e DWI=%.8e SMIVL=%.8e TERM=%.8e\n",
-                                IU, RI_c, RO_c, iaiA, iaiB,
-                                ca.real(), ca.imag(), cb.real(), cb.imag(),
-                                DWR, DWI2, SMIVL[0][IU], TERM);
-                    }
-#endif
                 }  // End IU chi loop (DO 789)
 
                 // Debug STEP_E: running I_accum[II=1] after each IV
@@ -2348,15 +2257,6 @@ void DWBA::InelDcFaithful2()
                                                    it->second.second);
 
                         // Debug: dump raw I_accum (before phase/ATERM)
-#ifdef DUMP_IACC
-                        {
-                            int Lo_d = lolx_pairs[IH].Lo;
-                            int Lx_d = lolx_pairs[IH].Lx;
-                            fprintf(stderr, "CPP_IACC LI=%d JPI=%d Lo=%d JPO=%d Lx=%d SR=%.6e SI=%.6e MAG=%.6e\n",
-                                    LI, JPI_v, Lo_d, JPO, Lx_d,
-                                    I_raw.real(), I_raw.imag(), std::abs(I_raw));
-                        }
-#endif
 
                         std::complex<double> Integral = I_raw * phase_factor;
                         double sf_norm = FACTOR_sf * std::fabs(ATERM_val)

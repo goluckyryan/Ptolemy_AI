@@ -95,13 +95,9 @@ void DWBA::WavSet(Channel &ch) {
     EvaluatePotential(r, ch.Pot, ch.V_real[i], ch.V_imag[i], ch.V_so_real[i],
                       ch.V_so_imag[i], ch.V_coulomb[i], ch.Projectile.Z,
                       ch.Target.Z, A_target, A_projectile);
-    if (!printed_V && (i==60||i==75||i==90||i==105||i==120)) {
-        fprintf(stderr,"[POT] r=%.3f V_re=%.4f V_im=%.4f V_coul=%.4f Ap=%.0f At=%.0f\n",
-            r, ch.V_real[i], ch.V_imag[i], ch.V_coulomb[i], A_projectile, A_target);
-    }
-  }
   printed_V = true;
-}
+  }  // end for loop
+}  // end WavSet
 
 // ---------------------------------------------------------------------------
 // DWBA::WavElj
@@ -438,16 +434,6 @@ void DWBA::WavElj(Channel &ch, int L, int Jp, bool skipSO, bool scanMode) {
     SJI = (den > 1e-60) ? (num_i*den_r - num_r*den_i) / den : 0.0;
 
     // Debug for L=0 first call only
-    static bool dbg_wronsk = false;
-    if (!dbg_wronsk && L==0) {
-        dbg_wronsk = true;
-        fprintf(stderr,"[WRK] n_match=%d R=%.4f h=%.5f N=%d\n",n_match,R_match,h,N);
-        fprintf(stderr,"[WRK] F_0=%.6e G_0=%.6e FLP=%.6e GLP=%.6e\n",FL,GL,FLP,GLP);
-        fprintf(stderr,"[WRK] u_m=(%.6e,%.6e) u'_m=(%.6e,%.6e)\n",ur_w,ui_w,upr,upi);
-        fprintf(stderr,"[WRK] Ar=%.6e Ai=%.6e Br=%.6e Bi=%.6e\n",Ar,Ai,Br,Bi);
-        fprintf(stderr,"[WRK] num=(%.6e,%.6e) den=(%.6e,%.6e) den2=%.6e\n",num_r,num_i,den_r,den_i,den);
-        fprintf(stderr,"[WRK] S=(%.6e,%.6e) |S|=%.6f\n",SJR,SJI,std::sqrt(SJR*SJR+SJI*SJI));
-    }
   }
 
   if (ch.SMatrix.size() <= (size_t)L) ch.SMatrix.resize(L + 1);

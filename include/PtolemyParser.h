@@ -35,6 +35,7 @@ private:
     double elastic_angleMin_ = 0, elastic_angleMax_ = 180, elastic_angleStep_ = 5;
     int elastic_Lmax_ = -1;          // -1 = auto
     double elastic_asymptopia_ = 30; // Rmax proxy
+    bool elastic_wynn_ = false;      // Enable Wynn epsilon series acceleration
 };
 
 #endif

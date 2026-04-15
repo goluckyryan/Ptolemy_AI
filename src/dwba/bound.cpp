@@ -180,11 +180,6 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
             << " MeV, kappa=" << kappa << " fm^-1"
             << ", L=" << l << ", J=" << j
             << ", mu=" << ch.mu << " AMU" << std::endl;
-#ifdef DUMP_BOUND
-  fprintf(stderr, "DBG_BS: mu_MeV=%.6f AFAC=%.8f kappa=%.8f DL2=%.1f\n",
-          mu_MeV, AFAC, kappa, DL2);
-  fprintf(stderr, "DBG_BS: NSTEPS=%d h=%.8f\n", NSTEPS, h);
-#endif
 
   // ---- Build V1 and V2 potential arrays (0-indexed, size NSTEPS+5) ----
   // Ptolemy BOUND: V2[I] = WS(r)/1  (WOODSX type=1, depth=-1 → returns +f_WS)
@@ -245,22 +240,6 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
   if (NMTOP > NSTEPS - 5) NMTOP = NSTEPS - 5;
   int NMBOT = std::max(NMTOP - 20, 3);
 
-#ifdef DUMP_BOUND
-  fprintf(stderr, "DBG_BS: NMTOP=%d NMBOT=%d R_nuc=%.6f R_SO=%.6f\n",
-          NMTOP, NMBOT, R_nuc, R_SO);
-  fprintf(stderr, "DBG_BS: ALS_raw=%.8f ALS=%.8f VSO=%.4f JP=%d JSP=%d\n",
-          ALS_raw, ALS, ch.Pot.VSO, JP, JSP);
-  fprintf(stderr, "DBG_BS: ZP=%.0f ZT=%.0f A_target=%d\n", ZP, ZT, ch.Target.A);
-  for (int I = 0; I <= 3; I++) {
-    fprintf(stderr, "DBG_BS: V1[%d]=%.10e V2[%d]=%.10e (r=%.6f)\n", I, V1[I], I, V2[I], I*h);
-  }
-  // Near nuclear surface
-  int i90 = static_cast<int>(R_nuc/h);
-  for (int I = i90-1; I <= i90+2; I++) {
-    if (I >= 0 && I <= NSTEPS)
-      fprintf(stderr, "DBG_BS: V1[%d]=%.10e V2[%d]=%.10e (r=%.6f)\n", I, V1[I], I, V2[I], I*h);
-  }
-#endif
 
   // ---- V search via bisection (Ptolemy BOUND searches V to match derivatives) ----
   // We find V such that PHI = DROUT - DRIN = 0
@@ -409,25 +388,10 @@ void DWBA::CalculateBoundState(Channel &ch, int n, int l, double j,
   double prev_phi = 1e30;
   int    found_n  = -1;
 
-#ifdef DUMP_BOUND
-  // Debug: evaluate at Fortran's converged V to see what C++ PHI gives
-  {
-    int dbg_nodes = 0;
-    double dbg_phi = eval_bound(45.654, false, nullptr, &dbg_nodes);
-    fprintf(stderr, "DBG_BOUND V=45.654 PHI=%e nodes=%d (Fortran converges here)\n", dbg_phi, dbg_nodes);
-    dbg_phi = eval_bound(48.758, false, nullptr, &dbg_nodes);
-    fprintf(stderr, "DBG_BOUND V=48.758 PHI=%e nodes=%d (C++ converges here)\n", dbg_phi, dbg_nodes);
-  }
-#endif
 
   for (double Vt = 10.0; Vt <= 300.0; Vt += 2.0) {
     int cur_nodes = 0;
     double phi = eval_bound(Vt, false, nullptr, &cur_nodes);
-#ifdef DUMP_BOUND
-    if (Vt >= 40.0 && Vt <= 56.0) {
-      fprintf(stderr, "DBG_BOUND_SCAN V=%.1f PHI=%e nodes=%d\n", Vt, phi, cur_nodes);
-    }
-#endif
     if (prev_phi != 1e30 && phi*prev_phi < 0.0) {
       // This bracket has node count == cur_nodes (the higher-V side)
       // Use cur_nodes as the node count for the bracket

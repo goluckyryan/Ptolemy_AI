@@ -381,8 +381,8 @@ void DWBA::PrintParameters() {
   double ma = ptolemy_mass_s((int)Incoming.Projectile.Z, Incoming.Projectile.A);
   double mb = ptolemy_mass_s((int)Outgoing.Projectile.Z, Outgoing.Projectile.A);
   double mA = ptolemy_mass_s((int)Incoming.Target.Z, Incoming.Target.A);
-  int Zx_s = (int)Incoming.Projectile.Z - (int)Outgoing.Projectile.Z;
-  int Ax_s = Incoming.Projectile.A - Outgoing.Projectile.A;
+  int Zx_s = std::abs((int)Incoming.Projectile.Z - (int)Outgoing.Projectile.Z);
+  int Ax_s = std::abs(Incoming.Projectile.A - Outgoing.Projectile.A);
   double mx = ptolemy_mass_s(Zx_s, Ax_s);
   double mu_pbs = mb * mx / (mb + mx);
   double kappa_pbs = std::sqrt(2.0 * mu_pbs * ProjectileBS.BindingEnergy) / HBARC_L;

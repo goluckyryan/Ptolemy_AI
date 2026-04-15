@@ -412,18 +412,76 @@ double ElasticSolver::CG(double j1, double m1, double j2, double m2, double J, d
     return ClebschGordan(j1, m1, j2, m2, J, M);
 }
 
+// ============================================================
+// Wynn's epsilon algorithm — accelerates convergence of a slowly
+// converging series.  Given the partial sum sequence S_0, S_1, ..., S_N,
+// applies the Shanks transformation repeatedly via the epsilon table.
+//
+// The ε-table is built column by column:
+//   col[-1] = 0  (auxiliary)
+//   col[ 0] = S_n  (partial sums)
+//   col[ k] = col[k-2][n+1] + 1 / (col[k-1][n+1] - col[k-1][n])
+//
+// Even-numbered columns (ε_0, ε_2, ε_4, ...) are the Shanks estimates.
+// The last even-column element is returned as the accelerated estimate.
+// Reference: Wynn (1956), Math. Comp. 10, 91.
+// ============================================================
+std::complex<double> ElasticSolver::WynnEpsilon(
+    const std::vector<std::complex<double>>& S)
+{
+    int n = (int)S.size();
+    if (n == 0) return {};
+    if (n == 1) return S[0];
+
+    const double tiny = 1e-300;
+
+    // Build ε-table as a 2D array: table[col][row]
+    // col 0 = partial sums, col -1 (stored as col 0 of aux) = zeros
+    // We maintain three columns at a time: prev-prev, prev, cur
+    std::vector<std::complex<double>> em1(n, {0,0}); // ε_{k-1} (init = 0 for k=0)
+    std::vector<std::complex<double>> e0(S.begin(), S.end()); // ε_0 = partial sums
+
+    std::complex<double> best = S[n-1];  // fallback: last partial sum
+
+    for (int k = 1; k <= n - 1; ++k) {
+        int sz = n - k;
+        std::vector<std::complex<double>> e1(sz);
+        for (int i = 0; i < sz; ++i) {
+            std::complex<double> diff = e0[i+1] - e0[i];
+            if (std::abs(diff) < tiny) diff = {tiny, 0.0};
+            e1[i] = em1[i] + 1.0 / diff;
+        }
+        // Even columns (k=2,4,...) are Shanks estimates of the series limit
+        if (k % 2 == 0 && sz > 0) best = e1[0];
+        em1 = e0;
+        e0  = e1;
+        if (e0.empty()) break;
+    }
+    return best;
+}
+
+
 // GMatrix element G(v, v0, L) = Σ_J CG(L,v0-v; S,v | J,v0) * CG(L,0; S,v0 | J,v0) * S_J(L)
 // Then nuclear amp f_N(v,v0,θ) = (1/2ik) Σ_L (2L+1) * (-1)^(v0-v)
 //   * sqrt(fact(L-|v0-v|)/fact(L+|v0-v|)) * P_L^|v0-v|(cosθ) * e^{2iσ_L} * G(v,v0,L)
 // (Raphael NuclearScatteringAmp)
+// When useWynn_=true: build partial sum sequence and apply Wynn epsilon extrapolation.
 std::complex<double> ElasticSolver::NuclearAmp(double v, double v0, double theta_deg) const {
     double theta  = theta_deg * PI / 180.0;
     double cos_th = std::cos(theta);
     int    m      = (int)std::abs(v0 - v);  // |Δm|
 
     std::complex<double> sum(0,0);
+    // Collect partial sums for Wynn epsilon if requested
+    std::vector<std::complex<double>> partial_sums;
+    if (useWynn_) partial_sums.reserve(Lmax_ + 1);
+
     for (int L = 0; L <= Lmax_; ++L) {
-        if (m > L) continue;  // P_L^m = 0 for m > L
+        if (m > L) {
+            // P_L^m = 0, term is zero — still record partial sum for Wynn
+            if (useWynn_) partial_sums.push_back(sum / std::complex<double>(0, 2.0*k_));
+            continue;
+        }
 
         // Compute GMatrix element
         std::complex<double> Gmat(0,0);
@@ -436,25 +494,29 @@ std::complex<double> ElasticSolver::NuclearAmp(double v, double v0, double theta
                 if (J < 0) continue;
                 double cg1 = CG(L, v0 - v, S_, v,  J, v0);
                 double cg2 = CG(L, 0.0,    S_, v0,  J, v0);
-                // Guard against NaN from CG (e.g. when M doesn't match J)
                 if (std::isnan(cg1) || std::isnan(cg2)) continue;
                 Gmat += cg1 * cg2 * Smat_[L][idx];
             }
-            if (v == v0) Gmat -= 1.0;  // subtract δ(v,v0) for T-matrix
+            if (v == v0) Gmat -= 1.0;
         }
 
         double sL = CoulPhase_[L];
         std::complex<double> e2s(std::cos(2*sL), std::sin(2*sL));
 
-        // Normalization factor: (-1)^(v0-v) * sqrt((L-m)!/(L+m)!)
-        int dv_int = (int)std::round(v0 - v);  // integer Δm, possibly negative
+        int dv_int = (int)std::round(v0 - v);
         double sign = (std::abs(dv_int) % 2 == 0) ? 1.0 : -1.0;
         double fact_ratio = 1.0;
-        for (int k = L - m + 1; k <= L + m; ++k) fact_ratio *= k;  // (L+m)!/(L-m)!
+        for (int k = L - m + 1; k <= L + m; ++k) fact_ratio *= k;
         double norm = sign / std::sqrt(fact_ratio);
 
         double PLm = AssocLegendreP(L, m, cos_th);
         sum += (double)(2*L + 1) * norm * PLm * e2s * Gmat;
+
+        if (useWynn_) partial_sums.push_back(sum / std::complex<double>(0, 2.0*k_));
+    }
+
+    if (useWynn_ && partial_sums.size() >= 4) {
+        return WynnEpsilon(partial_sums);
     }
     return sum / std::complex<double>(0, 2.0 * k_);
 }

@@ -172,14 +172,20 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
                     // BE = Sn - Ex = (ME_core + ME_trans - ME_res) - Ex
                     Isotope core(rxn_target);
                     Isotope residual(rxn_residual);
-                    int A_trans = residual.A - core.A;
-                    int Z_trans = residual.Z - core.Z;
-                    double ME_core = PtolemyMass::MassExcess_MeV(core.Z, core.A);
-                    double ME_res  = PtolemyMass::MassExcess_MeV(residual.Z, residual.A);
-                    double ME_trans = PtolemyMass::MassExcess_MeV(Z_trans, A_trans);
+                    // For stripping (d,p): core=target, residual=residual, A_trans>0
+                    // For pickup   (p,d): core=target(heavy), residual=residual(lighter)
+                    // Always: lighter + neutron = heavier, so use abs()
+                    int A_trans = std::abs(residual.A - core.A);
+                    int Z_trans = std::abs(residual.Z - core.Z);
+                    // lighter nucleus (core for pickup, residual for stripping)
+                    Isotope &lighter = (residual.A < core.A) ? residual : core;
+                    Isotope &heavier = (residual.A < core.A) ? core : residual;
+                    double ME_lighter = PtolemyMass::MassExcess_MeV(lighter.Z, lighter.A);
+                    double ME_heavier = PtolemyMass::MassExcess_MeV(heavier.Z, heavier.A);
+                    double ME_trans   = PtolemyMass::MassExcess_MeV(Z_trans, A_trans);
 
-                    // BE = Sn - Ex = (ME_core + ME_trans - ME_res) - Ex
-                    bs_binding = ME_core + ME_trans - ME_res - rxn_excitation;
+                    // BE = separation energy = ME_lighter + ME_trans - ME_heavier - Ex
+                    bs_binding = ME_lighter + ME_trans - ME_heavier - rxn_excitation;
                 }
                 targetBS_n = bs_nodes; targetBS_l = bs_l; targetBS_j = bs_j;
                 targetBS_pot = bsPot;
@@ -327,6 +333,7 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
                     else if (key == "LMIN")      dwba.SetLmin((int)val);
                     else if (key == "LMAX")      { dwba.SetLmax((int)val); elastic_Lmax_ = (int)val; }
                     else if (key == "ASYMPTOPIA") { dwba.SetAsymptopia(val); elastic_asymptopia_ = val; }
+                    else if (key == "WYNN")      { elastic_wynn_ = (val != 0); }
                     else if (key == "LSTEP")     {} // default 1
                     else if (key == "MAXLEXTRAP") {} // ignore
                     else if (key == "BELX")      { dwba.BELx = val; }
@@ -538,6 +545,7 @@ void PtolemyParser::ParseParameterSet(const std::string &line, DWBA &dwba) {
             else if (key == "LSTEP")       {} // default 1, ignore for now
             else if (key == "MAXLEXTRAP")  {} // ignore for now
             else if (key == "ASYMPTOPIA")  dwba.SetAsymptopia(val);
+            else if (key == "WYNN")        { elastic_wynn_ = (val != 0); }
             else if (key == "PRINT")       {} // ignore for now
         } else {
             // Bare keyword flags
@@ -595,6 +603,9 @@ void PtolemyParser::RunElastic(const DWBA& dwba) {
         solver.AddSpinOrbit({-std::abs(p.VSO), -std::abs(p.VSOI)}, p.RSO0, p.ASO);
     if (p.RC0 > 0)
         solver.AddCoulomb(p.RC0);
+
+    // Wynn epsilon option
+    solver.SetWynn(elastic_wynn_);
 
     // Compute
     solver.CalcKinematics();
