@@ -495,7 +495,7 @@ int Clints(double rlower, double etaI, double etaF, double kI, double kF,
         }
 
         if (!converged || std::max(relEven, relOdd) * std::max(relEven, relOdd) > accura) {
-            double F = 1.0 / (std::sqrt(inPt.Z * outPt.Z) * std::pow(RVAL, N));
+            // Fortran label 700: reduce ASMULT
             double Rtest = (((double)N / RVAL) + 2.0 * (kI * inPt.Z * std::fabs(TI) + kF * outPt.Z * std::fabs(TF))) / std::fabs(CHI);
             double EPS = EPSIL;
             double Rnew = std::min(0.5 * EPSIL, 0.75 * std::pow(Rtest, 6.0) * (EPSIL / EPS));
