@@ -362,21 +362,6 @@ void DWBA::InelDc() {
   double r_T_vert_peak = idx_T_vert_peak * h_T;
   double r_P_vert_peak = idx_P_vert_peak * h_common;
 
-#ifdef DEBUG_DUMP_TABLES
-  // Dump phi_T and IVPHI_P to files for Fortran comparison
-  {
-    FILE* fp = fopen("phi_T_table.txt", "w");
-    for (int i = 0; i < NSteps_T; ++i)
-      fprintf(fp, "%.6f  %.10e\n", i * h_T, TgtBS_ch.WaveFunction[i].real());
-    fclose(fp);
-    FILE* fp2 = fopen("ivphi_P_table.txt", "w");
-    for (int i = 0; i < NSteps_common; ++i)
-      fprintf(fp2, "%.6f  %.10e\n", i * h_common, IVPHI_P[i]);
-    fclose(fp2);
-    fprintf(stderr, "Dumped phi_T (%d pts, h=%.5f) and IVPHI_P (%d pts, h=%.5f)\n",
-            NSteps_T, h_T, NSteps_common, h_common);
-  }
-#endif
 
   // Report vertex peaks for diagnostic comparison vs Ptolemy BSSET output
   std::cout << std::fixed << std::setprecision(4);
@@ -811,22 +796,6 @@ void DWBA::InelDc() {
                 << "  SUMMID=" << SUMMID_li << "  SUMMAX=" << SUMMAX_li
                 << "  (<U>=" << mean_U << ")" << std::endl;
 
-#ifdef USE_PTO_SUMMID_TABLE
-      // Override with known-correct Ptolemy SUMMID/SUMMIN/SUMMAX values (from print=5)
-      // Used to isolate whether SUMMID error drives the off-diagonal outliers.
-      static const double pto_summid[] = {
-        4.93, 5.01, 4.85, 4.84, 5.02, 5.07, 5.49, 6.35, 7.29, 8.09,
-        8.83, 9.57,10.33,11.09,11.90,12.79,13.53,14.21,14.93,15.74,
-       16.42,17.03,17.65,18.31,18.98,19.64,20.29,20.93,21.55,22.16,22.74};
-      static const double pto_summin[] = {
-        0.0, 0.0, 0.0, 0.0, 0.2, 0.2, 0.4, 0.6, 1.0, 1.4,
-        2.0, 2.4, 3.2, 3.8, 4.6, 5.8, 6.2, 6.8, 7.2, 7.8,
-        8.6, 9.2, 9.8,10.6,11.2,12.0,12.8,13.4,14.2,15.0,15.8};
-      int li_idx = std::min(Li, 30);
-      SUMMID_li = pto_summid[li_idx];
-      SUMMIN_li = pto_summin[li_idx];
-      fprintf(stderr, "PTO_TABLE Li=%d SUMMIN=%.2f SUMMID=%.2f\n", Li, SUMMIN_li, SUMMID_li);
-#endif
     }
 
     // ── Per-Li constants needed in the inner loops ───────────────────────────
@@ -1606,12 +1575,6 @@ void DWBA::InelDc() {
           TransferSMatrix.push_back({Lx, Li, Lo, JPI_key, JPO, S_pre9j});
 
 
-#ifdef DEBUG_PRE9J
-          fprintf(stderr, "PRE9J Li=%2d JPI=%2d/2  Lo=%2d JPO=%2d/2  Lx=%d  "
-                  "S=(%9.4e, %9.4e)  |S|=%9.4e\n",
-                  Li, JPI_key, Lo, JPO, Lx,
-                  S_pre9j.real(), S_pre9j.imag(), std::abs(S_pre9j));
-#endif
         }
       }
     }
