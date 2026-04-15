@@ -232,29 +232,6 @@ void DWBA::WavElj(Channel &ch, int L, int Jp, bool skipSO, bool scanMode) {
     }
   }
 
-#ifdef DUMP_NUMEROV_DETAIL
-  {
-    int chid = (&ch == &Incoming) ? 0 : (&ch == &Outgoing) ? 1 : 2;
-    // Dump for incoming L=4, JP=10
-    if (chid == 0 && L == DUMP_L && Jp == DUMP_JP) {
-      fprintf(stderr, "CPP_NUMDET h=%.16E h2_12=%.16E k=%.16E k2=%.16E mu=%.16E\n",
-              h, h2_12, ch.k, k2, ch.mu);
-      fprintf(stderr, "CPP_NUMDET DL2=%.16E SDOTL=%.16E fconv=%.16E N=%d\n",
-              DL2, spin_dot_L, f_conv, N);
-      fprintf(stderr, "CPP_NUMDET ETA=%.16E\n", ch.eta);
-      // Dump f[i] (the Numerov potential, NOT multiplied by h2_12 yet)
-      // And the Numerov weight W_re = 1 + h2_12 * f_re, W_im = h2_12 * f_im
-      for (int i = 0; i <= N; ++i) {
-        if (i <= 5 || i % 50 == 0 || i == N || i == N-3 || i == N-4) {
-          double W_re = 1.0 + h2_12 * f[i].real();
-          double W_im = h2_12 * f[i].imag();
-          fprintf(stderr, "CPP_WPOT i=%d R=%.8f f_re=%.16E f_im=%.16E W_re=%.16E W_im=%.16E\n",
-                  i, i*h, f[i].real(), f[i].imag(), W_re, W_im);
-        }
-      }
-    }
-  }
-#endif
 
   // --- Standard Numerov integration (Ptolemy WAVELJ form) ---
   // Recurrence: (1 + h²/12·f_{i+1}) u_{i+1}
@@ -296,17 +273,6 @@ void DWBA::WavElj(Channel &ch, int L, int Jp, bool skipSO, bool scanMode) {
     if (std::abs(dn) < 1e-300) dn = 1e-300;
     u[i + 1] = (t1 - t2) / dn;
 
-#ifdef DUMP_NUMEROV_DETAIL
-    {
-      int chid = (&ch == &Incoming) ? 0 : (&ch == &Outgoing) ? 1 : 2;
-      if (chid == 0 && L == DUMP_L && Jp == DUMP_JP) {
-        if (i <= 5 || i % 50 == 0 || i == N-1) {
-          fprintf(stderr, "CPP_U i=%d R=%.8f u_re=%.16E u_im=%.16E\n",
-                  i+1, (i+1)*h, u[i+1].real(), u[i+1].imag());
-        }
-      }
-    }
-#endif
 
         double mag = std::abs(u[i + 1]);
     // Fortran: THISR = |Re| + |Im| (L1 norm), NOT sqrt(Re²+Im²)
@@ -454,48 +420,7 @@ void DWBA::WavElj(Channel &ch, int L, int Jp, bool skipSO, bool scanMode) {
   }
 
   // S-matrix print (enable for debugging)
-#ifdef DUMP_SMAT
-  {
-    double S_mag = std::sqrt(SJR*SJR + SJI*SJI);
-    int chid = (&ch == &Incoming) ? 0 : (&ch == &Outgoing) ? 1 : 2;
-    fprintf(stderr, "CPP_SMAT ch=%d L=%d JP=%d SR=%.8e SI=%.8e MAG=%.8f\n",
-            chid, L, Jp, SJR, SJI, S_mag);
-  }
-#endif
 
-#ifdef DUMP_CHI_SURGICAL
-  {
-    int chid = (&ch == &Incoming) ? 0 : (&ch == &Outgoing) ? 1 : 2;
-    if (chid == 1 && L == 1 && Jp == 1) {
-      fprintf(stderr, "CPP_H2= %5d val=%.12E\n", 0, h*h);
-      fprintf(stderr, "CPP_SDOTL=%.12E DL2=%.12E\n", spin_dot_L, DL2);
-      // Phase 1: W(I) at sparse points
-      for (int i = 0; i <= N; ++i) {
-        if (i % 50 == 0 || i <= 5 || i == N || i == N-4) {
-          double W_re = 1.0 + h2_12 * f[i].real();
-          double W_im = h2_12 * f[i].imag();
-          fprintf(stderr, "CPP_WPOT2 %5d %10.4f %.12E %.12E\n",
-              i, i*ch.StepSize, W_re, W_im);
-        }
-      }
-      // Phase 2: Initial conditions
-      fprintf(stderr, "CPP_IC u0=%.12E %.12E u1=%.12E %.12E\n",
-          u[0].real(), u[0].imag(), u[1].real(), u[1].imag());
-      // Phase 3: u(I) at sparse points
-      for (int i = 2; i <= N; ++i) {
-        if (i % 50 == 0 || i <= 5 || i == N || i == N-4) {
-          fprintf(stderr, "CPP_U2 %5d %10.4f %.12E %.12E\n",
-              i, i*ch.StepSize, u[i].real(), u[i].imag());
-        }
-      }
-      // Phase 4: matching info
-      fprintf(stderr, "CPP_UMATCH_N  %5d %.12E %.12E\n", N, u[N].real(), u[N].imag());
-      fprintf(stderr, "CPP_UMATCH_NB %5d %.12E %.12E\n", n_match, u[n_match].real(), u[n_match].imag());
-      fprintf(stderr, "CPP_COUL2 F=%.12E G=%.12E n_match=%d R=%.6f\n", FL, GL, n_match, n_match*h);
-      fprintf(stderr, "CPP_SMAT2 SJR=%.12E SJI=%.12E |S|=%.12f\n", SJR, SJI, std::sqrt(SJR*SJR+SJI*SJI));
-    }
-  }
-#endif
 
   // --- Normalization ---
   // Normalize at n_match using Coulomb F,G (FL, GL) at that point.

@@ -205,19 +205,6 @@ void DWBA::InelDc() {
                         ProjectileBS.j, ProjectileBS.BindingEnergy);
   }
 
-  // Dump projectile bound state WF
-  {
-    double h_p = PrjBS_ch.StepSize;
-    int nsteps_p = PrjBS_ch.NSteps;
-    fprintf(stderr, "CPP_BS_P L=%d j=%.1f h=%.6f NSTEPS=%d\n",
-            ProjectileBS.l, ProjectileBS.j, h_p, nsteps_p);
-    for (int I = 0; I < nsteps_p; I++) {
-      double r = I * h_p;
-      if (r > 20.0) break;
-      fprintf(stderr, "CPP_BS_P %4d %.6f %.12e\n",
-              I, r, PrjBS_ch.WaveFunction[I].real());
-    }
-  }
 
   // Rebuild PrjBS_ch.V_real using the solved potential depth V_sol (set by CalculateBoundState).
   // WavSet filled V_real with the initial pot.V; after bound state solve, pot.V = V_sol.
@@ -549,10 +536,6 @@ void DWBA::InelDc() {
   const int L_isctcr = std::max(0, std::min(Lmax, (int)std::round(
       1.149 * (std::pow((double)Incoming.Projectile.A, 1.0/3.0) +
                std::pow((double)Incoming.Target.A,     1.0/3.0)) * Incoming.k)));
-  fprintf(stderr, "GRDSET: k_in=%.4f Ap=%d At=%d → R_nuclear=%.4f  L_isctmn=%d  L_isctcr=%d\n",
-          Incoming.k, Incoming.Projectile.A, Incoming.Target.A,
-          1.3030*(std::pow((double)Incoming.Projectile.A,1.0/3)+std::pow((double)Incoming.Target.A,1.0/3)),
-          L_isctmn, L_isctcr);
   // Compute ISCTCR chi: incoming at L=L_isctcr (central potential, no SO — Ptolemy GRDSET)
   // We use full optical (SO included) for now — same as before but at correct L.
   {
@@ -568,8 +551,6 @@ void DWBA::InelDc() {
     double frac = r/h_isctcr - idx;
     return (chi_isctcr[idx]*(1.0-frac) + chi_isctcr[idx+1]*frac).real();
   };
-  fprintf(stderr, "GRDSET: L_isctmn=%d  L_isctcr=%d (Lmax=%d)\n",
-          L_isctmn, L_isctcr, Lmax);
 
   for (int Li = 0; Li <= Lmax; ++Li) {
     // --- J-split incoming distorted waves for all JPI ---
@@ -580,23 +561,6 @@ void DWBA::InelDc() {
     for (int JPI = JPI_min; JPI <= JPI_max; JPI += 2) {
       WavElj(Incoming, Li, JPI);
       chi_a_byJPI[JPI] = Incoming.WaveFunction;
-      // Print chi_a at key radii for Li=3 (to diagnose JPI=8/2 error)
-      if (Li == 3) {
-        double h = Incoming.StepSize;
-        double peak = 0; int peak_idx = 0;
-        for (int ii=0; ii<(int)Incoming.WaveFunction.size(); ii++)
-          if (std::abs(Incoming.WaveFunction[ii]) > peak) { peak=std::abs(Incoming.WaveFunction[ii]); peak_idx=ii; }
-        fprintf(stderr, "chi_a Li=%d JPI=%d/2: size=%d h=%.5f peak=%.6f at r=%.4f\n",
-                Li, JPI, (int)Incoming.WaveFunction.size(), h, peak, peak_idx*h);
-        for (double r : {2.0, 4.0, 6.0, 8.0, 10.0}) {
-          int idx = (int)(r/h + 0.5);
-          if (idx < (int)Incoming.WaveFunction.size()) {
-            auto v = Incoming.WaveFunction[idx];
-            fprintf(stderr, "  r=%.1f: re=%+.6f im=%+.6f |chi|=%.6f\n",
-                    r, v.real(), v.imag(), std::abs(v));
-          }
-        }
-      }
     }
 
     // ── Per-Li GRDSET: compute SUMMIN, SUMMID, WVWMAX, RVRLIM ─────────────
@@ -779,8 +743,6 @@ void DWBA::InelDc() {
       // (Ptolemy source.f line ~18588: U=.5*ROFMAX, N=1.5*ROFMAX/.20+1)
       const double SUMMAX_li = 30.4;
       const double ROFMAX_grd = maxR_ref_a;  // Ptolemy ROFMAX = chi_a extent
-      if (Li <= 1) fprintf(stderr,"ROFMAX Li=%d JPI_max=%d maxR=%.2f h=%.4f npts=%d\n",
-                            Li, JPI_max, ROFMAX_grd, h_ref_a, (int)ref_chi_a.size());
       double U_s = 0.5 * ROFMAX_grd;
       int N_wv = (int)(1.5*ROFMAX_grd/0.2 + 1.5);
       for (int iu = 0; iu < N_wv; ++iu, U_s += 0.2) {
@@ -792,7 +754,6 @@ void DWBA::InelDc() {
         }
       }
       RVRLIM_li = DWCUT_grdset * std::max(WVWMAX_li, 1.0e-30);
-      if (Li == 3) fprintf(stderr, "WVWMAX_li(Li=3) = %.8g  RVRLIM_li = %.8g\n", WVWMAX_li, RVRLIM_li);
 
       // Step 2: SUMMIN — step out from U=0, BSPROD ITYPE=4 at V=0 (Ptolemy line 15964)
       U_s = 0.0;
@@ -831,9 +792,6 @@ void DWBA::InelDc() {
         }
         if (zerosw) continue;
 
-        if (Li==0 && (U_s < 3.01 || (U_s > 4.8 && U_s < 7.01)))
-          fprintf(stderr,"SUMMID_SCAN Li=0 U=%.2f TEMP=%.6e VS=[%.3f,%.3f,%.3f,%.3f,%.3f]\n",
-                  U_s, temp, VS5[0],VS5[1],VS5[2],VS5[3],VS5[4]);
 
         SUM0 += temp;
         SUM1 += temp * U_s;
@@ -841,18 +799,6 @@ void DWBA::InelDc() {
       }
 
       double mean_U = (SUM0 > 1e-30) ? SUM1/SUM0 : 0.5*(SUMMIN_li + SUMMAX_li);
-      if (Li == 0) {
-        fprintf(stderr, "DIAG SUMMID scan: RLMAXS1=%.4f  RLMAXS2=%.4f\n", RLMAXS1, RLMAXS2);
-        fprintf(stderr, "DIAG SUMMID: SUM0=%.4e  SUM1=%.4e  mean_U=%.4f\n", SUM0, SUM1, mean_U);
-        // Print VS at U=5
-        double VS_test[5]; compute_VS(5.0, VS_test);
-        fprintf(stderr, "DIAG VS@U=5: %.4f  %.4f  %.4f  %.4f  %.4f\n",
-                VS_test[0], VS_test[1], VS_test[2], VS_test[3], VS_test[4]);
-        double b3_test = bsprod3(5.0+0.5*VS_test[2], 5.0-0.5*VS_test[2], xs_grd[0]);
-        fprintf(stderr, "DIAG bsprod3@U=5,V=0: %.6e\n", b3_test);
-        double b3_test2 = bsprod3(5.2, 4.8, xs_grd[0]);
-        fprintf(stderr, "DIAG bsprod3@ra=5.2,rb=4.8: %.6e\n", b3_test2);
-      }
       const double AMDMLT = 0.9;  // dpsb MIDMULT (RGRIDS row C, col 11)
       SUMMID_li = mean_U * AMDMLT;
       // Clamp (Ptolemy lines 16084-16085)
@@ -1001,12 +947,6 @@ void DWBA::InelDc() {
     std::vector<std::vector<std::tuple<int,int,double>>> A12_all(IHMAX);
     for (int IH = 0; IH < IHMAX; ++IH) {
       A12_all[IH] = ComputeA12Terms(Li, lolx_list[IH].Lo, lolx_list[IH].Lx, lT, lP);
-      if (Li == 3 && IH == 0) {
-        fprintf(stderr, "CPP_A12_TERMS Li=%d IH=%d Lo=%d Lx=%d lT=%d lP=%d:\n",
-                Li, IH, lolx_list[IH].Lo, lolx_list[IH].Lx, lT, lP);
-        for (auto &[MT_k, MU_k, coeff] : A12_all[IH])
-          fprintf(stderr, "  MT=%2d MU=%2d coeff=%+.8f\n", MT_k, MU_k, coeff);
-      }
     }
 
     // ── Quadrature parameters ─────────────────────────────────────────────────────
@@ -1141,15 +1081,6 @@ void DWBA::InelDc() {
       }
       vmax_prev = vmax_out;
       vmin_prev = vmin_out;
-      if (Li==3 && U >= 1.0 && U <= 1.10) {
-        fprintf(stderr, "SCAN_IU Li3 U=%.4f  vmax_out=%.4f vmin_out=%.4f\n", U, vmax_out, vmin_out);
-        // Show BSPROD at VVAL=1.0 (full range)
-        double RI_t = U + 1.0*U, RO_t = U - 1.0*U;
-        double ULIM_t = RVRLIM_li / std::max(1.0e-2, RI_t * RO_t);
-        double f1 = std::abs(bsprod2(RI_t, RO_t, XS1));
-        fprintf(stderr, " at VVAL=1.0: RI=%.4f RO=%.4f ULIM=%.4e BSPROD2=%.4e (above=%s)\n",
-                RI_t, RO_t, ULIM_t, f1, (f1>ULIM_t)?"YES":"NO");
-      }
     };
 
     // Per-IU VMIN/VMAX fractions [0,1] for H-grid (NPSUM)
@@ -1243,28 +1174,6 @@ void DWBA::InelDc() {
       return c[0] + U*(c[1] + U*(c[2] + U*c[3]));
     };
 
-    // Diagnostic: print H-grid raw values AND polynomial V-ranges for chi-grid
-    if (Li == 3) {
-      fprintf(stderr, "=== H-grid vmin/vmax_abs (before poly fit, Li=3) ===\n");
-      for (int IU = 0; IU < NPSUM; ++IU) {
-        double U = xi_s[IU];
-        fprintf(stderr, "H_VR IU=%2d U=%7.4f  vmin_abs=%8.5f vmax_abs=%8.5f\n",
-                IU+1, U, vmin_abs_h[IU], vmax_abs_h[IU]);
-      }
-    }
-    // Diagnostic: print polynomial-interpolated V-ranges for chi-grid IU=1..10
-    if (Li == 3) {
-      fprintf(stderr, "=== Poly V-ranges for chi-grid (Li=3) ===\n");
-      for (int IU = 0; IU < std::min(NPSUMI, 10); ++IU) {
-        double U = xi_si[IU];
-        double vmin_p = eval_poly(poly_vmin, U);
-        double vmax_p = eval_poly(poly_vmax, U);
-        // VMID: use midpoint (simplified; Ptolemy uses moment scan DO 559)
-        double VMID_p = 0.5*(vmin_p + vmax_p);
-        fprintf(stderr, "CPP_POLY_VR IU=%2d U=%7.4f  vmin=%.5f vmax=%.5f vmid=%.5f\n",
-                IU+1, U, vmin_p, vmax_p, VMID_p);
-      }
-    }
 
     // ── Step 4: Integral accumulators: I[IH][JPI][JPO] ───────────────────────────
     struct IntKey { int IH, JPI, JPO;
@@ -1372,9 +1281,6 @@ void DWBA::InelDc() {
         SYNE=-1.0; vmid_c=-vmid_c;
         double tmp=vmax_c; vmax_c=-vmin_c; vmin_c=-tmp;
       }
-      if (Li == 3 && IU == 4)  // IU=5 (0-indexed=4)
-        fprintf(stderr, "CPP_CHI_VRANGE IU=5 U=%.6g VABSMIN=%.6g VABSMAX=%.6g VMID=%.6g SYNE=%.1f vmin_c=%.6g vmid_c=%.6g vmax_c=%.6g\n",
-                U, VABSMIN, VABSMAX, VMID, SYNE, vmin_c, vmid_c, vmax_c);
       std::vector<double> pts(NPDIF), wts(NPDIF);
       GaussLegendre(NPDIF, -1.0, 1.0, pts, wts);
       CubMap(1, vmin_c, vmid_c, vmax_c, GAMDIF, pts, wts);
@@ -1394,25 +1300,9 @@ void DWBA::InelDc() {
         double JACOB_chi = S1*S1*S1;
         double LWIO_val = JACOB_chi * ra * rb * WOW * WT * std::exp(-ALPHAP*RP_c - ALPHAT*RT_c);
         LWIO_chi[IV_store*NPSUMI + IU] = LWIO_val;
-        if (Li == 3 && IU == 4 && IV == 0) {  // IU=5,IV=1 in Fortran (0-indexed)
-          fprintf(stderr, "CPP_LWIO IU=%d IV=%d\n", IU+1, IV+1);
-          fprintf(stderr, " JACOB= %.8g\n", JACOB_chi);
-          fprintf(stderr, "     U= %.8g\n", U);
-          fprintf(stderr, "  VVAL= %.8g\n", VVAL);
-          fprintf(stderr, "    RI= %.8g\n", ra);
-          fprintf(stderr, "    RO= %.8g\n", rb);
-          fprintf(stderr, "   WOW= %.8g\n", WOW);
-          fprintf(stderr, " DIFWT= %.8g\n", WT);
-          fprintf(stderr, "  TEMP= %.8g\n", std::exp(-ALPHAP*RP_c - ALPHAT*RT_c));
-          fprintf(stderr, "  LWIO= %.8g\n", LWIO_val);
-          fprintf(stderr, " ALPHAP=%.8g ALPHAT=%.8g RP=%.8g RT=%.8g\n",
-                  ALPHAP, ALPHAT, RP_c, RT_c);
-        }
       }
     }
 
-    fprintf(stderr, "Li=%d  SUMMIN=%.2f  SUMMID=%.2f  SUMMAX=%.2f  NPSUMI=%d\n",
-            Li, SUMMIN_li, SUMMID_li, SUMMAX_eff, NPSUMI);
 
     // ── Step 5: MAIN DOUBLE LOOP: outer IV (DO 859), inner IU (DO 549) ──────────
     // Ptolemy structure:
@@ -1509,19 +1399,10 @@ void DWBA::InelDc() {
           cos_phiT = std::max(-1.0, std::min(1.0, cos_phiT));
           double PHIT = std::acos(cos_phiT);
 
-          // DIAGNOSTIC: at Li=3, IV=0, IU=10 — print all phi points for IH=0
-          if (Li==3 && IV==0 && IU==10) {
-            double A12_val0 = EvalA12(A12_all[0], PHIT, PHI);
-            fprintf(stderr,"CPP_PHILOOP k=%2d PHI=%.6f PHIT=%.6f DPHI=%.6e phi_T=%.6e ivphi=%.6e PVPDX=%.6e A12[0]=%.6e term=%.6e\n",
-                    k+1, PHI, PHIT, DPHI, phi_T_val, ivphi_val, PVPDX, A12_val0, PVPDX*A12_val0);
-          }
 
           // ── Innermost loop: IH (all (Lo,Lx) pairs) — Ptolemy DO 459/469 ──────
           for (int IH = 0; IH < IHMAX; ++IH) {
             double A12_val = EvalA12(A12_all[IH], PHIT, PHI);
-            if (Li==1 && IV==0 && IU==1 && k<3)
-              fprintf(stderr,"A12_DETAIL IH=%d IU=%d k=%d PHI=%.5f PHIT=%.5f A12=%.6e PVPDX=%.6e term=%.6e\n",
-                      IH, IU+1, k+1, PHI, PHIT, A12_val, PVPDX, PVPDX*A12_val);
             HINT[IH] += PVPDX * A12_val;
           }
         }
@@ -1531,18 +1412,7 @@ void DWBA::InelDc() {
         // Reset to zero above at top of IV loop, then set here for each IU
         for (int IH = 0; IH < IHMAX; ++IH)
           SMHVL[IH][IU] = HINT[IH] * RIOEX;
-        // STEP_A equivalent: Li=3, IV=0 — print HINT[0..1], RIOEX, SMHVL[0..1]
-        if (Li==3 && IV==0 && IHMAX>=2)
-          fprintf(stderr,"CPP_STEP_A LI3 IU=%2d U=%12.5e HINT1=%12.5e HINT2=%12.5e RIOEX=%12.5e SMHVL1=%12.5e SMHVL2=%12.5e\n",
-                  IU+1, U, HINT[0], HINT[1], RIOEX, SMHVL[0][IU], SMHVL[1][IU]);
 
-        // DIAGNOSTIC: print H values for Li=1, IV=0 (most-negative V side), all IU
-        // Ptolemy HGRD_LI1 prints at IV=1 (most-negative V) on the NPSUM grid
-        // Our IV=0 is the most-negative-V end (SYNE positive)
-        if (Li==1 && IV==0 && IU < NPSUM && IHMAX>=2) {
-          fprintf(stderr,"CPP_H IU=%2d U=%.7f V=%.7f ra=%.6f rb=%.6f  H[0]=%.6e H[1]=%.6e RIOEX=%.4e PHI0=%.5f IEND=%d\n",
-                  IU+1, U, V, ra, rb, HINT[0], HINT[1], RIOEX, PHI0, IEND);
-        }
 
       }  // End H-computation IU loop (Ptolemy DO 549)
 
@@ -1577,12 +1447,6 @@ void DWBA::InelDc() {
       for (int IH = 0; IH < IHMAX; ++IH)
         do_spline(xi_s, SMHVL[IH], xi_si, SMIVL[IH]);
 
-      // STEP_B equivalent: SMIVL[IH=0..1][IU=0..9] at Li=3, IV=0
-      if (Li==3 && IV==0 && IHMAX>=2) {
-        for (int iu=0; iu<std::min(10,NPSUMI); ++iu)
-          fprintf(stderr,"CPP_STEP_B LI3 IV=0 IU=%3d Usi=%.4f SMIVL[1]=%.6e SMIVL[2]=%.6e\n",
-                  iu+1, xi_si[iu], SMIVL[0][iu], SMIVL[1][iu]);
-      }
 
       // ── Chi integration: Ptolemy DO 789 (IU), at current IV of DO 859 ──────────────
       // Uses current IV's LWIO_chi and (ra_chi, rb_chi) grid.
@@ -1595,10 +1459,6 @@ void DWBA::InelDc() {
         // LWIO(IV,IU): precomputed = JACOB*ra*rb*WOW*DIFWT*exp_neg
         double LWIO = LWIO_chi[IV * NPSUMI + IU];
         double TERM = LWIO;
-        // STEP_C equivalent: LWIO/TERM at Li=3, IV=0, IU=0..4
-        if (Li==3 && IV==0 && IU<5)
-          fprintf(stderr,"CPP_STEP_C LI3 IV=0 IU=%2d IPLUNK=%5d TERM=%12.5e\n",
-                  IU+1, IV*NPSUMI+IU+1, TERM);
 
         double ra_chi = U_chi + 0.5 * dif_pts_chi[IU][IV];
         double rb_chi = U_chi - 0.5 * dif_pts_chi[IU][IV];
@@ -1676,12 +1536,6 @@ void DWBA::InelDc() {
         }
       }  // End chi IU loop (Ptolemy DO 789) — chi integration for this IV
 
-      // STEP_E equivalent: print running I_accum[IH=0] after each IV (matches Ptolemy II=1)
-      if (Li == 3 && !I_accum.empty()) {
-        auto it0 = I_accum.begin();
-        fprintf(stderr, "CPP_STEP_E LI3 after IV=%2d I_accum[0] re=%.6e im=%.6e\n",
-                IV, it0->second.real(), it0->second.imag());
-      }
 
   }  // End IV loop (Ptolemy DO 859) — SMHVL accumulated, chi integrated at each IV
 
@@ -1731,15 +1585,6 @@ void DWBA::InelDc() {
         int ITEST_a = JX_d - JBP_d + 2*(ProjectileBS.l + TargetBS.l);
         ITEST_a = ITEST_a/2 + 1;   // Ptolemy two-step transform
         if (ITEST_a % 2 != 0) ATERM_val = -ATERM_val;
-        if (Li == 3) {
-          fprintf(stderr, "ATERM_DBG Li=%d Lx=%d TEMP_aterm=%.5e SPAMP=%.5f RACAH=%.5e ATERM=%.5e\n",
-                  Li, Lx, std::sqrt((JBIGB+1.0)/(JBIGA+1.0)) * std::sqrt(2.0*Lx+1.0),
-                  ProjectileWFLoaded ? ProjectileWFSpam : 0.97069,
-                  SixJ((double)TargetBS.l, TargetBS.j, 0.5, ProjectileBS.j,
-                       (double)ProjectileBS.l, (double)Lx) *
-                  (((2*TargetBS.l+(int)(2*TargetBS.j+0.5)+2*ProjectileBS.l+(int)(2*ProjectileBS.j+0.5))/2%2==0)?1.0:-1.0),
-                  ATERM_val);
-        }
       }
 
       double FACTOR_sfromi = 2.0 * std::sqrt(Incoming.k * Outgoing.k /
@@ -1760,15 +1605,6 @@ void DWBA::InelDc() {
           auto S_pre9j = Integral * sfromi_norm;
           TransferSMatrix.push_back({Lx, Li, Lo, JPI_key, JPO, S_pre9j});
 
-          // DIAGNOSTIC: print raw I_accum for Li=3, Lo=3 to compare JPI dependence
-          if (Li==3 && Lo==3 && (JPO==5 || JPO==7)) {
-            fprintf(stderr, "IACCUM_DIAG Li=%d JPI=%d/2 Lo=%d JPO=%d/2 Lx=%d  "
-                    "I_raw=(%10.4e,%10.4e) ATERM=%.5f phase=(%g,%g) S=(%10.4e,%10.4e)\n",
-                    Li, JPI_key, Lo, JPO, Lx,
-                    it->second.real(), it->second.imag(),
-                    ATERM_val, phase_factor.real(), phase_factor.imag(),
-                    S_pre9j.real(), S_pre9j.imag());
-          }
 
 #ifdef DEBUG_PRE9J
           fprintf(stderr, "PRE9J Li=%2d JPI=%2d/2  Lo=%2d JPO=%2d/2  Lx=%d  "
