@@ -2232,7 +2232,16 @@ void DWBA::InelDcFaithful2()
                     double RACAH_val = sign_val * sj;
                     int JBIGA = (int)std::round(2.0*SpinTarget);
                     int JBIGB = (int)std::round(2.0*SpinResidual);
-                    double TEMP_a = std::sqrt((JBIGB+1.0)/(JBIGA+1.0));
+                    // Pickup (ISTRIP=-1): TEMP = sqrt((JB+1)/(JA+1)); Stripping: sqrt((JBIGB+1)/(JBIGA+1))
+                    bool isPickup_a = (Incoming.Projectile.A < Outgoing.Projectile.A);
+                    double TEMP_a;
+                    if (isPickup_a) {
+                        int JA_a = Incoming.JSPS;   // 2*j_incoming_proj
+                        int JB_a = Outgoing.JSPS;   // 2*j_outgoing_proj
+                        TEMP_a = std::sqrt((double)(JB_a+1) / (double)(JA_a+1));
+                    } else {
+                        TEMP_a = std::sqrt((JBIGB+1.0)/(JBIGA+1.0));
+                    }
                     double SPAMP = ProjectileWFLoaded ? ProjectileWFSpam : 0.97069;
                     double SPAMT = 1.0;
                     ATERM_val = TEMP_a * std::sqrt(2.0*Lx+1.0) * SPAMP * SPAMT * RACAH_val;
