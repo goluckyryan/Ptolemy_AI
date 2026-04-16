@@ -121,6 +121,7 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
 
     // Temporaries for optical potentials (accumulated across multi-line blocks)
     ChannelPotential inPot = {}, outPot = {};
+    bool outVI_set = false, outVSO_set = false;  // track explicit set vs defaulted
 
     // Angle tracking (set angles at the end)
     double angleMin = 0, angleMax = 180, angleStep = 5;
@@ -194,6 +195,14 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
                 dwba.SetIncomingPotential(inPot);
                 if (isElastic_) elastic_pot_ = inPot;
             } else if (section == OUTGOING) {
+                // Ptolemy convention: inherit missing VI and VSO from incoming when not explicitly set
+                if (!outVI_set && inPot.VI != 0.0) {
+                    outPot.VI = inPot.VI; outPot.RI0 = inPot.RI0; outPot.AI = inPot.AI;
+                }
+                if (!outVSO_set && inPot.VSO != 0.0) {
+                    outPot.VSO = inPot.VSO; outPot.RSO0 = inPot.RSO0; outPot.ASO = inPot.ASO;
+                    outPot.VSOI = inPot.VSOI; outPot.RSOI0 = inPot.RSOI0; outPot.ASOI = inPot.ASOI;
+                }
                 dwba.SetOutgoingPotential(outPot);
             }
             section = NONE;
@@ -224,6 +233,7 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
             section = OUTGOING;
             outPot = {};
             outPot.RC0 = 1.25;  // default
+            outVI_set = false; outVSO_set = false;
             continue;
         }
 
@@ -307,6 +317,8 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
                     ApplyPotParam(inPot, key, val);
                 } else if (section == OUTGOING) {
                     ApplyPotParam(outPot, key, val);
+                    if (key=="VI"||key=="W") outVI_set=true;
+                    if (key=="VSO"||key=="VSOI") outVSO_set=true;
                 } else if (section == PROJECTILE || section == TARGET) {
                     // Bound state parameters
                     if (key == "NODES" || key == "N") {
