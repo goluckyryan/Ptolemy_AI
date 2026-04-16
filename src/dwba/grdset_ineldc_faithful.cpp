@@ -781,6 +781,9 @@ void DWBA::InelDcFaithful2()
     // Spins
     int JSPS1 = Incoming.JSPS;   // 2*spin_projectile (deuteron=2, proton=1)
     int JSPS2 = Outgoing.JSPS;
+    // Fortran SOSWS(2): spin-orbit in outgoing channel
+    // If no SO: only JPO = 2*Lo+JSPS2 (max). If SO: full range.
+    bool outSO = (Outgoing.Pot.VSO != 0.0 || Outgoing.Pot.VSOI != 0.0);
 
     // LMIN, LMAX from the setup (Ptolemy partial wave range)
     // For this test: lmin=lmax=3 → just Li=3
@@ -1946,7 +1949,8 @@ void DWBA::InelDcFaithful2()
             for (auto& [Lo, Lx] : lolx_pairs) {
                 if (lo_seen.count(Lo)) continue;
                 lo_seen.insert(Lo);
-                int JPO_min = std::abs(2*Lo - JSPS2);  // no clamping
+                // Fortran: if no SO outgoing (SOSWS(2)=false): only JPO=2*Lo+JSPS2
+                int JPO_min = outSO ? std::abs(2*Lo - JSPS2) : (2*Lo + JSPS2);
                 int JPO_max = 2*Lo + JSPS2;
                 for (int JPO = JPO_min; JPO <= JPO_max; JPO += 2) {
                     auto key = std::make_pair(Lo, JPO);
@@ -2113,7 +2117,9 @@ void DWBA::InelDcFaithful2()
                         // Loop over (IH, JPO)
                         for (int IH = 0; IH < IHMAX; ++IH) {
                             int Lo = lolx_pairs[IH].Lo;
-                            int JPO_min = std::max(std::abs(2*Lo - JSPS2), JPOMIN_tri);
+                            // Fortran: no-SO outgoing: only JPO_max
+                            int JPO_min = outSO ? std::max(std::abs(2*Lo - JSPS2), JPOMIN_tri)
+                                                : std::min(2*Lo + JSPS2, JPOMAX_tri);
                             int JPO_max = std::min(2*Lo + JSPS2, JPOMAX_tri);
 
                             for (int JPO = JPO_min; JPO <= JPO_max; JPO += 2) {
@@ -2255,7 +2261,8 @@ void DWBA::InelDcFaithful2()
                 double FACTOR_sf = 2.0 * std::sqrt(AKI * AKO / (ECM1 * ECM2));
 
                 for (auto& [JPI_v, chi_a] : chi_a_map) {
-                    int JPO_min = std::abs(2*Lo - JSPS2);  // no clamping
+                    // Fortran: no-SO outgoing: only JPO_max
+                    int JPO_min = outSO ? std::abs(2*Lo - JSPS2) : (2*Lo + JSPS2);
                     int JPO_max = 2*Lo + JSPS2;
                     for (int JPO = JPO_min; JPO <= JPO_max; JPO += 2) {
                         AccKey acc_key = {IH, JPI_v, JPO};

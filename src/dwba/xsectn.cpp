@@ -135,6 +135,7 @@ void DWBA::XSectn() {
     int Li  = elem.Li;   // = LASI in Fortran
     int Lo  = elem.Lo;   // = LASO in Fortran
     int JPI = elem.JPI;  // 2*J_incoming
+
     int JPO = elem.JPO;  // 2*J_outgoing
 
     if (LXP < LxMin_bs || LXP > LxMax_bs) continue;
