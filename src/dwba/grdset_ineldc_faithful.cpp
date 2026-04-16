@@ -2119,10 +2119,12 @@ void DWBA::InelDcFaithful2()
                         // Loop over (IH, JPO)
                         for (int IH = 0; IH < IHMAX; ++IH) {
                             int Lo = lolx_pairs[IH].Lo;
-                            // Fortran: no-SO outgoing: only JPO_max
+                            // Fortran: no-SO outgoing: chi stored at JPO=2*Lo+JSPS2 only
+                            // Use that JPO unconditionally (no triangle restriction for no-SO)
                             int JPO_min = outSO ? std::max(std::abs(2*Lo - JSPS2), JPOMIN_tri)
-                                                : std::min(2*Lo + JSPS2, JPOMAX_tri);
-                            int JPO_max = std::min(2*Lo + JSPS2, JPOMAX_tri);
+                                                : (2*Lo + JSPS2);
+                            int JPO_max = outSO ? std::min(2*Lo + JSPS2, JPOMAX_tri)
+                                                : (2*Lo + JSPS2);
 
                             for (int JPO = JPO_min; JPO <= JPO_max; JPO += 2) {
                                 auto key = std::make_pair(Lo, JPO);
