@@ -28,11 +28,12 @@ void DWBA::XSectn() {
   const int JB  = Outgoing.JSPS;                          // 2*j_eject (proton=1)
   const int JBT = (int)std::round(2.0 * TargetBS.j);     // 2*j_neutron_in_target (5 for 17O g.s.)
   const int JBP = (int)std::round(2.0 * ProjectileBS.j); // 2*j_neutron_in_proj   (1 for d)
-  const int JPBASE = std::abs(JA - JB);                  // min 2*J_cons (=1)
-  const int JPMX   = JA + JB;                             // max 2*J_cons (=3)
-  const int JTBASE = JBT;                                 // only one JT for transfer
-  const int NJP    = (JPMX - JPBASE)/2 + 1;              // # JP values (=2: JP=1,3)
-  const int NLX    = JBT/2 + 1;                           // # LX values (0..JBT/2)
+  const int JPBASE = std::abs(JA - JB);
+  const int JPMX   = JA + JB;
+  const int JTBASE = JBT;
+  const int JTMX   = JBT;
+  const int NJP    = (JPMX - JPBASE)/2 + 1;
+  const int NLX    = JBT/2 + 1;
 
   const int lT = TargetBS.l;     // neutron l in target (=2)
   const int lP = ProjectileBS.l; // neutron l in proj   (=0)
@@ -71,11 +72,9 @@ void DWBA::XSectn() {
   };
   std::vector<KoffsEntry> JTOCS;  // index 0-based (Fortran 1-based)
 
-  // Build JTOCS in same order as Fortran ANGSET (JP outer, JT, LX, LDEL inner)
+  // Build JTOCS
+  for (int JT = JTBASE; JT <= JTMX; JT += 2) {
   for (int JP = JPBASE; JP <= JPMX; JP += 2) {
-    int JT = JBT;  // only one residual state
-    // JTOCS LX range from J-conservation triangle only (NOT limited by bound state)
-    // The first 9-J LXP (= lT+lP range) is separate from the JTOCS LX
     int LXmn = std::abs(JT - JP) / 2;
     int LXmx = (JT + JP) / 2;
     for (int LX = LXmn; LX <= LXmx; LX++) {
@@ -90,7 +89,8 @@ void DWBA::XSectn() {
         JTOCS.push_back({LDEL, LX, JP, JT, MX});
       }
     }
-  }
+  }  // JP
+  }  // JT
   int NSPL = (int)JTOCS.size();
 
   // SMAG(KOFFS, Li_idx) and SPHASE(KOFFS, Li_idx)

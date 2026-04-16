@@ -1893,7 +1893,9 @@ void DWBA::InelDcFaithful2()
         for (int LI = LIMIN; LI <= LMAX; LI += 2) {
 
             // ── chi_a wavefunctions for all JPI ──────────────────────────────
-            int JPI_min = std::abs(2*LI - JSPS1);  // Fortran: JPMN = |2*LI - JA|, no clamping
+            // Fortran: no-SO incoming → only JPI=2*LI+JSPS1 (max J)
+            bool inSO = (Incoming.Pot.VSO != 0.0 || Incoming.Pot.VSOI != 0.0);
+            int JPI_min = inSO ? std::abs(2*LI - JSPS1) : (2*LI + JSPS1);
             int JPI_max = 2*LI + JSPS1;
             std::map<int, std::vector<std::complex<double>>> chi_a_map;
             double h_a = Incoming.StepSize;
