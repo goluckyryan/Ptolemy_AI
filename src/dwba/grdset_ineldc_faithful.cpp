@@ -493,8 +493,12 @@ void DWBA::InelDcFaithful2()
     // ALPHAT = sqrt(2*BNDMAS(2)*|EBNDS(2)|) / HBARC   (target BS)
     // BNDMAS: reduced mass of bound state in AMU
     // EBNDS: binding energy in MeV
-    double mu_prj = mb * mx / (mb + mx) / AMU_MEV;  // AMU
-    double mu_tgt = mA * mx / (mA + mx) / AMU_MEV;  // AMU
+    // Fortran BOUND: AMP=incoming(a), AMT=transferred(x) → mu=ma*mx/(ma+mx)
+    // For stripping (d,p): ma=deuteron, mx=neutron → mu=m_d*m_n/(m_d+m_n) \approx 621 MeV
+    // For pickup (p,d): ma=proton, mx=neutron → mu=m_p*m_n/(m_p+m_n) \approx 469 MeV
+    // This matches Fortran KAPPA = sqrt(2*AM*|E|)/HBARC where AM=mu_prj
+    double mu_prj = ma * mx / (ma + mx) / AMU_MEV;  // AMU (incoming × transferred)
+    double mu_tgt = mA * mx / (mA + mx) / AMU_MEV;  // AMU (target × transferred) — unchanged
     double ALPHAP = std::sqrt(2.0 * mu_prj * AMU_MEV * std::abs(ProjectileBS.BindingEnergy)) / HBARC_V;
     double ALPHAT = std::sqrt(2.0 * mu_tgt * AMU_MEV * std::abs(TargetBS.BindingEnergy)) / HBARC_V;
 

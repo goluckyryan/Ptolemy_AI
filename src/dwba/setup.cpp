@@ -277,14 +277,30 @@ void DWBA::Calculate() {
     bool allow_L_adjust = (SctAsySet < 0) && (ParameterSet.find("INELOCA") != std::string::npos || BELx == 0.0);
 
     // Incoming channel
-    // NSTEP = ASYMPT_base/h for S-matrix extraction (Fortran SCTASY)
-    // Chi extension to SUMMAX (NSTP2S) is handled inside wavelj.cpp via pure Coulomb
-    int nstep_in = static_cast<int>(ASYMPT_base / Incoming.StepSize + 0.5);
+    // For INELASTIC (INELOCA): NSTEP = ASYMPT_base/h (Fortran SCTASY=20fm)
+    //   Coulomb extension to SUMMAX is done inside wavelj.cpp (NSTP2S)
+    // For TRANSFER (BELx==0, dpsb): NSTEP = max(ASYMPT_base, turning_point)/h
+    //   because the S-matrix matching must be beyond the Coulomb turning point
+    double RMAX_in = ASYMPT_base;
+    bool is_inelastic_ineloca = (ParameterSet.find("INELOCA") != std::string::npos && BELx > 0.0);
+    if (allow_L_adjust && !is_inelastic_ineloca) {
+      // Transfer: include Coulomb turning point for correct S-matrix extraction
+      double tp_in = (Incoming.eta + std::sqrt(Incoming.eta * Incoming.eta
+                      + (double)LMAX_eff * (LMAX_eff + 1))) / Incoming.k;
+      RMAX_in = std::max(RMAX_in, tp_in);
+    }
+    int nstep_in = static_cast<int>(RMAX_in / Incoming.StepSize + 0.5);
     Incoming.MaxR = nstep_in * Incoming.StepSize;
     Incoming.NSteps = nstep_in;
 
     // Outgoing channel
-    int nstep_out = static_cast<int>(ASYMPT_base / Outgoing.StepSize + 0.5);
+    double RMAX_out = ASYMPT_base;
+    if (allow_L_adjust && !is_inelastic_ineloca) {
+      double tp_out = (Outgoing.eta + std::sqrt(Outgoing.eta * Outgoing.eta
+                       + (double)LMAX_eff * (LMAX_eff + 1))) / Outgoing.k;
+      RMAX_out = std::max(RMAX_out, tp_out);
+    }
+    int nstep_out = static_cast<int>(RMAX_out / Outgoing.StepSize + 0.5);
     Outgoing.MaxR = nstep_out * Outgoing.StepSize;
     Outgoing.NSteps = nstep_out;
 
@@ -376,7 +392,9 @@ void DWBA::PrintParameters() {
   int Zx_s = std::abs((int)Incoming.Projectile.Z - (int)Outgoing.Projectile.Z);
   int Ax_s = std::abs(Incoming.Projectile.A - Outgoing.Projectile.A);
   double mx = ptolemy_mass_s(Zx_s, Ax_s);
-  double mu_pbs = mb * mx / (mb + mx);
+  // Fortran BOUND: AMP=incoming(a), AMT=transferred(x) → mu = ma*mx/(ma+mx)
+  // NOT mb*mx/(mb+mx). For (p,d): mu = m_proton*m_neutron/(m_proton+m_neutron) ≈ 469 MeV.
+  double mu_pbs = ma * mx / (ma + mx);
   double kappa_pbs = std::sqrt(2.0 * mu_pbs * ProjectileBS.BindingEnergy) / HBARC_L;
 
   std::cout << "        PROJECTILE BOUND STATE PARAMETERS" << std::endl;

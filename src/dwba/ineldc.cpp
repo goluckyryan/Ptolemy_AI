@@ -108,8 +108,9 @@ void DWBA::InelDc() {
   double mA = ptolemy_mass_MeV_i((int)Incoming.Target.Z, Incoming.Target.A);
   double mb = ptolemy_mass_MeV_i((int)Outgoing.Projectile.Z, Outgoing.Projectile.A);
   double mB = ptolemy_mass_MeV_i((int)Outgoing.Target.Z, Outgoing.Target.A);
-  int Zx_i = (int)Incoming.Projectile.Z - (int)Outgoing.Projectile.Z;
-  int Ax_i = Incoming.Projectile.A - Outgoing.Projectile.A;
+  // Use abs() for pickup reactions (p,d) where Ax = 1-2 = -1
+  int Zx_i = std::abs((int)Incoming.Projectile.Z - (int)Outgoing.Projectile.Z);
+  int Ax_i = std::abs(Incoming.Projectile.A - Outgoing.Projectile.A);
   double mx = ptolemy_mass_MeV_i(Zx_i, Ax_i);
 
   // Coordinate transformation coefficients (Ptolemy GRDSET convention)
@@ -143,8 +144,8 @@ void DWBA::InelDc() {
   Channel TgtBS_ch;
   TgtBS_ch.Pot    = TargetBS.Pot;
   TgtBS_ch.Target = Incoming.Target;
-  TgtBS_ch.Projectile.Z    = Incoming.Projectile.Z - Outgoing.Projectile.Z;
-  TgtBS_ch.Projectile.A    = Incoming.Projectile.A - Outgoing.Projectile.A;
+  TgtBS_ch.Projectile.Z    = Zx_i;  // abs() applied above
+  TgtBS_ch.Projectile.A    = Ax_i;  // abs() applied above
   TgtBS_ch.Projectile.Mass = mx;
   TgtBS_ch.mu   = mA * mx / (mA + mx) / AMU_MEV;   // AMU
   // Ptolemy BOUND step size: h = min(1/kappa, A_diff) / STEPSPER (STEPSPER=8 from dpsb)
@@ -168,10 +169,11 @@ void DWBA::InelDc() {
   Channel PrjBS_ch;
   PrjBS_ch.Pot    = ProjectileBS.Pot;
   PrjBS_ch.Target = Outgoing.Projectile;
-  PrjBS_ch.Projectile.Z    = Incoming.Projectile.Z - Outgoing.Projectile.Z;
-  PrjBS_ch.Projectile.A    = Incoming.Projectile.A - Outgoing.Projectile.A;
+  PrjBS_ch.Projectile.Z    = Zx_i;  // abs() applied above
+  PrjBS_ch.Projectile.A    = Ax_i;  // abs() applied above
   PrjBS_ch.Projectile.Mass = mx;
-  PrjBS_ch.mu   = mb * mx / (mb + mx) / AMU_MEV;   // AMU
+  // Fortran BOUND: AMP=incoming(a), AMT=transferred(x) → mu = ma*mx/(ma+mx)
+  PrjBS_ch.mu   = ma * mx / (ma + mx) / AMU_MEV;   // AMU
   // Projectile BS step: Ptolemy formula h = min(1/kappa_P, A_P) / STEPSPER
   // Deuteron (AV18): kappa=0.2316 fm^-1, A_pot=0.5 → h=min(4.32,0.5)/8=0.0625 fm
   // IVPHI_P lives on PrjBS grid; IVPHI_T lives on TgtBS grid — grids are independent.
