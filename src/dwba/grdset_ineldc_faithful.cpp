@@ -469,9 +469,31 @@ void DWBA::InelDcFaithful2()
     int Ax = std::abs(Incoming.Projectile.A - Outgoing.Projectile.A);
     double mx = ptolemy_mass_MeV(Zx, Ax);
     // Kinematic ratios (matching Fortran SETCHN BRATMS)
-    // BRATMS(1) = AMX/AMB, BRATMS(2) = AMX/AMBIGA
-    double bratms1 = mx / mb;   // x/b
-    double bratms2 = mx / mA;   // x/A (target)
+    // Fortran BRATMS = RATMAS = AMP/AMT where AMP,AMT are INTEGER mass numbers
+    // (NOT nuclear masses in MeV)
+    // BRATMS(ICHANB) is set at bound-state parse time as RATMAS = AMP/AMT for that channel.
+    //
+    // For STRIPPING (d,p): ma=d, A=16O, b=p, B=17O, x=n
+    //   PROJECTILE block (ICHANB=1): x=n in b=p → BRATMS(1) = Ax/Ab = 1/1 = 1.0 ← stripping uses b (proton)
+    //   TARGET    block (ICHANB=2): x=n in A=16O → BRATMS(2) = Ax/AA = 1/16 = 0.0625
+    //
+    // For PICKUP (p,d): ma=p, A=16O, b=d, B=15O, x=n
+    //   PROJECTILE block (ICHANB=1): x=n in a=p (incoming, because pickup: a=b_s+x) → BRATMS(1) = Ax/Aa = 1/1 = 1.0
+    //   TARGET    block (ICHANB=2): x=n in A=16O → BRATMS(2) = Ax/AA = 1/16 = 0.0625
+    //
+    // KEY INSIGHT: Both stripping and pickup have BRATMS(1)=1/1=1 and BRATMS(2)=1/16=0.0625
+    // because PROJECTILE block for pickup describes x in a (incoming proton), not x in b (outgoing deuteron).
+    // For stripping: PROJECTILE describes x in b (outgoing proton), which is also A=1.
+    // The difference is that for pickup, Ax/Aa refers to a different physical nucleus.
+    //
+    // CONCLUSION: Use A_projectile_block and A_target_block, which differ for pickup:
+    //   Stripping: A_proj_block = Outgoing.Projectile.A (ejectile b)
+    //   Pickup:    A_proj_block = Incoming.Projectile.A (incoming a)
+    bool isPickup = (Incoming.Projectile.A < Outgoing.Projectile.A);
+    int A_proj_block = isPickup ? Incoming.Projectile.A : Outgoing.Projectile.A;
+    int A_tgt_block  = Incoming.Target.A;
+    double bratms1 = (double)Ax / (double)A_proj_block;   // BRATMS(1) = Ax/Ab or Ax/Aa
+    double bratms2 = (double)Ax / (double)A_tgt_block;    // BRATMS(2) = Ax/AA
 
     // ─── Coordinate mapping coefficients (Fortran GRDSET lines 15875-15900) ─
     // STRIPPING (ISTRIP=+1):
@@ -487,6 +509,23 @@ void DWBA::InelDcFaithful2()
     double S2 = (1.0 + bratms1) * TEMP_m;
     double T2 = -S1;
     double JACOB = S1*S1*S1;
+
+    if (isPickup) {
+        // Fortran GRDSET lines 15887-15898 (ISTRIP=-1, pickup):
+        //   T2 = S2            (T2_new = S2_old)
+        //   S2 = -S1           (S2_new = -S1_old)
+        //   S1 = T1            (S1_new = T1_old)
+        //   T1 = -S2           (T1_new = -S2_new = S1_old)
+        //   JACOB = T1^3       (= S1_old^3 = stripping JACOB)
+        double S1_old = S1, S2_old = S2, T1_old = T1;
+        T2 = S2_old;
+        S2 = -S1_old;
+        S1 = T1_old;
+        T1 = -S2;   // T1 = -S2_new = S1_old
+        JACOB = T1*T1*T1;
+        fprintf(stderr, "[PICKUP] S1=%.6f T1=%.6f S2=%.6f T2=%.6f JACOB=%.6f\n",
+                S1, T1, S2, T2, JACOB);
+    }
 
     // ─── Bound state decay exponents ─────────────────────────────────────────
     // ALPHAP = sqrt(2*BNDMAS(1)*|EBNDS(1)|) / HBARC   (projectile BS)
@@ -1143,8 +1182,8 @@ void DWBA::InelDcFaithful2()
                     double RB = U - 0.5*VVAL;
                     if (RA <= 0.0 || RB <= 0.0) continue;
                     double FIFO, RP_, RT_;
-                    // Fortran line 18726: BSPROD(ITYPE=3, ..., ISCTCR, ...) — uses LCRIT chi
-                    bool ok = bsp_ISCTCR(3, RA, RB, XS[ix], FIFO, RP_, RT_);
+                    // Fortran line 18603: BSPROD(ITYPE=3, ..., ISCTMN, ...) — SUMMAX scan uses ISCTMN chi
+                    bool ok = bsp_ISCTMN(3, RA, RB, XS[ix], FIFO, RP_, RT_);
                     if (!ok) continue;
                     // Fortran: RP, RT updated on every successful BSPROD call
                     last_RP = RP_; last_RT = RT_;
@@ -1824,9 +1863,8 @@ void DWBA::InelDcFaithful2()
     std::vector<int> MCNT_start(NRIROH+1, 0);  // 1-based start index per IPLUNK
     {
         double DXV_phi = 2.0 / ((double)LOOKST * (double)LOOKST);
-        // PHISGN: Fortran sets PHISGN = SIGN(1,PHISGN) but default is +1.
-        // For 16O(d,p) we take PHISGN=+1.
-        double PHISGN = 1.0;
+        // PHISGN: +1 for stripping, -1 for pickup (Fortran GRDSET)
+        double PHISGN = isPickup ? -1.0 : 1.0;
         int JCNT = 0;
         for (int IPLUNK = 1; IPLUNK <= NRIROH; ++IPLUNK) {
             double RI = RIH_tab[IPLUNK];

@@ -113,6 +113,9 @@ void DWBA::InelDc() {
   int Ax_i = std::abs(Incoming.Projectile.A - Outgoing.Projectile.A);
   double mx = ptolemy_mass_MeV_i(Zx_i, Ax_i);
 
+  // Pickup detection: incoming projectile smaller than outgoing (e.g. p < d)
+  bool isPickup = (Incoming.Projectile.A < Outgoing.Projectile.A);
+
   // Coordinate transformation coefficients (Ptolemy GRDSET convention)
   // r_x = S1*ra + T1*rb  (coordinate of x in the target frame)
   // r_p = S2*ra + T2*rb  (coordinate of x in the projectile frame)
@@ -126,15 +129,29 @@ void DWBA::InelDc() {
   // S2 = (1+BRATMS(1))*TEMP
   // T2 = -S1
   double denom = ratio_xb + ratio_xA * (1.0 + ratio_xb);  // CORRECT: BRATMS(1) + BRATMS(2)*(1+BRATMS(1))
-  double S1 = (1.0 + ratio_xb) * (1.0 + ratio_xA) / denom;  // ≈ 1.940
-  double T1 = -(1.0 + ratio_xA) / denom;                     // ≈ -0.970 (CORRECT)
-  double S2 = (1.0 + ratio_xb) / denom;                      // ≈ 1.883 (CORRECT)
-  double T2 = -S1;                                            // ≈ -1.940 (T2 = -S1)
-  // JACOB = S1^3 confirmed by standalone Fortran test (test_rirowts.f).
-  // Ptolemy GRDSET line 15882: JACOB = S1**3 for stripping.
-  // No compensating /JACOB found anywhere in source.mor.
-  // See AGENT_FINDINGS.md section "GRDSET RIROWTS Standalone Fortran Validation".
-  double JACOB_grdset = S1*S1*S1;  // Ptolemy GRDSET: JACOB = S1^3 for stripping
+  double S1 = (1.0 + ratio_xb) * (1.0 + ratio_xA) / denom;
+  double T1 = -(1.0 + ratio_xA) / denom;
+  double S2 = (1.0 + ratio_xb) / denom;
+  double T2 = -S1;                                            // T2 = -S1
+  double JACOB_grdset = S1*S1*S1;  // JACOB = S1^3 for stripping
+
+  if (isPickup) {
+    // Ptolemy GRDSET source.mor lines 15887-15898 (ISTRIP=-1, pickup):
+    //   T2 = S2
+    //   S2 = -S1
+    //   S1 = T1
+    //   T1 = -T2  (= -S2_old)
+    //   JACOB = T1^3
+    // Apply in-place:
+    double S1_old = S1, S2_old = S2, T1_old = T1;
+    T2 = S2_old;
+    S2 = -S1_old;
+    S1 = T1_old;
+    T1 = -S2;   // T1 = -S2_new = S1_old
+    JACOB_grdset = T1*T1*T1;  // JACOB = T1^3 = S1_old^3 for pickup
+    fprintf(stderr, "[PICKUP] S1=%.6f T1=%.6f S2=%.6f T2=%.6f JACOB=%.6f\n",
+            S1, T1, S2, T2, JACOB_grdset);
+  }
 
   // -------------------------------------------------------
   // Build bound state channels and solve for wave functions
@@ -1268,8 +1285,7 @@ void DWBA::InelDc() {
         // Ptolemy: RP uses S1/T1, RT uses S2/T2 (same convention as RIOEX)
         double RP_c = std::sqrt(1.0 + (S1*ra+T1*rb)*(S1*ra+T1*rb));
         double RT_c = std::sqrt(1.0 + (S2*ra+T2*rb)*(S2*ra+T2*rb));
-        double JACOB_chi = S1*S1*S1;
-        double LWIO_val = JACOB_chi * ra * rb * WOW * WT * std::exp(-ALPHAP*RP_c - ALPHAT*RT_c);
+        double LWIO_val = JACOB_grdset * ra * rb * WOW * WT * std::exp(-ALPHAP*RP_c - ALPHAT*RT_c);
         LWIO_chi[IV_store*NPSUMI + IU] = LWIO_val;
       }
     }
