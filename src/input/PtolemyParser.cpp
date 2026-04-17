@@ -121,7 +121,7 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
 
     // Temporaries for optical potentials (accumulated across multi-line blocks)
     ChannelPotential inPot = {}, outPot = {};
-    bool outVI_set = false, outVSO_set = false;  // track explicit set vs defaulted
+    bool outVI_set = false, outVSO_set = false, outV_set = false, outRC0_set = false, outVSI_set = false;
 
     // Angle tracking (set angles at the end)
     double angleMin = 0, angleMax = 180, angleStep = 5;
@@ -196,12 +196,27 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
                 if (isElastic_) elastic_pot_ = inPot;
             } else if (section == OUTGOING) {
                 // Ptolemy convention: inherit missing VI and VSO from incoming when not explicitly set
+                // Ptolemy convention: inherit real potential when not explicitly set (inelastic)
+                if (!outV_set && inPot.V != 0.0) {
+                    outPot.V = inPot.V; outPot.R0 = inPot.R0; outPot.A = inPot.A;
+                }
                 if (!outVI_set && inPot.VI != 0.0) {
                     outPot.VI = inPot.VI; outPot.RI0 = inPot.RI0; outPot.AI = inPot.AI;
                 }
                 if (!outVSO_set && inPot.VSO != 0.0) {
                     outPot.VSO = inPot.VSO; outPot.RSO0 = inPot.RSO0; outPot.ASO = inPot.ASO;
                     outPot.VSOI = inPot.VSOI; outPot.RSOI0 = inPot.RSOI0; outPot.ASOI = inPot.ASOI;
+                }
+                // Inherit Coulomb radius from incoming when not explicitly set
+                // Note: For inelastic (same particle in/out), RC0 should match incoming
+                // But default outPot.RC0=1.25 is the Ptolemy default for ejectile Coulomb
+                // Only inherit if explicitly needed (e.g., non-standard RC0)
+                if (!outRC0_set && inPot.RC0 != 0.0) {
+                    outPot.RC0 = inPot.RC0;
+                }
+                // Inherit surface imaginary from incoming when not explicitly set
+                if (!outVSI_set && inPot.VSI != 0.0) {
+                    outPot.VSI = inPot.VSI; outPot.RSI0 = inPot.RSI0; outPot.ASI = inPot.ASI;
                 }
                 dwba.SetOutgoingPotential(outPot);
             }
@@ -232,8 +247,8 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
         if (upper == "OUTGOING") {
             section = OUTGOING;
             outPot = {};
-            outPot.RC0 = 1.25;  // default
-            outVI_set = false; outVSO_set = false;
+            outPot.RC0 = 1.25;  // default (will be overridden by inPot.RC0 if not explicitly set)
+            outVI_set = false; outVSO_set = false; outV_set = false; outRC0_set = false; outVSI_set = false;
             continue;
         }
 
@@ -319,6 +334,9 @@ void PtolemyParser::ParseLines(const std::vector<std::string> &lines, DWBA &dwba
                     ApplyPotParam(outPot, key, val);
                     if (key=="VI"||key=="W") outVI_set=true;
                     if (key=="VSO"||key=="VSOI") outVSO_set=true;
+                    if (key=="V"||key=="VR") outV_set=true;
+                    if (key=="RC0") outRC0_set=true;
+                    if (key=="VSI"||key=="WD") outVSI_set=true;
                 } else if (section == PROJECTILE || section == TARGET) {
                     // Bound state parameters
                     if (key == "NODES" || key == "N") {

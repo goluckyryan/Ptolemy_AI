@@ -375,7 +375,6 @@ void DWBA::InelDcCollective() {
     int NUMPT_calc = (int)((SUMMAX-SUMMIN) * SUMPTS * (k_in+k_out) / (4*PI));
     int NUMPT = std::max(NUMPT_calc, NPSUM);
 
-
     // ── IRTOIN cutoff: apply for LI where elastic S is non-trivial ──
     // Fortran applies IRTOIN for all LI (INRDIN does it directly); our cutoff approximates this
     int Lmax_elastic_est = LCRIT_in;
@@ -694,6 +693,8 @@ void DWBA::InelDcCollective() {
                 integral += contrib;
                 // Debug: separate Coulomb-only integral
                 integral_coul += H_c_wt[i] * chi_out_val * chi_in_val;
+
+
             }
 
             std::complex<double> phase;
@@ -773,7 +774,6 @@ void DWBA::InelDcCollective() {
             std::complex<double> ITOTAL = ICOMP + IRTOIN;
             std::complex<double> INUC = ITOTAL - phase * FFI;
             std::complex<double> S = phase * INUC;
-
 
             Smat.push_back({LI, LO, S});
         }

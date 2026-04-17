@@ -314,6 +314,9 @@ void DWBA::XSectn() {
       double re = S_acc[k][idx].real(), im = S_acc[k][idx].imag();
       SMAG  [k][idx] = std::sqrt(re*re + im*im);
       SPHASE[k][idx] = std::atan2(im, re);
+      int Li = LMIN_dc + idx;
+      int Lo = Li + JTOCS[k].LDEL;
+
     }
   }
 

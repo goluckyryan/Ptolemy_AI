@@ -17,6 +17,8 @@
 int Rcwfn(double rho, double eta, int lmin, int lmax, std::vector<double>& FC,
           std::vector<double>& FCP, std::vector<double>& GC, std::vector<double>& GCP, double accur);
 
+// Coulin/Clints/Rcasym: real implementations in src/dwba/coulin.cpp
+
 static const double PI = 3.14159265358979323846;
 static const double HBARC = 197.32858;    // Ptolemy value
 static const double AMUMEV = 931.50160;   // Ptolemy value
@@ -1145,48 +1147,44 @@ int main() {
         Smap[{s.LI, s.LO}] = s.val;
     }
 
-    // ===== LINTRP-style power-law S-matrix extrapolation (Fortran LXTRP1/LXTRP2) =====
-    // Fit |S(L)| = A*(LMAX_fit/L)^B to decay region, then extrapolate to LIMOST.
-    // Phase: converges to -pi/2 (pure Coulomb) at large L.
-    // LIMOST: smallest L where |S| < |S_peak|/500.
+    // ===== Power-law S-matrix extrapolation from Lmax to 154 =====
+    // Fit |S(L)| = S_ref*(L_ref/L)^B from last NFIT computed points
+    // Phase: converges to -pi/2 at large L (Coulomb limit)
+    // Fortran extends to LIMOST=154 for all delta channels with |S|>WEEBOY
     {
         int extrap_count = 0;
-        const double SMLNUM = 1.0e-10;      // negligible S threshold
-        const double PEAK_FRAC = 1.0/500.0; // Fortran WEEBOY cutoff
-        const int LIMOST_MAX = 80;           // hard upper limit
-        const int NFIT = 4;                  // number of points for fit
-        const int FTN_LMAX = 26;             // Fortran's actual LMAX (use as fit endpoint)
+        const double SMLNUM = 1.0e-12;   // negligible threshold
+        const int LIMOST_MAX = 160;      // extend well past Fortran's 154
+        const int NFIT = 6;              // fit points from tail of computed region
+        const double ph_inf = -M_PI/2.0; // phase asymptote at large L
 
         for (int delta = -LX; delta <= LX; delta += 2) {
-            // Collect magnitude & phase of known S(LI) for this delta
-            // Use LI from fit window: last NFIT values before FTN_LMAX where |S|>1e-6
+            // Collect ALL computed (LI, |S|, phase) for this delta
             std::vector<std::pair<int,double>> fit_mag, fit_ph;
             double peak_mag = 0.0;
-            for (int LI = 0; LI <= FTN_LMAX; LI++) {
+            for (int LI = 0; LI <= Lmax; LI++) {
                 int LO = LI + delta;
                 if (LO < 0) continue;
                 auto it = Smap.find({LI, LO});
                 if (it == Smap.end()) continue;
                 double m = std::abs(it->second);
-                peak_mag = std::max(peak_mag, m);
-                if (m > 1e-6) {
+                if (m > peak_mag) peak_mag = m;
+                if (m > SMLNUM) {
                     fit_mag.push_back({LI, m});
                     fit_ph.push_back({LI, std::arg(it->second)});
                 }
             }
             if ((int)fit_mag.size() < NFIT) continue;
 
-            // Use last NFIT points for power-law fit
+            // Use last NFIT points for power-law fit: log|S| = logA + B*log(L_ref/L)
             int n = (int)fit_mag.size();
             int start = n - NFIT;
-            double DLMAX = (double)FTN_LMAX;  // Fortran's reference LI
+            double L_ref = (double)fit_mag.back().first;  // last computed L with |S|>eps
 
-            // Fit log|S| = logA + B*log(DLMAX/L) via log-linear regression
-            double sx=0,sy=0,sxx=0,sxy=0;
-            int npts=0;
+            double sx=0, sy=0, sxx=0, sxy=0; int npts=0;
             for (int i=start; i<n; i++) {
-                double LI_i = fit_mag[i].first;
-                double x = std::log(DLMAX/LI_i);
+                double Li = fit_mag[i].first;
+                double x = std::log(L_ref / Li);
                 double y = std::log(fit_mag[i].second);
                 if (!std::isfinite(x)||!std::isfinite(y)) continue;
                 sx+=x; sy+=y; sxx+=x*x; sxy+=x*y; npts++;
@@ -1196,45 +1194,50 @@ int main() {
             if (std::abs(denom) < 1e-30) continue;
             double B_mag = (npts*sxy - sx*sy)/denom;
             double A_mag = std::exp((sy - B_mag*sx)/npts);
-            if (B_mag < 0.001 || !std::isfinite(B_mag) || !std::isfinite(A_mag)) continue;
+            if (B_mag < 0.1 || !std::isfinite(B_mag) || !std::isfinite(A_mag)) continue;
 
-            // Phase: at large L, converges to -pi/2. Use linear fit vs 1/L
-            // phase(L) = ph_inf + slope/L  (asymptotic)
-            double ph_inf = -M_PI/2.0;  // known asymptote
-            // Last known phase for continuity
+            // Phase continuity: last known phase, unwrap to near -pi/2
             double last_ph = fit_ph.back().second;
-            // Unwrap to be near -pi/2
             while (last_ph - ph_inf >  M_PI) last_ph -= 2*M_PI;
             while (last_ph - ph_inf < -M_PI) last_ph += 2*M_PI;
 
-            // Determine LIMOST for this delta
-            double weeboy = peak_mag * PEAK_FRAC;
+            // Extrapolate from L_ref+1 to LIMOST_MAX
+            int L_start = (int)L_ref + 1;
+            // Find stop: where mag drops below SMLNUM
             int LIMOST_delta = LIMOST_MAX;
-            for (int LI = (int)DLMAX+1; LI <= LIMOST_MAX; LI++) {
-                double mag = A_mag * std::pow(DLMAX/LI, B_mag);
-                if (mag < weeboy || mag < SMLNUM) { LIMOST_delta = LI-1; break; }
+            for (int LI = L_start; LI <= LIMOST_MAX; LI++) {
+                double mag = A_mag * std::pow(L_ref / LI, B_mag);
+                if (mag < SMLNUM) { LIMOST_delta = LI-1; break; }
             }
 
-            // Extrapolate LI = DLMAX+1 .. LIMOST_delta
             double prev_ph = last_ph;
-            for (int LI = (int)DLMAX+1; LI <= LIMOST_delta; LI++) {
+            for (int LI = L_start; LI <= LIMOST_delta; LI++) {
                 int LO = LI + delta;
-                if (LO < 0) continue;
-                if (Smap.count({LI,LO})) continue;  // keep existing numerical values
-                double mag_ext = A_mag * std::pow(DLMAX/LI, B_mag);
+                if (LO < 0 || LO >= LOMAX_EXT) continue;
+                if (Smap.count({LI,LO})) continue;  // keep numerical values
+                double mag_ext = A_mag * std::pow(L_ref / LI, B_mag);
                 if (!std::isfinite(mag_ext) || mag_ext < SMLNUM) break;
-                // Phase: linear interpolation toward -pi/2
-                double t = (LI - DLMAX) / (LIMOST_delta - DLMAX + 1.0);
-                double ph_ext = prev_ph + (ph_inf - prev_ph) * t;
-                // Unwrap
+                // Phase: linearly interpolate to ph_inf over remaining range
+                double frac = (double)(LI - (int)L_ref) / (LIMOST_delta - (int)L_ref + 1.0);
+                double ph_ext = last_ph + (ph_inf - last_ph) * frac;
+                // Unwrap for continuity
                 while (ph_ext - prev_ph >  M_PI) ph_ext -= 2*M_PI;
                 while (ph_ext - prev_ph < -M_PI) ph_ext += 2*M_PI;
                 prev_ph = ph_ext;
                 Smap[{LI,LO}] = std::polar(mag_ext, ph_ext);
                 extrap_count++;
             }
+
+            // Print fit parameters for debugging
+            std::cerr << "Extrap delta=" << delta
+                      << " L_ref=" << (int)L_ref
+                      << " B=" << B_mag
+                      << " A=" << A_mag
+                      << " last_ph=" << last_ph
+                      << " LIMOST=" << LIMOST_delta
+                      << " added=" << extrap_count << std::endl;
         }
-        std::cerr << "PowerLaw extrap: " << extrap_count << " new S-matrix elements" << std::endl;
+        std::cerr << "PowerLaw extrap total: " << extrap_count << " new S-matrix elements" << std::endl;
     }
 
 #if 0  // Disabled: geometric extrapolation replaced by Thiele CF above
@@ -1387,8 +1390,10 @@ int main() {
     }
 
     // ===== DCS: 10 * sum_MX FMNEG(MX) * |sum_LO beta[MX][LO] * P_LO^MX(costh)|^2 =====
-    std::cout << std::fixed;
-    for (double th = 0.0; th <= 180.01; th += 1.0) {
+    // Compute DCS and store for comparison
+    std::vector<double> dcs_cpp(181);
+    for (int ith = 0; ith <= 180; ith++) {
+        double th = (double)ith;
         double costh = std::cos(th * PI / 180.0);
         double dcs = 0.0;
         for (int MX = 0; MX <= MX_max; MX++) {
@@ -1401,10 +1406,61 @@ int main() {
             double w = (MX == 0) ? 1.0 : 2.0;
             dcs += w * std::norm(amp);
         }
-        dcs *= 10.0;
-        std::cout << std::setw(8) << std::setprecision(2) << th
-                  << std::setw(15) << std::scientific << std::setprecision(5) << dcs
-                  << std::endl;
+        dcs_cpp[ith] = dcs * 10.0;
+    }
+
+    // Try to read Fortran reference from /tmp/ftn_inel_dcs.txt for comparison
+    // Format: angle  ftn_dcs  (one per line)
+    std::vector<double> dcs_ftn(181, -1.0);
+    bool have_ftn = false;
+    {
+        std::ifstream fref("/tmp/ftn_inel_dcs.txt");
+        if (fref.is_open()) {
+            double th_f, dcs_f;
+            while (fref >> th_f >> dcs_f) {
+                int ith = (int)(th_f + 0.5);
+                if (ith >= 0 && ith <= 180) dcs_ftn[ith] = dcs_f;
+            }
+            have_ftn = true;
+        }
+    }
+
+    // Print comparison table
+    if (have_ftn) {
+        std::cout << std::fixed;
+        std::cout << "# Angle       C++_DCS        Ftn_DCS      Ratio\n";
+        double sumsq = 0.0; int n = 0;
+        double rmin = 1e30, rmax = -1e30;
+        for (int ith = 0; ith <= 180; ith++) {
+            double th = (double)ith;
+            double cpp_v = dcs_cpp[ith];
+            double ftn_v = dcs_ftn[ith];
+            double ratio = (ftn_v > 1e-30) ? cpp_v / ftn_v : 0.0;
+            std::cout << std::setw(8) << std::setprecision(2) << th
+                      << std::setw(15) << std::scientific << std::setprecision(5) << cpp_v
+                      << std::setw(15) << std::scientific << std::setprecision(5) << ftn_v
+                      << std::setw(10) << std::fixed << std::setprecision(6) << ratio
+                      << "\n";
+            if (ftn_v > 1e-30) {
+                double d = ratio - 1.0;
+                sumsq += d*d; n++;
+                if (ratio < rmin) rmin = ratio;
+                if (ratio > rmax) rmax = ratio;
+            }
+        }
+        std::cout << "# Min_ratio=" << std::fixed << std::setprecision(5) << rmin
+                  << "  Max_ratio=" << rmax
+                  << "  RMS_err=" << std::setprecision(4) << 100.0*std::sqrt(sumsq/n) << "%\n";
+    } else {
+        // No reference: just print DCS
+        std::cout << std::fixed;
+        std::cout << "# Angle       DCS\n";
+        for (int ith = 0; ith <= 180; ith++) {
+            double th = (double)ith;
+            std::cout << std::setw(8) << std::setprecision(2) << th
+                      << std::setw(15) << std::scientific << std::setprecision(5) << dcs_cpp[ith]
+                      << "\n";
+        }
     }
 
     return 0;

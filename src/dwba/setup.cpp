@@ -277,24 +277,14 @@ void DWBA::Calculate() {
     bool allow_L_adjust = (SctAsySet < 0) && (ParameterSet.find("INELOCA") != std::string::npos || BELx == 0.0);
 
     // Incoming channel
-    double RMAX_in = ASYMPT_base;
-    if (allow_L_adjust) {
-      double tp_in = (Incoming.eta + std::sqrt(Incoming.eta * Incoming.eta
-                      + (double)LMAX_eff * (LMAX_eff + 1))) / Incoming.k;
-      RMAX_in = std::max(RMAX_in, tp_in);
-    }
-    int nstep_in = static_cast<int>(RMAX_in / Incoming.StepSize + 0.5);
+    // NSTEP = ASYMPT_base/h for S-matrix extraction (Fortran SCTASY)
+    // Chi extension to SUMMAX (NSTP2S) is handled inside wavelj.cpp via pure Coulomb
+    int nstep_in = static_cast<int>(ASYMPT_base / Incoming.StepSize + 0.5);
     Incoming.MaxR = nstep_in * Incoming.StepSize;
     Incoming.NSteps = nstep_in;
 
     // Outgoing channel
-    double RMAX_out = ASYMPT_base;
-    if (allow_L_adjust) {
-      double tp_out = (Outgoing.eta + std::sqrt(Outgoing.eta * Outgoing.eta
-                       + (double)LMAX_eff * (LMAX_eff + 1))) / Outgoing.k;
-      RMAX_out = std::max(RMAX_out, tp_out);
-    }
-    int nstep_out = static_cast<int>(RMAX_out / Outgoing.StepSize + 0.5);
+    int nstep_out = static_cast<int>(ASYMPT_base / Outgoing.StepSize + 0.5);
     Outgoing.MaxR = nstep_out * Outgoing.StepSize;
     Outgoing.NSteps = nstep_out;
 
