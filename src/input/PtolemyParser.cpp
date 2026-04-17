@@ -563,12 +563,43 @@ void PtolemyParser::ParseParameterSet(const std::string &line, DWBA &dwba) {
             // Bare keyword flags
             if      (utoken == "LABANGLES")  {} // TODO: implement lab angle conversion
             else if (utoken == "R0TARGET")   {} // already default behavior
-            else if (utoken == "DPSB") {
-                // Load DPSB preset grid parameters (Fortran RGRIDS row C / DATNUM=12):
-                //   DWCUT=2e-6, SUMPTS=8, STPSPR=8, GAMSUM=2, GAMDIF=12,
-                //   BNDASY=20, ALMNMT=0, ALMXMT=2, SCTASY=-20, PHIMID=0.20, AMDMLT=0.90
-                //   NPSUM=40, NPDIF=40, NPPHI=20, NPHIAD=4, LSTEP=1, LMAXAD=12, LMINSB=10
+            // ── Fortran parameterset grid presets (RGRIDS/IGRIDS) ─────────────────
+            // Order: DWCUT SUMPTS STPSPR GAMSUM GAMDIF BNDASY ALMNMT ALMXMT SCTASY PHIMID AMDMLT
+            //        NPSUM NPDIF NPPHI
+            else if (utoken == "ALPHA1") {
+                dwba.SetSctAsy(-15.0);
+                dwba.GrdDWCUT=1e-3; dwba.GrdSUMPTS=6; dwba.GrdGAMSUM=3; dwba.GrdGAMDIF=5; dwba.GrdAMDMLT=2.0;
+                dwba.GrdNPSUM=40; dwba.GrdNPDIF=25; dwba.GrdNPPHI=12;
+            }
+            else if (utoken == "ALPHA2") {
                 dwba.SetSctAsy(-20.0);
+                dwba.GrdDWCUT=1e-4; dwba.GrdSUMPTS=7; dwba.GrdGAMSUM=3; dwba.GrdGAMDIF=5; dwba.GrdAMDMLT=2.0;
+                dwba.GrdNPSUM=50; dwba.GrdNPDIF=30; dwba.GrdNPPHI=14;
+            }
+            else if (utoken == "ALPHA3") {
+                dwba.SetSctAsy(-24.0);
+                dwba.GrdDWCUT=1e-5; dwba.GrdSUMPTS=8; dwba.GrdGAMSUM=3; dwba.GrdGAMDIF=5; dwba.GrdAMDMLT=2.0;
+                dwba.GrdNPSUM=70; dwba.GrdNPDIF=35; dwba.GrdNPPHI=16;
+            }
+            else if (utoken == "DPSA") {
+                dwba.SetSctAsy(-20.0);
+                dwba.GrdDWCUT=2e-5; dwba.GrdSUMPTS=6; dwba.GrdGAMSUM=2; dwba.GrdGAMDIF=12; dwba.GrdAMDMLT=0.90;
+                dwba.GrdNPSUM=20; dwba.GrdNPDIF=20; dwba.GrdNPPHI=10;
+            }
+            else if (utoken == "DPDA") {
+                dwba.SetSctAsy(-20.0);
+                dwba.GrdDWCUT=2e-6; dwba.GrdSUMPTS=6; dwba.GrdGAMSUM=2; dwba.GrdGAMDIF=20; dwba.GrdAMDMLT=0.90;
+                dwba.GrdNPSUM=20; dwba.GrdNPDIF=30; dwba.GrdNPPHI=15;
+            }
+            else if (utoken == "DPSB") {
+                dwba.SetSctAsy(-20.0);
+                dwba.GrdDWCUT=2e-6; dwba.GrdSUMPTS=8; dwba.GrdGAMSUM=2; dwba.GrdGAMDIF=12; dwba.GrdAMDMLT=0.90;
+                dwba.GrdNPSUM=40; dwba.GrdNPDIF=40; dwba.GrdNPPHI=20;
+            }
+            else if (utoken == "DPDB") {
+                dwba.SetSctAsy(-20.0);
+                dwba.GrdDWCUT=5e-7; dwba.GrdSUMPTS=8; dwba.GrdGAMSUM=2; dwba.GrdGAMDIF=20; dwba.GrdAMDMLT=0.90;
+                dwba.GrdNPSUM=40; dwba.GrdNPDIF=60; dwba.GrdNPPHI=30;
             }
             else if (utoken == "NONLOCALITY") {} // ignore for now
             else if (utoken == "TMATCH")     { dwba.SetUseTMATCH(true); }

@@ -735,32 +735,23 @@ void DWBA::InelDcFaithful2()
 
     }
 
-    // ─── Grid parameters (from DPSB parameterset, row 12 of RGRIDS/IGRIDS) ──
-    // From Ptolemy source: PARAMETERSET DPSB uses these defaults (IGRIDS row 12):
-    //   NPSUM=40  NPDIF=40  NPPHI=20  NPHIAD=4  LOOKST=250
-    //   MAPSUM=1  MAPDIF=1  MAPPHI=2  NVPOLY=3
-    //   GAMSUM=2.0  GAMDIF=12.0  GAMPHI=1e-6  PHIMID=0.20  AMDMLT=0.90
-    //   DWCUT=2e-6  SUMPTS=8.0
-    const int    NPSUM   = 40;
-    const int    NPDIF   = 40;
-    const int    NPPHI   = 20;  // DPSB preset: IGRIDS(3,12) = 20
+    // ─── Grid parameters from PARAMETERSET (Fortran RGRIDS/IGRIDS) ──────────
+    const int    NPSUM   = GrdNPSUM;
+    const int    NPDIF   = GrdNPDIF;
+    const int    NPPHI   = GrdNPPHI;
     const int    NPHIAD  = 4;
     const int    LOOKST  = 250;
-    const int    MAPSUM  = 2;   // rational-sinh for U (sum) — Fortran MAPSUM=2 from DPSB parameterset
-    const int    MAPDIF  = 1;   // linear GL for V (dif)
-    const int    MAPPHI  = 2;   // rational-sinh for phi
+    const int    MAPSUM  = 2;
+    const int    MAPDIF  = 1;
+    const int    MAPPHI  = 2;
     const int    NVPOLY  = 3;
-    // alpha3: GAMSUM=3.0, GAMDIF=5.0; DPSB: GAMSUM=2.0, GAMDIF=12.0
-    const double GAMSUM  = 3.0;  // alpha3
-    const double GAMDIF  = 5.0;  // alpha3
+    const double GAMSUM  = GrdGAMSUM;
+    const double GAMDIF  = GrdGAMDIF;
     double       GAMPHI  = 1.0e-6;
-    double       PHIMID  = 0.20;
-    // alpha3: MIDMULT=2.0 (row 9, column 11); DPSB: AMDMLT=0.90
-    const double AMDMLT  = 2.0;  // alpha3 MIDMULT
-    // DWCUT from parameterset: alpha3=1e-5, DPSB=2e-6, alpha2=1e-5
-    // Proper fix: read from ParameterSet; for now use alpha3 value since that's our test
-    const double DWCUT   = 1.0e-5;  // alpha3: RGRIDS(1,9)=1e-5
-    const double SUMPTS  = 8.0;
+    double       PHIMID  = GrdPHIMID;
+    const double AMDMLT  = GrdAMDMLT;
+    const double DWCUT   = GrdDWCUT;
+    const double SUMPTS  = GrdSUMPTS;
     const double DXV_scan = 2.0 / ((double)LOOKST * (double)LOOKST);
 
     // GRDSET asymptopia: Fortran sets SUMMAX = ABS(SCTASY) = user's asymptopia parameter

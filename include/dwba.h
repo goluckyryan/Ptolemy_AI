@@ -162,6 +162,19 @@ private:
 private:
   double SctAsySet     = -20.0; // scattering asymptopia from preset (DPSB default = -20 fm)
                                 // negative = allow L-dependent turning point extension
+public:
+  // GRDSET grid parameters (from PARAMETERSET; set by ParseParameterSet)
+  double GrdDWCUT   = 2.0e-6;  // DPSB default
+  double GrdSUMPTS  = 8.0;
+  double GrdSTEPSPR = 8.0;
+  double GrdGAMSUM  = 2.0;
+  double GrdGAMDIF  = 12.0;
+  double GrdAMDMLT  = 0.90;    // MIDMULT
+  double GrdPHIMID  = 0.20;
+  int    GrdNPSUM   = 40;
+  int    GrdNPDIF   = 40;
+  int    GrdNPPHI   = 20;
+private:
 
   // Integration Grid
   std::vector<double> ThetaGrid;
