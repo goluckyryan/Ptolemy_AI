@@ -344,7 +344,10 @@ static bool bsprod_faithful(
             }
         }
 
-        double FACTOR = (std::abs(VEFF) > 1e-30) ? (1.0 + DELV/VEFF) : 1.0;
+        // Fortran: FACTOR = 1 + DELV/VEFF, but only when |VEFF| is significant
+        // (Fortran skips this entire block when |FPFT| < SMLNUM; here we guard VEFF too)
+        // If VEFF is tiny (tail of potential), skip correction to avoid divide-by-tiny instability
+        double FACTOR = (std::abs(VEFF) > 1e-3) ? (1.0 + DELV/VEFF) : 1.0;
         if (ITYPE == 1 && RA > 0.19 && RA < 0.21 && RB > 2.8) {
         }
         FPFT *= FACTOR;
@@ -1215,6 +1218,7 @@ void DWBA::InelDcFaithful2()
             // IF (WVWMAX_u >= RVRLIM .OR. U < ULIM_scan) GOTO 365 (continue)
             // ELSE IF (RP > RLPMAX .AND. RT > RLTMAX) GOTO 380 (done)
             // Fortran: IF (WVWMAX >= RVRLIM .OR. U < ULIM) GOTO 365 (continue scanning)
+
             if (WVWMAX_u >= RVRLIM || U < ULIM_scan) {
                 U += USTEP;
                 if (U > ASYMPT + 5.0) {
