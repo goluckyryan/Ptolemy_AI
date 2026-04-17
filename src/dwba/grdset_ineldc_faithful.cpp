@@ -633,15 +633,21 @@ void DWBA::InelDcFaithful2()
         phi_T_tab[i] = TgtBS_ch.WaveFunction[i].real();
 
     // Build vphi_P table (V(r) * phi_P(r), projectile BS)
-    // For AV18: use VPhiProduct (AV18 V × AV18 phi), matching Fortran phiffer linkule
-    // For standard WS: use V_real × WaveFunction
+    // Fortran BSSET: VPHI = phi × V where V is stored with NEGATIVE = attractive.
+    // Fortran BOUND stores potential as NEGATIVE for attractive (Schrödinger: d²u/dr²=(V-E)u,
+    //   V = -WS for attractive binding → V < 0).
+    // Our EvaluatePotential returns +V_WS (positive convention).
+    // → Must negate V_real to match Fortran's JPOT sign.
+    // For AV18: VPhiProduct = phi × AV18_VS where AV18_VS < 0 in well → already correct.
     std::vector<double> vphi_P_tab(N_P, 0.0);
     if (!PrjBS_ch.VPhiProduct.empty()) {
+        // AV18 path: VPhiProduct = phi × AV18_VS (AV18_VS < 0 in well → vphi < 0) ✓
         for (int i = 0; i < N_P && i < (int)PrjBS_ch.VPhiProduct.size(); ++i)
             vphi_P_tab[i] = PrjBS_ch.VPhiProduct[i];
     } else {
+        // WS path: EvaluatePotential returns +V_WS > 0, but Fortran JPOT < 0 → negate
         for (int i = 0; i < N_P; ++i)
-            vphi_P_tab[i] = PrjBS_ch.WaveFunction[i].real() * PrjBS_ch.V_real[i];
+            vphi_P_tab[i] = -PrjBS_ch.WaveFunction[i].real() * PrjBS_ch.V_real[i];
     }
 
     // Debug: dump vphi_P comparison
@@ -1914,11 +1920,7 @@ void DWBA::InelDcFaithful2()
                 float phit_stored = 0.0f, phip_stored = 0.0f;
                 if (ok) {
                     pvpdx = (float)(DPHI * FIFO);
-                    if (IPLUNK == 11 && kphi < 3) {
-                        // Compute FP and FT directly for debug
-                        double FP_dbg = aitlag5(bs.vphiP.data(), (int)bs.vphiP.size(), bs.stpP, RP_b);
-                        double FT_dbg = aitlag5(bs.phiT.data(), bs.nT, bs.stpT, RT_b);
-                    }
+
                     double cos_phiT = (RT_b > 1e-12) ? (T1*RO + S1*RI*X) / RT_b : 1.0;
                     cos_phiT = std::max(-1.0, std::min(1.0, cos_phiT));
                     phit_stored = (float)(PHISGN * std::acos(cos_phiT));
@@ -2087,8 +2089,7 @@ void DWBA::InelDcFaithful2()
 
 
 
-                    if (LI == 3 && IV == 1 && IU == 4) {
-                                            }
+
 
                 }  // End IU loop (DO 549)
 
@@ -2327,8 +2328,6 @@ void DWBA::InelDcFaithful2()
 
                         std::complex<double> I_raw(it->second.first,
                                                    it->second.second);
-
-                        // Debug: dump raw I_accum (before phase/ATERM)
 
                         std::complex<double> Integral = I_raw * phase_factor;
                         double sf_norm = FACTOR_sf * std::fabs(ATERM_val)
