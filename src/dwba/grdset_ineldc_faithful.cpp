@@ -344,10 +344,8 @@ static bool bsprod_faithful(
             }
         }
 
-        // Fortran: FACTOR = 1 + DELV/VEFF, but only when |VEFF| is significant
-        // (Fortran skips this entire block when |FPFT| < SMLNUM; here we guard VEFF too)
-        // If VEFF is tiny (tail of potential), skip correction to avoid divide-by-tiny instability
-        double FACTOR = (std::abs(VEFF) > 1e-3) ? (1.0 + DELV/VEFF) : 1.0;
+        // Faithful Fortran: FACTOR = 1 + DELV/VEFF (no threshold — Fortran uses SMLNUM on FPFT above)
+        double FACTOR = (std::abs(VEFF) > 1e-30) ? (1.0 + DELV/VEFF) : 1.0;
         if (ITYPE == 1 && RA > 0.19 && RA < 0.21 && RB > 2.8) {
         }
         FPFT *= FACTOR;
@@ -708,77 +706,83 @@ void DWBA::InelDcFaithful2()
     // Dump phi_T for target
     for (int i = 0; i < N_T && i * h_T <= 20.0; i++)
 
-    // ── NUCONL=3 FACTOR parameters (Fortran BSSET stripping, IVRTEX=1) ─────
-    // This is for STRIPPING (PHISGN=+1), projectile vertex (IVRTEX=1):
-    //   ISC=2 (p+17O outgoing), IOUTSW=true (RSCAT=RB)
-    // Kinematic mass powers (cube roots of masses in AMU):
+    // ── NUCONL=3 FACTOR parameters (Fortran BSSET, IVRTEX=1) ─────────────────
+    // Faithful port of Fortran BSPROD lines 5490-5615:
+    //   PHISGN=+1 (stripping): ISC=2, IOUTSW=TRUE  (projectile vertex, outgoing channel)
+    //   PHISGN=-1 (pickup):    ISC=1, IOUTSW=FALSE (projectile vertex, incoming channel)
     {
-        // Particle masses for 16O(d,p)17O:
-        //   a = deuteron (A=2), b = neutron (A=1), A = 16O (A=16), B = 17O (A=17)
-        //   AMBIGA = A + b = 16O = 16  → AMBIGA3 = 16^(1/3)
-        //   AMBIGB = a - b = d - n = p = 1 → AMBIGB3 = 1^(1/3) = 1... wait
-        // From Fortran output: AMBGA3=2.5198(≈16^1/3), AMBGB3=2.5713(≈17^1/3)
-        // AMBGA = residual after transfer = A + stripped = 16 + n = 17O?
-        // Actually from Fortran: AMBGA3=16^(1/3)=2.5198, AMBGB3=17^(1/3)=2.5713.
-        // AMBIGA=16O (target+stripped = DOES NOT match 17). Let me just hardcode from Fortran printout.
-        // But for robustness, compute from actual particle masses:
-        //   AMBIGA = target nucleus A = 16 (from Incoming.Target.A)
-        //   AMBIGB = residual recoil A = 17 (from Outgoing.Recoil.A or Incoming.Target.A + stripped.A)
-        //   AMA = projectile A = 2 (Incoming.Projectile.A)
-        //   AMB = stripped A = 1 (Incoming.Projectile.A - Outgoing.Projectile.A)
-        // Wait — from Fortran AMBGA3=2.5198=16^(1/3), AMBGB3=2.5713=17^(1/3)
-        // From Fortran: AMBIGA = 16, AMBIGB = 17.
-        // In Ptolemy notation: AMBIGA = A (target), AMBIGB = B (residual) for stripping.
-        double A_a    = (double)Incoming.Projectile.A;  // e.g. deuteron=2, proton=1
-        double A_b    = (double)Ax;  // transferred particle A (abs, works for p,d too)
-        double A_A    = (double)Incoming.Target.A;   // 16O = 16
-        double A_B    = A_A + A_b;                   // 17O = 17
+        // Ptolemy mass notation (cube roots of A in AMU):
+        //   AMBIGA = A (target), AMBIGB = B (residual)
+        //   AMA = a (projectile), AMB = b (ejectile), AMX = x (transferred)
+        double A_a    = (double)Incoming.Projectile.A;   // proton=1, deuteron=2
+        double A_b    = (double)Outgoing.Projectile.A;   // proton=1, deuteron=2
+        double A_A    = (double)Incoming.Target.A;        // target (16O=16)
+        double A_B    = (double)Outgoing.Target.A;        // residual (17O=17, 15O=15)
+        double A_x    = (double)Ax;                       // transferred (neutron=1)
 
-        double AMA3   = std::cbrt(A_a);   // 2^(1/3)
-        double AMB3   = std::cbrt(A_b);   // 1^(1/3) = 1
-        double AMBGA3 = std::cbrt(A_A);   // 16^(1/3) = 2.5198
-        double AMBGB3 = std::cbrt(A_B);   // 17^(1/3) = 2.5713
+        double AMA3   = std::cbrt(A_a);
+        double AMB3   = std::cbrt(A_x);  // AMB = AMX in Fortran = transferred particle
+        double AMBGA3 = std::cbrt(A_A);  // AMBIGA = target
+        double AMBGB3 = std::cbrt(A_B);  // AMBIGB = residual
 
-        // NUCONL=3, stripping, IVRTEX=1 (projectile vertex):
         bs.nuconl_IVRTEX = 1;
-        bs.nuconl_IOUTSW = true;   // RSCAT = RB
+        const double HBARC_FINE = HBARC_V / 137.03604;  // ħc/α = e² MeV·fm
 
-        // Nuclear WS params (using p+17O outgoing potential, ISC=2):
-        double R0_out = Outgoing.Pot.R0;   // 1.1462 fm
-        double A_out  = Outgoing.Pot.A;    // 0.6753 fm
-        double V0_out = Outgoing.Pot.V;    // 49.5434 MeV (real depth)
-        double A_recoil = (double)Outgoing.Target.A;  // 17O = 17 (residual/recoil nucleus)
-        bs.nuconl_RNSCAT = R0_out * std::cbrt(A_recoil);  // RSCTS(2) = 2.9472 fm
-        bs.nuconl_RNCORE = bs.nuconl_RNSCAT * (AMBGA3 + AMB3) / (AMBGB3 + AMB3);  // 2.9048 fm
-        bs.nuconl_VOPT   = -V0_out;   // VOPT = -V0RS(2) = -49.543 MeV
-        bs.nuconl_AOPT   = A_out;     // AOPT = ASCTS(2) = 0.6753 fm
+        if (!isPickup) {
+            // STRIPPING IVRTEX=1: ISC=2 (outgoing), IOUTSW=TRUE
+            // Fortran lines 5513-5540
+            bs.nuconl_IOUTSW = true;   // RSCAT = RB (outgoing)
+            // Nuclear WS params: ISC=2 → outgoing channel (p+B)
+            double R0_sc  = Outgoing.Pot.R0;
+            double A_sc   = Outgoing.Pot.A;
+            double V0_sc  = Outgoing.Pot.V;
+            double A_sc_nuc = A_B;  // outgoing scattering = residual nucleus B
+            bs.nuconl_RNSCAT = R0_sc * std::cbrt(A_sc_nuc);
+            bs.nuconl_RNCORE = bs.nuconl_RNSCAT * (AMBGA3 + AMB3) / (AMBGB3 + AMB3);
+            bs.nuconl_VOPT   = -V0_sc;
+            bs.nuconl_AOPT   = A_sc;
+            // Coulomb: ISC=2 → scatter = outgoing projectile (b) + residual (B)
+            double RC0_sc = Outgoing.Pot.RC0;
+            double RCTSCT = RC0_sc * std::cbrt(A_sc_nuc);
+            double RCCOT  = RCTSCT * (AMBGA3 + AMB3) / (AMBGB3 + AMB3);
+            int IZC1 = Incoming.Target.Z;        // Z of core (target side)
+            int IZC2 = Outgoing.Projectile.Z;   // Z of ejectile
+            bs.nuconl_VC0_core = IZC1 * IZC2 * HBARC_FINE;
+            bs.nuconl_R_core   = RCCOT;
+            bs.nuconl_VC0_scat = IZC1 * IZC2 * HBARC_FINE;
+            bs.nuconl_R_scat   = RCTSCT;
+        } else {
+            // PICKUP IVRTEX=1: ISC=1 (incoming), IOUTSW=FALSE
+            // Fortran lines 5559-5590
+            bs.nuconl_IOUTSW = false;  // RSCAT = RA (incoming)
+            // Nuclear WS params: ISC=1 → incoming channel (a+A)
+            double R0_sc  = Incoming.Pot.R0;
+            double A_sc   = Incoming.Pot.A;
+            double V0_sc  = Incoming.Pot.V;
+            double A_sc_nuc = A_A;  // incoming scattering = target nucleus A
+            bs.nuconl_RNSCAT = R0_sc * std::cbrt(A_sc_nuc);
+            bs.nuconl_RNCORE = bs.nuconl_RNSCAT * (AMBGB3 + AMA3) / (AMBGA3 + AMA3);
+            bs.nuconl_VOPT   = -V0_sc;
+            bs.nuconl_AOPT   = A_sc;
+            // Coulomb: ISC=1 → scatter = incoming projectile (a) + target (A)
+            double RC0_sc = Incoming.Pot.RC0;
+            double RCTSCT = RC0_sc * std::cbrt(A_sc_nuc);
+            double RCCOT  = RCTSCT * (AMBGB3 + AMA3) / (AMBGA3 + AMA3);
+            int IZC1 = Incoming.Target.Z;        // Z of target
+            int IZC2 = Incoming.Projectile.Z;   // Z of incoming projectile
+            bs.nuconl_VC0_core = IZC1 * IZC2 * HBARC_FINE;
+            bs.nuconl_R_core   = RCCOT;
+            bs.nuconl_VC0_scat = IZC1 * IZC2 * HBARC_FINE;
+            bs.nuconl_R_scat   = RCTSCT;
+        }
 
-        // Coulomb params:
-        // For core-core (K=3): IZC1=Z_target=8, IZC2=Z_ejectile=Z_proton=1
-        //   RCCOP = 0 (proton is point), RCCOT = RCSCTT(2)*(AMBGA3+AMB3)/(AMBGB3+AMB3)
-        // For scatter (K=ISC=2): IZC same charges
-        //   RCPSCT = 0, RCTSCT = RCSCTT(2) = RC0 * A_recoil^(1/3)
-        double RC0       = Outgoing.Pot.RC0;  // Coulomb radius param = 1.3030 fm
-        double RCTSCT    = RC0 * std::cbrt(A_recoil);  // 1.3030 * 17^(1/3) = 3.350 fm
-        double RCCOT     = RCTSCT * (AMBGA3 + AMB3) / (AMBGB3 + AMB3);  // 3.302 fm
-
-        int IZC1 = Incoming.Target.Z;   // 8 (16O core charge)
-        int IZC2 = Outgoing.Projectile.Z;  // 1 (proton charge)
-        const double HBARC_FINE = HBARC_V / 137.03604;  // ħc/α = e² = 1.4400 MeV·fm
-        bs.nuconl_VC0_core = IZC1 * IZC2 * HBARC_FINE;  // 8*1*1.44 = 11.52 MeV·fm
-        bs.nuconl_R_core   = RCCOT;    // 3.302 fm (sphere radius for RCORE Coulomb)
-        bs.nuconl_VC0_scat = IZC1 * IZC2 * HBARC_FINE;  // same charges → same VC0
-        bs.nuconl_R_scat   = RCTSCT;   // 3.350 fm (sphere radius for RSCAT Coulomb)
-
-        // JPOT table: bound state potential for projectile vertex = V_np(r)
-        // Fortran: JPOT = NPOTS(IVRTEX=1) = potential from projectile BS calculation
-        // In C++: this is PrjBS_ch.V_real[] (the V_np(r) values at each grid point)
+        // JPOT table: bound state potential at projectile vertex (IVRTEX=1)
+        // Fortran: JPOT = NPOTS(1) = potential stored during projectile BS computation
         bs.jpot.resize(PrjBS_ch.NSteps, 0.0);
         bs.jpot_h = PrjBS_ch.StepSize;
         bs.jpot_n = PrjBS_ch.NSteps;
         for (int i = 0; i < PrjBS_ch.NSteps; ++i)
-            bs.jpot[i] = PrjBS_ch.V_real[i];  // already in MeV
-
+            bs.jpot[i] = PrjBS_ch.V_real[i];  // V_np(r) in MeV
     }
 
     // ─── Grid parameters from PARAMETERSET (Fortran RGRIDS/IGRIDS) ──────────
