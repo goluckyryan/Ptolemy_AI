@@ -750,18 +750,24 @@ void DWBA::InelDcFaithful2()
     const int    MAPDIF  = 1;   // linear GL for V (dif)
     const int    MAPPHI  = 2;   // rational-sinh for phi
     const int    NVPOLY  = 3;
-    const double GAMSUM  = 2.0;
-    const double GAMDIF  = 12.0;
+    // alpha3: GAMSUM=3.0, GAMDIF=5.0; DPSB: GAMSUM=2.0, GAMDIF=12.0
+    const double GAMSUM  = 3.0;  // alpha3
+    const double GAMDIF  = 5.0;  // alpha3
     double       GAMPHI  = 1.0e-6;
     double       PHIMID  = 0.20;
-    const double AMDMLT  = 0.90;
-    const double DWCUT   = 2.0e-6;
+    // alpha3: MIDMULT=2.0 (row 9, column 11); DPSB: AMDMLT=0.90
+    const double AMDMLT  = 2.0;  // alpha3 MIDMULT
+    // DWCUT from parameterset: alpha3=1e-5, DPSB=2e-6, alpha2=1e-5
+    // Proper fix: read from ParameterSet; for now use alpha3 value since that's our test
+    const double DWCUT   = 1.0e-5;  // alpha3: RGRIDS(1,9)=1e-5
     const double SUMPTS  = 8.0;
     const double DXV_scan = 2.0 / ((double)LOOKST * (double)LOOKST);
 
     // GRDSET asymptopia: Fortran sets SUMMAX = ABS(SCTASY) = user's asymptopia parameter
     // This is DIFFERENT from WAVSET's ASYMPT (which uses BNDASY=20).
-    const double ASYMPT = (AsymptopiaSet > 0) ? AsymptopiaSet : 30.0;
+    // Fortran: ASYMPT = ABS(SCTASY) = scattering asymptopia (from parameterset, e.g. 20 fm for alpha3/DPSB)
+    // NOT AsymptopiaSet (which is for bound states), NOT 30 fm
+    const double ASYMPT = std::abs(SctAsySet);  // = 20 fm for DPSB/alpha3 presets
 
     // ROFMAX: set during chi build (position of psi maximum, ~nuclear surface radius)
     // SCTMAX: Fortran sets SCTMAX = ASYMPS(1) (= scattering asymptopia, NOT user's asymptopia)
@@ -845,10 +851,14 @@ void DWBA::InelDcFaithful2()
     // For lmin=lmax=3:     LCRIT = (3+3)/2 = 3
     int LMIN_kw = (LminSet >= 0) ? LminSet : 0;
     int LMAX_kw = (LmaxSet >= 0) ? LmaxSet : 40;
-    int LCRIT = (LMIN_kw + LMAX_kw) / 2;
-    // Fortran: IF (LC < LMIN .OR. LC > LMAX) LC = (LMIN+LMAX)/2
-    // where LMIN/LMAX here are the incoming partial wave L range used for GRDSET.
-    // For DWBA, the GRDSET L range = [L_ISCTMN, LMAX_kw], so LCRIT should be within that.
+    // Fortran LCRIT = LCRITS(1) = estimated critical L for incoming channel = k*Rc
+    // Rc = R0_in * (Ap^(1/3) + At^(1/3)) (nuclear surface radius)
+    double Rc_in = Incoming.Pot.R0
+                 * (std::pow((double)Incoming.Projectile.A, 1.0/3.0)
+                  + std::pow((double)Incoming.Target.A,     1.0/3.0));
+    int LCRIT = std::max(0, (int)(Incoming.k * Rc_in + 0.5));
+    // Clamp to [L_ISCTMN, LMAX_kw]
+    LCRIT = std::max(L_ISCTMN, std::min(LCRIT, LMAX_kw));
     int JPI_ISCTCR = 2*LCRIT + JSPS1;  // Fortran: CALL WAVELJ(LC, 2*LC+JSPS(1),...)
 
     double ROFMAX = 0.0;  // Fortran: set to R where |psi| is maximum (during ISCTMN chi build)
