@@ -238,10 +238,12 @@ void DWBA::Calculate() {
   // INELOCA*: STPSPR=15 (source.f:28049 RGRIDS(3,N)=15)  
   // No PARAMETERSET, inelastic: STPSPR=10 (Fortran default for STPSPR, source.f:14132)
   // Transfer/elastic (dpsb): STPSPR=8 (from GRIDEL/RGRIDS)
+  // STEPSPER from PARAMETERSET (Fortran RGRIDS(3,N) = STPSPR)
+  // alpha3=25, DPSB=8, INELOCA=15, default=8
   int STEPSPER;
   if (ParameterSet.find("INELOCA") != std::string::npos) STEPSPER = 15;
   else if (BELx > 0.0) STEPSPER = 10;  // inelastic, no PARAMETERSET
-  else STEPSPER = 8;                     // transfer/elastic
+  else STEPSPER = (int)GrdSTEPSPR;     // from PARAMETERSET (alpha3=25, DPSB=8)
   Incoming.StepSize = std::min(2.0 * M_PI / Incoming.k, 1.0) / STEPSPER;
   Outgoing.StepSize = std::min(2.0 * M_PI / Outgoing.k, 1.0) / STEPSPER;
 

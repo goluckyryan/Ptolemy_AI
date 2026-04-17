@@ -847,7 +847,8 @@ void DWBA::InelDcFaithful2()
     double Rc_in = Incoming.Pot.R0
                  * (std::pow((double)Incoming.Projectile.A, 1.0/3.0)
                   + std::pow((double)Incoming.Target.A,     1.0/3.0));
-    int LCRIT = std::max(0, (int)(Incoming.k * Rc_in + 0.5));
+    // Fortran LCRITL: LCRITS computed from S-matrix deflection ~= k*Rc (floor, not round)
+    int LCRIT = std::max(0, (int)(Incoming.k * Rc_in));  // floor like Fortran integer conversion
     // Clamp to [L_ISCTMN, LMAX_kw]
     LCRIT = std::max(L_ISCTMN, std::min(LCRIT, LMAX_kw));
     int JPI_ISCTCR = 2*LCRIT + JSPS1;  // Fortran: CALL WAVELJ(LC, 2*LC+JSPS(1),...)
