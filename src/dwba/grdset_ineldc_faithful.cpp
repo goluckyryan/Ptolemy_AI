@@ -501,8 +501,10 @@ void DWBA::InelDcFaithful2()
     int A_proj_block = isPickup ? Incoming.Projectile.A : Outgoing.Projectile.A;
     int A_tgt_block  = isPickup ? Outgoing.Target.A     // pickup: x in A=B+x, B=residual (15O)
                                 : Incoming.Target.A;      // stripping: x in A=target (16O)
-    double bratms1 = (double)Ax / (double)A_proj_block;   // BRATMS(1) = Ax/Ab or Ax/Aa
-    double bratms2 = (double)Ax / (double)A_tgt_block;    // BRATMS(2) = Ax/AA or Ax/AB
+    // BRATMS: use integer A (Fortran RATMAS ≈ AMX/AMb, close enough; real-mass fix tested 2026-04-18
+    // and found to NOT fix the 4% mid-L S-matrix deficit — error is elsewhere in INRDIN).
+    double bratms1 = (double)Ax / (double)A_proj_block;
+    double bratms2 = (double)Ax / (double)A_tgt_block;
 
     // ─── Coordinate mapping coefficients (Fortran GRDSET lines 15875-15900) ─
     // STRIPPING (ISTRIP=+1):
@@ -610,6 +612,9 @@ void DWBA::InelDcFaithful2()
         CalculateBoundState(PrjBS_ch, ProjectileBS.n, ProjectileBS.l,
                             ProjectileBS.j, ProjectileBS.BindingEnergy);
     }
+    // Note: For AV18 pickup, PrjBS_ch.Pot.V = input V (e.g. 72 MeV), not converged WS V.
+    // Fortran uses converged V for BSSET IVPHI, but testing showed this doesn't fix SUMMID.
+    // Root cause of SUMMID difference is chi asymptotic extension length (separate issue).
 
     // Dump both bound states for validation
     {
@@ -1023,6 +1028,13 @@ void DWBA::InelDcFaithful2()
             Incoming.NSteps = static_cast<int>(Incoming.MaxR / Incoming.StepSize + 0.5);
         }
         WavElj(Incoming, L, JPI);
+#ifdef DUMP_ELASTIC_SMAT
+        if (L <= 15 && (size_t)L < Incoming.SMatrix.size()) {
+            auto S = Incoming.SMatrix[L];
+            fprintf(stderr, "CPP_ELAS_IN  L=%2d |S|=%.6f phase=%.4f\n",
+                    L, std::abs(S), std::arg(S));
+        }
+#endif
         if (no_SO) {
             if (!saved_Vso_re.empty()) {
                 Incoming.V_so_real = saved_Vso_re;
@@ -1057,6 +1069,11 @@ void DWBA::InelDcFaithful2()
     // Save ISCTMN WaveFunction (Re/Im) before ISCTCR call overwrites Incoming.WaveFunction
     std::vector<std::complex<double>> wf_ISCTMN_saved = Incoming.WaveFunction;
     std::vector<double> chi_ISCTCR = build_rpsi_table(LCRIT,    JPI_ISCTCR, true, true);  // also updates ROFMAX, no SO
+    {
+        double hcs = Incoming.StepSize;
+        int i5 = (int)(5.0/hcs), i10 = (int)(10.0/hcs);
+
+    }
     double h_chi_scan = Incoming.StepSize;
     int N_chi_scan = (int)chi_ISCTMN.size();
     // ROFMAX updated by ISCTCR
@@ -1113,10 +1130,21 @@ void DWBA::InelDcFaithful2()
                                NAIT_use, RP_, RT_, bs);
     };
     // Grid-sizing lambdas: use bs_scan (WS-based vphi for AV18 pickup, otherwise == bs)
+    // Used for WVWMAX, SUMMIN, SUMMAX/SUMMID scans (Fortran: JBDP=IVPHI=WS formfactor)
     auto bsp_ISCTMN_scan = [&](int ITYPE, double RA, double RB, double X,
                                double& FPFT, double& RP_, double& RT_,
                                int NAIT_use = 1) -> bool {
         const double* sp = (ITYPE >= 3) ? chi_ISCTMN.data() : nullptr;
+        int nsct = (ITYPE >= 3) ? N_chi_scan : 0;
+        double sinv = (ITYPE >= 3) ? SCTSP_inv : 0.0;
+        double smx  = (ITYPE >= 3) ? SCTMAX : 0.0;
+        return bsprod_faithful(FPFT, ITYPE, RA, RB, X, sp, nsct, sinv, smx,
+                               NAIT_use, RP_, RT_, bs_scan);
+    };
+    auto bsp_ISCTCR_scan = [&](int ITYPE, double RA, double RB, double X,
+                               double& FPFT, double& RP_, double& RT_,
+                               int NAIT_use = 1) -> bool {
+        const double* sp = (ITYPE >= 3) ? chi_ISCTCR.data() : nullptr;
         int nsct = (ITYPE >= 3) ? N_chi_scan : 0;
         double sinv = (ITYPE >= 3) ? SCTSP_inv : 0.0;
         double smx  = (ITYPE >= 3) ? SCTMAX : 0.0;
@@ -1339,6 +1367,9 @@ void DWBA::InelDcFaithful2()
         }
 
         SUMMAX = U;
+#ifdef FORCE_SUMMAX
+        SUMMAX = FORCE_SUMMAX;
+#endif
 
         // SUMMID = first moment × AMDMLT (Fortran line 16070)
         if (SUM0 > 1e-30) {
@@ -2099,6 +2130,13 @@ void DWBA::InelDcFaithful2()
                     auto key = std::make_pair(Lo, JPO);
                     if (!chi_b_map.count(key)) {
                         WavElj(Outgoing, Lo, JPO);
+#ifdef DUMP_ELASTIC_SMAT
+                        if (Lo <= 15 && (size_t)Lo < Outgoing.SMatrix.size()) {
+                            auto S = Outgoing.SMatrix[Lo];
+                            fprintf(stderr, "CPP_ELAS_OUT L=%2d |S|=%.6f phase=%.4f\n",
+                                    Lo, std::abs(S), std::arg(S));
+                        }
+#endif
                         chi_b_map[key] = Outgoing.WaveFunction;
                     }
                 }
@@ -2417,7 +2455,12 @@ void DWBA::InelDcFaithful2()
 
                         std::complex<double> I_raw(it->second.first,
                                                    it->second.second);
-
+#ifdef DUMP_ELASTIC_SMAT
+                        // Dump I_raw for surgical comparison
+                        fprintf(stderr, "CPP_IACC Li=%2d Lo=%2d Lx=%d JPI=%d JPO=%d  Re=%.6e Im=%.6e |I|=%.6e\n",
+                                LI, Lo, Lx, JPI_v, JPO,
+                                I_raw.real(), I_raw.imag(), std::abs(I_raw));
+#endif
                         std::complex<double> Integral = I_raw * phase_factor;
                         double sf_norm = FACTOR_sf * std::fabs(ATERM_val)
                                        / std::sqrt(2.0*LI + 1.0);
@@ -2431,6 +2474,24 @@ void DWBA::InelDcFaithful2()
 
         }  // End LI loop (DO 959)
     }  // End LIPRTY loop (DO 989)
+
+#ifdef DUMP_TRANSFER_SMAT
+    // Dump transfer S-matrix for comparison with Fortran PRINT=4
+    // Accumulate per (Li, Lo, Lx): sum over (JPI,JPO)
+    {
+        std::map<std::tuple<int,int,int>, std::complex<double>> smat_acc;
+        for (const auto& e : TransferSMatrix) {
+            auto key = std::make_tuple(e.Li, e.Lo, e.Lx);
+            smat_acc[key] += e.S;
+        }
+        fprintf(stderr, "CPP_TRANSFER_SMAT (Li Lo Lx Re Im |S|):\n");
+        for (auto& [k, s] : smat_acc) {
+            auto [Li, Lo, Lx] = k;
+            fprintf(stderr, "  %2d %2d %d  %10.4e %10.4e  %10.4e\n",
+                    Li, Lo, Lx, s.real(), s.imag(), std::abs(s));
+        }
+    }
+#endif
 
 }
 // ============================================================

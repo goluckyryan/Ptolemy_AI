@@ -452,7 +452,7 @@ void DWBA::WavElj(Channel &ch, int L, int Jp, bool skipSO, bool scanMode) {
   //   chi(r) = alpha * [0.5*(1+S)*F_L(kr) + i*0.5*(1-S)*G_L(kr)]
   // which is exact beyond the nuclear potential range (~10 fm).
   {
-    // Extend to max(SUMMAX, MaxR)/h + 3.5 where SUMMAX = AsymptopiaSet
+    // Extend to max(AsymptopiaSet, ch.MaxR)/h + 3.5
     double SUMMAX_ext = (AsymptopiaSet > 0) ? AsymptopiaSet : 30.0;
     double RIMAX_est = std::max(SUMMAX_ext, ch.MaxR);
     const int NSTP2S = static_cast<int>(RIMAX_est / h + 3.5);
