@@ -561,10 +561,11 @@ void DWBA::InelDcFaithful2()
     TgtBS_ch.Projectile.Mass = mx;
     TgtBS_ch.mu   = mu_tgt;
     {
-        const int STEPSPER = 8;
+        // Fortran BOUND uses STPSPR from parameterset (alpha3=25, dpsb=8)
+        int STEPSPER_tgt = (GrdSTEPSPR > 0) ? (int)GrdSTEPSPR : 8;
         double kappa_T = std::sqrt(2.0 * mu_tgt * AMU_MEV * std::abs(TargetBS.BindingEnergy)) / HBARC_V;
         double A_tbs   = (TargetBS.Pot.A > 0) ? TargetBS.Pot.A : 0.65;
-        TgtBS_ch.StepSize = std::min(1.0 / kappa_T, A_tbs) / STEPSPER;
+        TgtBS_ch.StepSize = std::min(1.0 / kappa_T, A_tbs) / STEPSPER_tgt;
     }
     // Fortran: BNDMAX = ASYMPT (user's asymptopia). Bound state tables must extend
     // to the same range, because BSPROD clips at BNDMXP/BNDMXT = MaxR.
