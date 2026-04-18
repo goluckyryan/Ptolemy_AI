@@ -2209,14 +2209,15 @@ void DWBA::InelDcFaithful2()
 
                     // Fortran DO 509: store SMHVL
                     // ALLOC(LSMHVL + IU + NPSUM*(IH-1)) = LHINT[IH] * RIOEX[IPLUNK_H]
-                    for (int IH = 1; IH <= IHMAX; ++IH)
+                    for (int IH = 1; IH <= IHMAX; ++IH) {
                         SMHVL[IH-1][IU] = LHINT[IH] * RIOEX;
-
-
-
-
-
-
+#ifdef DUMP_SMHVL
+                        // Dump first 3 grid points for Li=0 comparison with Fortran FTN_SMHVL
+                        if (LI == 0 && IU <= 3 && IH == 1)
+                            fprintf(stderr, "CPP_SMHVL Li=%d IV=%d IH=%d IU=%d smhvl=%.6e rioex=%.6e RI=%.4f RO=%.4f\n",
+                                    LI, IV, IH, IU, SMHVL[IH-1][IU], RIOEX, RI, RO);
+#endif
+                    }
 
                 }  // End IU loop (DO 549)
 
@@ -2274,6 +2275,24 @@ void DWBA::InelDcFaithful2()
                     for (auto& [JPI_v, chi_a] : chi_a_map) {
                         // Interpolate chi_a at RI_c using 5-pt Lagrange
                         std::complex<double> chi_a_val = {0.0, 0.0};
+#ifdef DUMP_SMHVL
+                        // Dump chi_in at RI≈5 fm for Li=0, IV=1
+                        if (LI==0 && IV==1 && std::abs(RI_c-5.0)<0.05 && JPI_v==1) {
+                            // Interpolate chi at exactly 5 fm
+                            double r5=5.0, ridx5=r5/h_a;
+                            int i5=(int)(ridx5+0.5);
+                            if(i5>=2&&i5<(int)chi_a.size()-3){
+                                double P5=ridx5-i5,PS5=P5*P5;
+                                double X1=P5*(PS5-1)/24,X2=X1+X1,X3=X1*P5;
+                                double X4=X2+X2-0.5*P5,X5=X4*P5;
+                                double C1=X3-X2,C5=X3+X2,C3=X5-X3,C2=X5-X4,C4=X5+X4;
+                                C3=C3+C3+1;
+                                auto c5=C1*chi_a[i5-2]-C2*chi_a[i5-1]+C3*chi_a[i5]-C4*chi_a[i5+1]+C5*chi_a[i5+2];
+                                fprintf(stderr,"CPP_CHI_IN Li=%d L=%d r=5fm Re=%.6e Im=%.6e |chi|=%.6e\n",
+                                        LI, JPI_v/2, c5.real(),c5.imag(),std::abs(c5));
+                            }
+                        }
+#endif
                         {
                             double ridx = RI_c / h_a;
                             int iai = (int)(ridx + 0.5);
