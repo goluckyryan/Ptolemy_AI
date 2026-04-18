@@ -669,8 +669,32 @@ void DWBA::InelDcFaithful2()
             vphi_P_tab[i] = -PrjBS_ch.WaveFunction[i].real() * PrjBS_ch.V_real[i];
     }
 
-    // Debug: dump vphi_P comparison
-    for (int i = 0; i < std::min(N_P, 20); ++i) {
+    // Build vphi_P_WS_tab: phi_P × V_WS — used ONLY for grid-sizing scans (WVWMAX, SUMMAX).
+    // Ptolemy BSSET two-phase design: IVPHI is initially phi×V_WS (for grid sizing),
+    // then overwritten with phi×V_AV18 at stmnt 830 (for actual integration).
+    // For WS bound states, vphi_P_tab IS already phi×V_WS, so no separate table needed.
+    // For AV18, we must build the WS-based table explicitly.
+    // Note: this is a Ptolemy shortcut — grid sized with WS, integrated with AV18.
+    // See ptolemy_fortran_to_cpp_guide.md §7.2 for design rationale and critique.
+    std::vector<double> vphi_P_WS_tab(N_P, 0.0);
+    bool useAV18 = !PrjBS_ch.VPhiProduct.empty();
+    if (useAV18 && isPickup) {
+        // AV18 pickup: build temporary WS-based formfactor for grid sizing
+        for (int i = 0; i < N_P; ++i) {
+            double r = (i + 0.5) * h_P;
+            double phi = PrjBS_ch.WaveFunction[i].real();
+            double vws = 0.0, vim = 0.0, vso = 0.0, vsoi = 0.0, vcoul = 0.0;
+            if (r > 0.001)
+                EvaluatePotential(r, PrjBS_ch.Pot, vws, vim, vso, vsoi, vcoul,
+                                  PrjBS_ch.Projectile.Z, PrjBS_ch.Target.Z,
+                                  PrjBS_ch.Target.A, PrjBS_ch.Projectile.A);
+            // EvaluatePotential returns +V_WS; Fortran NPOTS(1) stores V as negative
+            // (attractive well < 0). Negate to match Fortran sign convention.
+            vphi_P_WS_tab[i] = -phi * vws;
+        }
+    } else {
+        // WS stripping or WS pickup: grid-sizing vphi = actual vphi
+        vphi_P_WS_tab = vphi_P_tab;
     }
 
     // Build pure phi_P table (no V) — used by BSPROD ITYPE=3,4 (JBDP = pure BS wavefunction)
@@ -681,13 +705,17 @@ void DWBA::InelDcFaithful2()
     // Find max values and peak locations (Ptolemy BSSET lines 4717-4735)
     // Fortran: RVAL = (I-0.5)*BNDSTP (half-step centred) for peak location
     // We use (i + 0.5)*h to match Fortran's RVAL convention
+    // RLPMAX/VPMAX: peak location of the grid-sizing formfactor (vphi_P_WS_tab).
+    // For AV18 pickup: uses WS-based vphi (see vphi_P_WS_tab above).
+    // For WS path or stripping: vphi_P_WS_tab == vphi_P_tab.
     double VPMAX = 0.0, RLPMAX = 0.0;
     for (int i = 0; i < N_P; ++i) {
-        if (std::abs(vphi_P_tab[i]) > VPMAX) {
-            VPMAX = std::abs(vphi_P_tab[i]);
-            RLPMAX = (i + 0.5) * h_P;  // Fortran: RVAL = (I-0.5)*h (1-based I → (i+0.5)*h)
+        if (std::abs(vphi_P_WS_tab[i]) > VPMAX) {
+            VPMAX = std::abs(vphi_P_WS_tab[i]);
+            RLPMAX = (i + 0.5) * h_P;
         }
     }
+
     // Peak of pure phi_P (for flat-top in ITYPE=3,4)
     double VPPMAX = 0.0, RLPPMAX = 0.0;
     for (int i = 0; i < N_P; ++i) {
@@ -706,6 +734,12 @@ void DWBA::InelDcFaithful2()
     double BNDMXP = PrjBS_ch.MaxR;
     double BNDMXT = TgtBS_ch.MaxR;
 
+
+    // bs_scan: used for grid-sizing BSPROD calls (WVWMAX, SUMMIN, SUMMAX).
+    // For AV18 pickup: uses WS-based vphi (Ptolemy BSSET two-phase design).
+    // For all other cases: identical to bs.
+    BSProdTables bs_scan;
+    bs_scan.vphiP  = vphi_P_WS_tab;  // WS-based formfactor for grid sizing
 
     BSProdTables bs;
     bs.vphiP  = vphi_P_tab;
@@ -726,6 +760,26 @@ void DWBA::InelDcFaithful2()
     bs.alphap = ALPHAP;
     bs.alphat = ALPHAT;
     bs.s1 = S1; bs.t1 = T1; bs.s2 = S2; bs.t2 = T2;
+
+    // Copy all shared fields to bs_scan; only vphiP differs
+    bs_scan.phiP    = bs.phiP;
+    bs_scan.stpP    = bs.stpP;
+    bs_scan.nP      = bs.nP;
+    bs_scan.bndmxP  = bs.bndmxP;
+    bs_scan.phiT    = bs.phiT;
+    bs_scan.stpT    = bs.stpT;
+    bs_scan.nT      = bs.nT;
+    bs_scan.bndmxT  = bs.bndmxT;
+    bs_scan.vpmax   = VPMAX;   // WS-based peak
+    bs_scan.vppmax  = bs.vppmax;
+    bs_scan.vtmax   = bs.vtmax;
+    bs_scan.rlpmax  = RLPMAX;  // WS-based peak location
+    bs_scan.rlppmax = bs.rlppmax;
+    bs_scan.rltmax  = bs.rltmax;
+    bs_scan.alphap  = bs.alphap;
+    bs_scan.alphat  = bs.alphat;
+    bs_scan.s1 = S1; bs_scan.t1 = T1; bs_scan.s2 = S2; bs_scan.t2 = T2;
+    // nuconl params not needed for grid-sizing (ITYPE=3,4 only use vphiP/phiT/chi)
 
     // Dump vertex tables for validation
     // Dump vphi_P (V×phi_P) for projectile
@@ -1058,9 +1112,23 @@ void DWBA::InelDcFaithful2()
         return bsprod_faithful(FPFT, ITYPE, RA, RB, X, sp, nsct, sinv, smx,
                                NAIT_use, RP_, RT_, bs);
     };
+    // Grid-sizing lambdas: use bs_scan (WS-based vphi for AV18 pickup, otherwise == bs)
+    auto bsp_ISCTMN_scan = [&](int ITYPE, double RA, double RB, double X,
+                               double& FPFT, double& RP_, double& RT_,
+                               int NAIT_use = 1) -> bool {
+        const double* sp = (ITYPE >= 3) ? chi_ISCTMN.data() : nullptr;
+        int nsct = (ITYPE >= 3) ? N_chi_scan : 0;
+        double sinv = (ITYPE >= 3) ? SCTSP_inv : 0.0;
+        double smx  = (ITYPE >= 3) ? SCTMAX : 0.0;
+        return bsprod_faithful(FPFT, ITYPE, RA, RB, X, sp, nsct, sinv, smx,
+                               NAIT_use, RP_, RT_, bs_scan);
+    };
 
     // ─── GRDSET Step 1: Find WVWMAX (Fortran lines 15920-15955) ─────────────
     // Scan U from ROFMAX/2 to 1.5*ROFMAX, check 5 V's × 2 X's per U
+    // Uses ISCTMN chi (Fortran: same loop but gets WVWMAX=8.29 vs our 64).
+    // 2026-04-18: Tested ISCTCR — gave WVWMAX=98, worsened 206Hg(d,p). Reverted to ISCTMN.
+    // Root cause of WVWMAX discrepancy still unknown.
     double WVWMAX = 0.0;
     double UMAX_wv = 0.0;
     {
@@ -1085,7 +1153,7 @@ void DWBA::InelDcFaithful2()
                     double RB = U - 0.5*VVAL;
                     if (RA <= 0.0 || RB <= 0.0) continue;
                     double FIFO, RP_, RT_;
-                    bool ok = bsp_ISCTMN(3, RA, RB, XS[ix], FIFO, RP_, RT_);
+                    bool ok = bsp_ISCTMN_scan(3, RA, RB, XS[ix], FIFO, RP_, RT_);
                     if (!ok) continue;
                     if (std::abs(FIFO) > WVWMAX) {
                         WVWMAX = std::abs(FIFO);
@@ -1107,7 +1175,7 @@ void DWBA::InelDcFaithful2()
             for (int iv2=0;iv2<5;++iv2) {
                 double RA2=U_peak+0.5*VS_dbg[iv2], RB2=U_peak-0.5*VS_dbg[iv2];
                 if (RA2<=0||RB2<=0) continue;
-                double ff,rp2,rt2; bsp_ISCTMN(3,RA2,RB2,1.0,ff,rp2,rt2);
+                double ff,rp2,rt2; bsp_ISCTMN_scan(3,RA2,RB2,1.0,ff,rp2,rt2);
                 if (std::abs(ff)<WVWMAX*0.5) continue;
                 // Print components: RP, RT, chi(RA), chi(RB), FP, FT, FIFO
                 double ra_idx=RA2/h_chi_scan, rb_idx=RB2/h_chi_scan;
@@ -1140,7 +1208,7 @@ void DWBA::InelDcFaithful2()
             for (int ix = 0; ix < 2; ++ix) {
                 double FIFO, RP_, RT_;
                 // ITYPE=4: phi' × phi' (no chi, clipped)
-                bool ok = bsp_ISCTMN(4, U, U, XS[ix], FIFO, RP_, RT_);
+                bool ok = bsp_ISCTMN_scan(4, U, U, XS[ix], FIFO, RP_, RT_);
                 if (ok && std::abs(FIFO) >= RVRLIM) {
                     SUMMIN = std::max(0.0, U - USTEP);
                     found = true;
