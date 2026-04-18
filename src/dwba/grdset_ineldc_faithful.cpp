@@ -491,10 +491,18 @@ void DWBA::InelDcFaithful2()
     //   Stripping: A_proj_block = Outgoing.Projectile.A (ejectile b)
     //   Pickup:    A_proj_block = Incoming.Projectile.A (incoming a)
     bool isPickup = (Incoming.Projectile.A < Outgoing.Projectile.A);
+    // Fortran RATMAS for each ICHANB:
+    //   ICHANB=1 (PROJECTILE): RATMAS = AMX/AMb_composite
+    //     Stripping: composite b = ejectile proton; BRATMS1 = Ax/Ab
+    //     Pickup:    composite a = incoming proton;  BRATMS1 = Ax/Aa
+    //   ICHANB=2 (TARGET): RATMAS = AMX/AMB_residual
+    //     Stripping: composite A = target 16O = B+x; BRATMS2 = Ax/AA
+    //     Pickup:    composite A = target 16O = B+x; B=residual 15O; BRATMS2 = Ax/AB (residual!)
     int A_proj_block = isPickup ? Incoming.Projectile.A : Outgoing.Projectile.A;
-    int A_tgt_block  = Incoming.Target.A;
+    int A_tgt_block  = isPickup ? Outgoing.Target.A     // pickup: x in A=B+x, B=residual (15O)
+                                : Incoming.Target.A;      // stripping: x in A=target (16O)
     double bratms1 = (double)Ax / (double)A_proj_block;   // BRATMS(1) = Ax/Ab or Ax/Aa
-    double bratms2 = (double)Ax / (double)A_tgt_block;    // BRATMS(2) = Ax/AA
+    double bratms2 = (double)Ax / (double)A_tgt_block;    // BRATMS(2) = Ax/AA or Ax/AB
 
     // ─── Coordinate mapping coefficients (Fortran GRDSET lines 15875-15900) ─
     // STRIPPING (ISTRIP=+1):
@@ -670,23 +678,25 @@ void DWBA::InelDcFaithful2()
         phiP_tab[i] = std::abs(PrjBS_ch.WaveFunction[i].real());
 
     // Find max values and peak locations (Ptolemy BSSET lines 4717-4735)
+    // Fortran: RVAL = (I-0.5)*BNDSTP (half-step centred) for peak location
+    // We use (i + 0.5)*h to match Fortran's RVAL convention
     double VPMAX = 0.0, RLPMAX = 0.0;
     for (int i = 0; i < N_P; ++i) {
         if (std::abs(vphi_P_tab[i]) > VPMAX) {
             VPMAX = std::abs(vphi_P_tab[i]);
-            RLPMAX = i * h_P;
+            RLPMAX = (i + 0.5) * h_P;  // Fortran: RVAL = (I-0.5)*h (1-based I → (i+0.5)*h)
         }
     }
     // Peak of pure phi_P (for flat-top in ITYPE=3,4)
     double VPPMAX = 0.0, RLPPMAX = 0.0;
     for (int i = 0; i < N_P; ++i) {
-        if (phiP_tab[i] > VPPMAX) { VPPMAX = phiP_tab[i]; RLPPMAX = i * h_P; }
+        if (phiP_tab[i] > VPPMAX) { VPPMAX = phiP_tab[i]; RLPPMAX = (i + 0.5) * h_P; }
     }
     double VTMAX = 0.0, RLTMAX = 0.0;
     for (int i = 0; i < N_T; ++i) {
         if (std::abs(phi_T_tab[i]) > VTMAX) {
             VTMAX = std::abs(phi_T_tab[i]);
-            RLTMAX = i * h_T;
+            RLTMAX = (i + 0.5) * h_T;  // Fortran: RVAL = (I-0.5)*h (1-based I → (i+0.5)*h)
         }
     }
 
