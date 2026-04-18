@@ -1089,7 +1089,6 @@ void DWBA::InelDcFaithful2()
                     if (std::abs(FIFO) > WVWMAX) {
                         WVWMAX = std::abs(FIFO);
                         UMAX_wv = U;
-
                     }
                 }
             }
