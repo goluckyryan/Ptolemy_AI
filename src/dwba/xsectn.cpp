@@ -308,12 +308,15 @@ void DWBA::XSectn() {
     }
   }
 
-  // Convert S_acc to SMAG/SPHASE and print for comparison
+  // Convert S_acc to SMAG/SPHASE
   for (int k = 0; k < NSPL; k++) {
     for (int idx = 0; idx < NUMLIS; idx++) {
       double re = S_acc[k][idx].real(), im = S_acc[k][idx].imag();
       SMAG  [k][idx] = std::sqrt(re*re + im*im);
       SPHASE[k][idx] = std::atan2(im, re);
+      int Li = LMIN_dc + idx;
+      int Lo = Li + JTOCS[k].LDEL;
+      int LX = JTOCS[k].LX;
 
     }
   }
