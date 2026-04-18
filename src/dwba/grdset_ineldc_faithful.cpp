@@ -784,7 +784,56 @@ void DWBA::InelDcFaithful2()
     bs_scan.alphap  = bs.alphap;
     bs_scan.alphat  = bs.alphat;
     bs_scan.s1 = S1; bs_scan.t1 = T1; bs_scan.s2 = S2; bs_scan.t2 = T2;
-    // nuconl params not needed for grid-sizing (ITYPE=3,4 only use vphiP/phiT/chi)
+    // bs_scan: grid-sizing only — keep jpot EMPTY so FACTOR is NOT applied for scan calls.
+    // bs_phi: phi-loop (GRDSET pass-1/pass-2) — uses WS vphi + WS jpot + NUCONL FACTOR.
+    BSProdTables bs_phi;
+    bs_phi.vphiP  = vphi_P_WS_tab;
+    bs_phi.phiP   = bs.phiP;
+    bs_phi.stpP   = bs.stpP;
+    bs_phi.nP     = bs.nP;
+    bs_phi.bndmxP = bs.bndmxP;
+    bs_phi.phiT   = bs.phiT;
+    bs_phi.stpT   = bs.stpT;
+    bs_phi.nT     = bs.nT;
+    bs_phi.bndmxT = bs.bndmxT;
+    bs_phi.vpmax  = VPMAX;
+    bs_phi.vppmax = bs.vppmax;
+    bs_phi.vtmax  = bs.vtmax;
+    bs_phi.rlpmax = RLPMAX;
+    bs_phi.rlppmax= bs.rlppmax;
+    bs_phi.rltmax = bs.rltmax;
+    bs_phi.alphap = bs.alphap;
+    bs_phi.alphat = bs.alphat;
+    bs_phi.s1 = S1; bs_phi.t1 = T1; bs_phi.s2 = S2; bs_phi.t2 = T2;
+    bs_phi.nuconl_IVRTEX    = bs.nuconl_IVRTEX;
+    bs_phi.nuconl_IOUTSW    = bs.nuconl_IOUTSW;
+    bs_phi.nuconl_VOPT      = bs.nuconl_VOPT;
+    bs_phi.nuconl_AOPT      = bs.nuconl_AOPT;
+    bs_phi.nuconl_RNSCAT    = bs.nuconl_RNSCAT;
+    bs_phi.nuconl_RNCORE    = bs.nuconl_RNCORE;
+    bs_phi.nuconl_VC0_scat  = bs.nuconl_VC0_scat;
+    bs_phi.nuconl_R_scat    = bs.nuconl_R_scat;
+    bs_phi.nuconl_VC0_core  = bs.nuconl_VC0_core;
+    bs_phi.nuconl_R_core    = bs.nuconl_R_core;
+    if (useAV18 && isPickup) {
+        // WS jpot for AV18 pickup (Fortran JPOT = NPOTS(1) = WS potential from BOUND)
+        bs_phi.jpot.resize(N_P, 0.0);
+        bs_phi.jpot_h = h_P;
+        bs_phi.jpot_n = N_P;
+        for (int i = 0; i < N_P; ++i) {
+            double r = i * h_P;
+            double vws = 0.0, vim = 0.0, vso = 0.0, vsoi = 0.0, vcoul = 0.0;
+            if (r > 0.001)
+                EvaluatePotential(r, PrjBS_ch.Pot, vws, vim, vso, vsoi, vcoul,
+                                  PrjBS_ch.Projectile.Z, PrjBS_ch.Target.Z,
+                                  PrjBS_ch.Target.A, PrjBS_ch.Projectile.A);
+            bs_phi.jpot[i] = -vws;  // V_WS negative (attractive) = Fortran JPOT sign
+        }
+    } else {
+        bs_phi.jpot   = bs.jpot;
+        bs_phi.jpot_h = bs.jpot_h;
+        bs_phi.jpot_n = bs.jpot_n;
+    }
 
     // Dump vertex tables for validation
     // Dump vphi_P (V×phi_P) for projectile
@@ -1150,6 +1199,18 @@ void DWBA::InelDcFaithful2()
         double smx  = (ITYPE >= 3) ? SCTMAX : 0.0;
         return bsprod_faithful(FPFT, ITYPE, RA, RB, X, sp, nsct, sinv, smx,
                                NAIT_use, RP_, RT_, bs_scan);
+    };
+
+    // phi-loop lambda: uses bs_scan (WS-based vphi) for ITYPE=1,2.
+    // Fortran GRDSET pass-2 uses IVPHI = WS-based vphi (from BSSET) for PVPDX computation.
+    // The AV18 correction enters via NUCONL=3 FACTOR = 1 + DELV/VEFF inside BSPROD.
+    // Using AV18 vphi directly (original bs) was the root cause of the -6.65x SMHVL error.
+    // Note: for ITYPE=1,2 (no chi), the scat/nsct/sinv/smx args are unused.
+    auto bsp_phi = [&](int ITYPE, double RA, double RB, double X,
+                       double& FPFT, double& RP_, double& RT_,
+                       int NAIT_use = 1) -> bool {
+        return bsprod_faithful(FPFT, ITYPE, RA, RB, X, nullptr, 0, 0.0, 0.0,
+                               NAIT_use, RP_, RT_, bs_phi);
     };
 
     // ─── GRDSET Step 1: Find WVWMAX (Fortran lines 15920-15955) ─────────────
@@ -1973,6 +2034,8 @@ void DWBA::InelDcFaithful2()
                 if (X < -1.0) X = -1.0;
                 double FIFO, RP_p, RT_p;
                 // IBSTYP=2 → ITYPE=2: FP×FT flat-top, NO chi
+                // REVERTED: WS phi gives 2x error due to FACTOR overcorrection
+                // Using AV18 vphi directly (0.960 mean DCS) pending further investigation
                 bool ok = bsp_ISCTMN(2, RI, RO, X, FIFO, RP_p, RT_p, 2);
                 double afifo = ok ? std::fabs(FIFO) : 0.0;
                 if (II == 1) { WOW_phi = afifo; continue; }
@@ -2035,6 +2098,8 @@ void DWBA::InelDcFaithful2()
 
                 double FIFO, RP_b, RT_b;
                 // Fortran pass-2: NNAIT=NAITKN=4 (5-pt Lagrange)
+                // REVERTED: WS phi gives 2x error due to FACTOR overcorrection
+                // Using AV18 vphi directly (0.960 mean DCS) pending further investigation
                 bool ok = bsp_ISCTMN(1, RI, RO, X, FIFO, RP_b, RT_b, 4);
                 float pvpdx = 0.0f;
                 float phit_stored = 0.0f, phip_stored = 0.0f;
