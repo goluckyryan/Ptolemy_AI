@@ -1203,8 +1203,8 @@ void DWBA::InelDcFaithful2()
                     double RB = U - 0.5*VVAL;
                     if (RA <= 0.0 || RB <= 0.0) continue;
                     double FIFO, RP_, RT_;
-                    // Fortran line 18603: BSPROD(ITYPE=3, ..., ISCTMN, ...) — SUMMAX scan uses ISCTMN chi
-                    bool ok = bsp_ISCTMN(3, RA, RB, XS[ix], FIFO, RP_, RT_);
+                    // Fortran DO 350 (line 18689): BSPROD(ITYPE=3, ..., ISCTCR, ...) — SUMMAX+SUMMID scan uses ISCTCR chi
+                    bool ok = bsp_ISCTCR(3, RA, RB, XS[ix], FIFO, RP_, RT_);
                     if (!ok) continue;
                     // Fortran: RP, RT updated on every successful BSPROD call
                     last_RP = RP_; last_RT = RT_;
