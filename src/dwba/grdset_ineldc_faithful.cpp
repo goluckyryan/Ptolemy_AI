@@ -1818,6 +1818,8 @@ void DWBA::InelDcFaithful2()
                 double RO = U - 0.5*VVAL*SYNE_h;
                 RIH_tab[IPLUNK] = RI;
                 ROH_tab[IPLUNK] = RO;
+                if (IPLUNK <= 3 || (IU<=3 && IV==1)) fprintf(stderr, "FILL: IU=%d IV=%d SYNE=%.0f IPLUNK_iv=%d IPLUNK=%d U=%.4f RI=%.4f RO=%.4f\n",
+                    IU, IV, SYNE_h, IPLUNK_iv, IPLUNK, U, RI, RO);
                 // RIOEX = exp(ALPHAP*RP + ALPHAT*RT)
                 // RP = sqrt(1 + (S1*RI+T1*RO)^2), RT = sqrt(1 + (S2*RI+T2*RO)^2)
                 double RP_h = std::sqrt(1.0 + std::pow(S1*RI + T1*RO, 2));
@@ -2179,8 +2181,19 @@ void DWBA::InelDcFaithful2()
                     std::vector<float> LHSM1(IHMAX+1, 0.0f);  // 1-indexed, SALLOC in Fortran
 
                     const auto& phi_pts = phi_table[IPLUNK_H];
+#ifdef DUMP_SMHVL
+                    if (LI==0 && IV==1 && IU==1 && !phi_pts.empty())
+                        fprintf(stderr, "phi_table[%d] npts=%d PVPDX[0]=%.4e RI=%.4f RO=%.4f\n",
+                                IPLUNK_H, (int)phi_pts.size(), phi_pts[0].PVPDX, RI, RO);
+#endif
                     int Npts = (int)phi_pts.size();  // 0 if IEND==1 (skipped)
-
+#ifdef DUMP_SMHVL
+                    if (LI==0 && IV==1 && IU==1) {
+                        double pvsum=0; for(int k=0;k<Npts;k++) pvsum+=std::abs(phi_pts[k].PVPDX);
+                        fprintf(stderr,"PHI_LOOP IPLUNK=%d npts=%d sum_|pvpdx|=%.4e\n",IPLUNK_H,Npts,pvsum);
+                        for(int k=0;k<Npts;k++) fprintf(stderr," pvpdx[%d]=%.4e phi=%.3f\n",k,phi_pts[k].PVPDX,(float)phi_pts[k].PHI);
+                    }
+#endif
                     for (int kphi = 0; kphi < Npts; ++kphi) {
                         double PHI   = (double)phi_pts[kphi].PHI;
                         double PHIP  = (double)phi_pts[kphi].PHIP;
@@ -2214,8 +2227,8 @@ void DWBA::InelDcFaithful2()
 #ifdef DUMP_SMHVL
                         // Dump first 3 grid points for Li=0 comparison with Fortran FTN_SMHVL
                         if (LI == 0 && IU <= 3 && IH == 1)
-                            fprintf(stderr, "CPP_SMHVL Li=%d IV=%d IH=%d IU=%d smhvl=%.6e rioex=%.6e RI=%.4f RO=%.4f\n",
-                                    LI, IV, IH, IU, SMHVL[IH-1][IU], RIOEX, RI, RO);
+                            fprintf(stderr, "CPP_SMHVL Li=%d IV=%d IH=%d IU=%d smhvl=%.6e rioex=%.6e lhint=%.6e RI=%.4f RO=%.4f\n",
+                                    LI, IV, IH, IU, SMHVL[IH-1][IU], RIOEX, LHINT[IH], RI, RO);
 #endif
                     }
 
