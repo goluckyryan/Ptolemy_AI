@@ -928,15 +928,11 @@ void DWBA::InelDcFaithful2()
     // interpolating the oscillating scattering wavefunction. This prevents
     // oscillation artifacts in the SUMMAX scan at large R.
     //
-    // Algorithm: RMAX = max(ABS(SctAsy), turning_point(LMAX)); snap to grid
-    double SCTASY_base = std::abs(SctAsySet);  // from preset (DPSB: 20 fm)
-    double RMAX_scat = SCTASY_base;
-    int LMAX_eff_scat = (LMAX_kw >= 0) ? LMAX_kw : 40;
-    if (SctAsySet < 0) {  // negative = allow L-dependent turning-point extension
-        double eta = Incoming.eta;
-        double tp = (eta + std::sqrt(eta*eta + (double)LMAX_eff_scat*(LMAX_eff_scat+1))) / Incoming.k;
-        RMAX_scat = std::max(RMAX_scat, tp);
-    }
+    // Algorithm: use ABS(SctAsy) directly for transfer reactions
+    // (Fortran GRDSET uses ASYMPS(1) = scattering asymptopia for chi tables)
+    // No L-dependent extension for transfer — that's only for inelastic/elastic
+    double SCTASY_base = std::abs(SctAsySet);  // from preset (alpha3: 24 fm, dpsb: 20 fm)
+    double RMAX_scat = SCTASY_base;  // Use preset value directly, no L-adjustment
     double h_scat = Incoming.StepSize;
     int NSTEP_scat = static_cast<int>(RMAX_scat / h_scat + 0.5);
     RMAX_scat = NSTEP_scat * h_scat;
@@ -957,6 +953,7 @@ void DWBA::InelDcFaithful2()
             // Set MaxR to the scattering asymptopia (NOT user's bound state asymptopia)
             // Fortran: scan chi uses NSTPSS(1)+1 points, where NSTPSS(1) = ASYMPS(1)/h
             Incoming.MaxR = SCTMAX_scan;
+            Incoming.NSteps = static_cast<int>(Incoming.MaxR / Incoming.StepSize + 0.5);
         }
         WavElj(Incoming, L, JPI);
         if (no_SO) {
@@ -965,6 +962,7 @@ void DWBA::InelDcFaithful2()
                 Incoming.V_so_imag = saved_Vso_im;
             }
             Incoming.MaxR = saved_MaxR;
+            Incoming.NSteps = static_cast<int>(Incoming.MaxR / Incoming.StepSize + 0.5);
         }
         double h = Incoming.StepSize;
         int n = (int)Incoming.WaveFunction.size();
@@ -979,8 +977,8 @@ void DWBA::InelDcFaithful2()
             if (update_rofmax && psi > PSIMX) { PSIMX = psi; ROFMAX = r; }
             rpsi[i] = r * psi;
         }
-        // Debug: print rpsi at key points
-                        return rpsi;
+
+        return rpsi;
     };
 
     // Fortran: ROFMAX is set from BOTH chi builds (II=1 and II=2).
