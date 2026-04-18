@@ -582,10 +582,18 @@ void DWBA::InelDcFaithful2()
     PrjBS_ch.MaxR = (AsymptopiaSet > 0) ? AsymptopiaSet : 30.0;
     WavSet(PrjBS_ch);
     // Load deuteron AV18 wavefunction if available
+    // For stripping (d,p): incoming projectile is deuteron (A=2)
+    // For pickup   (p,d): outgoing projectile is deuteron (A=2)
+    // Both use AV18 for the projectile bound state (n in proton)
     bool reidLoaded = false;
-    if (Incoming.Projectile.A == 2 && Incoming.Projectile.Z == 1 && ProjectileBS.l == 0) {
+    bool needAV18 = (ProjectileBS.l == 0) &&
+                    ((Incoming.Projectile.A == 2 && Incoming.Projectile.Z == 1) ||  // stripping
+                     (Outgoing.Projectile.A == 2 && Outgoing.Projectile.Z == 1));   // pickup
+    if (needAV18) {
         reidLoaded = LoadDeuteronWavefunction(PrjBS_ch,
             "/home/node/working/ptolemy_2019/Cpp_AI/data", "av18-phi-v");
+        fprintf(stderr, "[AV18] Loaded for projectile BS (l=0, %s)\n",
+                isPickup ? "pickup" : "stripping");
     }
     if (!reidLoaded) {
         CalculateBoundState(PrjBS_ch, ProjectileBS.n, ProjectileBS.l,
@@ -2086,6 +2094,7 @@ void DWBA::InelDcFaithful2()
                     // ALLOC(LSMHVL + IU + NPSUM*(IH-1)) = LHINT[IH] * RIOEX[IPLUNK_H]
                     for (int IH = 1; IH <= IHMAX; ++IH)
                         SMHVL[IH-1][IU] = LHINT[IH] * RIOEX;
+
 
 
 
