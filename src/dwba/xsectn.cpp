@@ -72,7 +72,7 @@ void DWBA::XSectn() {
   };
   std::vector<KoffsEntry> JTOCS;  // index 0-based (Fortran 1-based)
 
-  // Build JTOCS
+    // Build JTOCS (faithful to Fortran SETSPT: loop JP from JPBASE to JPMX)
   for (int JT = JTBASE; JT <= JTMX; JT += 2) {
   for (int JP = JPBASE; JP <= JPMX; JP += 2) {
     int LXmn = std::abs(JT - JP) / 2;
@@ -308,16 +308,34 @@ void DWBA::XSectn() {
     }
   }
 
+#ifdef INJECT_FTN_SMAT_PD
+  // Inject Fortran S-matrix into S_acc to test BETCAL/AMPCAL/DCS pipeline
+  #include "/tmp/ftn_smat_pd.h"
+  for (int k = 0; k < NSPL; k++)
+    for (int idx = 0; idx < NUMLIS; idx++)
+      S_acc[k][idx] = {0.0, 0.0};
+  for (int fi = 0; fi < N_FTN_SMAT_PD; fi++) {
+    int Li_f = FTN_SMAT_PD[fi].Li, Lo_f = FTN_SMAT_PD[fi].Lo, Lx_f = FTN_SMAT_PD[fi].Lx;
+    int LDEL_f = Lo_f - Li_f;
+    int Li_idx = Li_f - LMIN_dc;
+    if (Li_idx < 0 || Li_idx >= NUMLIS) continue;
+    // Fortran SFROMI: for no-SO, each (Li,Lo) maps to JP = JPI - 2*Li = JSPS1
+    // Only inject into KOFFS with JP = JSPS1 (the single JP channel per Li for no-SO)
+    int JP_sfromi = JA;  // = JSPS1 = 2*j_incoming_proj
+    for (int k = 0; k < NSPL; k++) {
+      if (JTOCS[k].LDEL == LDEL_f && JTOCS[k].LX == Lx_f && JTOCS[k].JP == JP_sfromi)
+        S_acc[k][Li_idx] = {FTN_SMAT_PD[fi].Re, FTN_SMAT_PD[fi].Im};
+    }
+  }
+  fprintf(stderr, "[INJECT] Fortran S-matrix injected (%d entries)\n", N_FTN_SMAT_PD);
+#endif
+
   // Convert S_acc to SMAG/SPHASE
   for (int k = 0; k < NSPL; k++) {
     for (int idx = 0; idx < NUMLIS; idx++) {
       double re = S_acc[k][idx].real(), im = S_acc[k][idx].imag();
       SMAG  [k][idx] = std::sqrt(re*re + im*im);
       SPHASE[k][idx] = std::atan2(im, re);
-      int Li = LMIN_dc + idx;
-      int Lo = Li + JTOCS[k].LDEL;
-      int LX = JTOCS[k].LX;
-
     }
   }
 
