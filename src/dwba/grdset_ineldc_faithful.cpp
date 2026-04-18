@@ -574,10 +574,12 @@ void DWBA::InelDcFaithful2()
     PrjBS_ch.Projectile.Mass = mx;
     PrjBS_ch.mu   = mu_prj;
     {
-        const int STEPSPER = 8;
+        // Fortran BOUND uses STPSPR from the parameterset (alpha3=25, dpsb=8)
+        // The projectile BS step must match Fortran's BNDSTP(1) used in BSPROD interpolation
+        int STEPSPER_prj = (GrdSTEPSPR > 0) ? (int)GrdSTEPSPR : 8;
         double kappa_P = std::sqrt(2.0 * mu_prj * AMU_MEV * std::abs(ProjectileBS.BindingEnergy)) / HBARC_V;
         double A_pbs   = (ProjectileBS.Pot.A > 0) ? ProjectileBS.Pot.A : 0.5;
-        PrjBS_ch.StepSize = std::min(1.0 / kappa_P, A_pbs) / STEPSPER;
+        PrjBS_ch.StepSize = std::min(1.0 / kappa_P, A_pbs) / STEPSPER_prj;
     }
     PrjBS_ch.MaxR = (AsymptopiaSet > 0) ? AsymptopiaSet : 30.0;
     WavSet(PrjBS_ch);
