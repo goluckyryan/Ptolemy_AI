@@ -702,6 +702,24 @@ void DWBA::InelDcFaithful2()
         vphi_P_WS_tab = vphi_P_tab;
     }
 
+    // Dump vphi_P (AV18) and vphi_P_WS for comparison with Fortran IVPHI
+    {
+        double peak_av18 = 0, peak_ws = 0, r_av18 = 0, r_ws = 0;
+        for (int i = 0; i < N_P; ++i) {
+            double r = i * h_P;
+            if (std::abs(vphi_P_tab[i]) > std::abs(peak_av18)) { peak_av18 = vphi_P_tab[i]; r_av18 = r; }
+            if (std::abs(vphi_P_WS_tab[i]) > std::abs(peak_ws)) { peak_ws = vphi_P_WS_tab[i]; r_ws = r; }
+        }
+        fprintf(stderr, "CPP_VPHI: AV18 peak=%.4f at r=%.4f fm, WS peak=%.4f at r=%.4f fm\n",
+                peak_av18, r_av18, peak_ws, r_ws);
+        fprintf(stderr, "FTN_VPHI: IVPHI peak=27.885 at r~0 fm (WS-based)\n");
+        // Print table: r, vphi_AV18, vphi_WS
+        fprintf(stderr, "CPP_VPHI_TABLE r(fm)  vphi_AV18  vphi_WS\n");
+        for (int i = 0; i < N_P && i * h_P <= 5.0; i += 10)
+            fprintf(stderr, "  r=%.3f  AV18=%.4e  WS=%.4e\n",
+                    i * h_P, vphi_P_tab[i], vphi_P_WS_tab[i]);
+    }
+
     // Build pure phi_P table (no V) — used by BSPROD ITYPE=3,4 (JBDP = pure BS wavefunction)
     std::vector<double> phiP_tab(N_P, 0.0);
     for (int i = 0; i < N_P; ++i)
