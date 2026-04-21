@@ -385,17 +385,16 @@ std::complex<double> ElasticSolver::CoulombAmp(double theta_deg) const {
 }
 
 // Associated Legendre P_l^m(x), m >= 0, Condon-Shortley convention
-// P_l^m = (-1)^m * (1-x^2)^(m/2) * d^m/dx^m P_l(x)
-// Using standard recurrence.
+// P_l^m — standard associated Legendre WITHOUT Condon-Shortley phase.
+// Matches Raphael (assLegendreP.py) convention: no (-1)^m factor.
+// P_m^m = (1-2m) * P_{m-1}^{m-1} * sqrt(1-x^2)  (Raphael recurrence)
 double ElasticSolver::AssocLegendreP(int l, int m, double x) {
     if (m < 0 || m > l) return 0.0;
-    // Start from P_m^m = (-1)^m * (2m-1)!! * (1-x^2)^(m/2)
-    double pmm = 1.0;
-    double sfact = 1.0;
-    double omx2 = (1.0 - x)*(1.0 + x);  // 1-x^2
+    // Start from P_0^0 = 1 and build up using Raphael's recurrence
+    double pmm = 1.0;  // P_0^0
+    double omx2_sqrt = std::sqrt((1.0 - x)*(1.0 + x));  // sqrt(1-x^2)
     for (int i = 1; i <= m; ++i) {
-        pmm  *= -sfact * std::sqrt(omx2);
-        sfact += 2.0;
+        pmm = (1 - 2*i) * pmm * omx2_sqrt;  // P_i^i = (1-2i)*P_{i-1}^{i-1}*sqrt(1-x^2)
     }
     if (l == m) return pmm;
     double pmmp1 = x * (2*m + 1) * pmm;
@@ -504,8 +503,9 @@ std::complex<double> ElasticSolver::NuclearAmp(double v, double v0, double theta
         double sL = CoulPhase_[L];
         std::complex<double> e2s(std::cos(2*sL), std::sin(2*sL));
 
+        // sign = (-1)^(v0-v): use signed dv (matches Raphael convention)
         int dv_int = (int)std::round(v0 - v);
-        double sign = (std::abs(dv_int) % 2 == 0) ? 1.0 : -1.0;
+        double sign = (dv_int % 2 == 0) ? 1.0 : -1.0;  // (-1)^(v0-v), signed
         double fact_ratio = 1.0;
         for (int k = L - m + 1; k <= L + m; ++k) fact_ratio *= k;
         double norm = sign / std::sqrt(fact_ratio);

@@ -571,10 +571,10 @@ void PtolemyParser::ParseParameterSet(const std::string &line, DWBA &dwba) {
 
         if (ParseKeyVal(token, key, val)) {
             if      (key == "LMIN")        dwba.SetLmin((int)val);
-            else if (key == "LMAX")        dwba.SetLmax((int)val);
+            else if (key == "LMAX")        { dwba.SetLmax((int)val); elastic_Lmax_ = (int)val; }
             else if (key == "LSTEP")       {} // default 1, ignore for now
             else if (key == "MAXLEXTRAP")  {} // ignore for now
-            else if (key == "ASYMPTOPIA")  dwba.SetAsymptopia(val);
+            else if (key == "ASYMPTOPIA")  { dwba.SetAsymptopia(val); elastic_asymptopia_ = val; }
             else if (key == "WYNN")        { elastic_wynn_ = (val != 0); }
             else if (key == "PRINT")       {} // ignore for now
         } else {
