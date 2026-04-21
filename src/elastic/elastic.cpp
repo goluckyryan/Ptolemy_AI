@@ -519,11 +519,27 @@ std::complex<double> ElasticSolver::NuclearAmp(double v, double v0, double theta
     return sum / std::complex<double>(0, 2.0 * k_);
 }
 
+// ── Associated Legendre P_L^1(cosθ) = -sinθ * dP_L/d(cosθ) ──────────────────
+// Recursion: P^1_0=0, P^1_1=-sinθ, (L-1)*P^1_L=(2L-1)*cosθ*P^1_{L-1}-L*P^1_{L-2}
+static std::vector<double> PlmAssoc1(double cosT, int Lmax) {
+    double sinT = std::sqrt(std::max(0.0, (1.0-cosT)*(1.0+cosT)));
+    std::vector<double> P1(Lmax+1, 0.0);
+    if (Lmax >= 1) P1[1] = -sinT;
+    for (int L = 2; L <= Lmax; ++L)
+        P1[L] = ((2.0*L-1.0)*cosT*P1[L-1] - (double)L*P1[L-2]) / (double)(L-1);
+    return P1;
+}
+
 double ElasticSolver::DCSUnpolarized(double theta_deg) const {
     if (theta_deg < 0.01) return std::numeric_limits<double>::quiet_NaN();
     std::complex<double> fC = CoulombAmp(theta_deg);
 
-    // Sum |f_C*δ(v,v0) + f_N(v,v0)|² over all (v0,v), divide by (2S+1)
+    // Handbook §2.9 general formula for all spins (Eq. 2.9, §2.9.7 spin-1 case):
+    // dσ/dΩ = (1/(2S+1)) Σ_{ν,ν0} |fc·δ(ν,ν0) + f(ν,ν0)|² × 10
+    // For spin-1: all 9 terms f(1,1), f(1,0), f(1,-1), f(0,1), f(0,0), ...
+    // f(ν,ν0) = (1/2ik) Σ_L √(4π(2L+1)) e^{2iσ_L} g_{νν0}(L)
+    // g_{νν0}(L) = Y_{L,ν0-ν} Σ_J CG(L,0;S,ν0|J,ν0)·CG(L,ν0-ν;S,ν|J,ν0)·S^J_L - δ_{νν0}
+    // This is implemented by NuclearAmp(v,v0,θ) using CG coefficients.
     double total = 0.0;
     int nSpin = (int)(2*S_) + 1;
     for (int iv = 0; iv < nSpin; ++iv) {
