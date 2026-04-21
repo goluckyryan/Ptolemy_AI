@@ -472,16 +472,13 @@ std::complex<double> ElasticSolver::NuclearAmp(double v, double v0, double theta
     int    m      = (int)std::abs(v0 - v);  // |Δm|
 
     std::complex<double> sum(0,0);
-    // Collect partial sums for Wynn epsilon if requested
+    // Wynn epsilon: collect partial sums starting from L=m (first non-zero term).
+    // Only record after each contributing term — skip zero-contribution L<m terms.
     std::vector<std::complex<double>> partial_sums;
-    if (useWynn_) partial_sums.reserve(Lmax_ + 1);
+    if (useWynn_) partial_sums.reserve(Lmax_ - m + 1);
 
     for (int L = 0; L <= Lmax_; ++L) {
-        if (m > L) {
-            // P_L^m = 0, term is zero — still record partial sum for Wynn
-            if (useWynn_) partial_sums.push_back(sum / std::complex<double>(0, 2.0*k_));
-            continue;
-        }
+        if (m > L) continue;  // P_L^m = 0 for m>L, skip entirely (don't pollute Wynn sequence)
 
         // Compute GMatrix element
         std::complex<double> Gmat(0,0);
@@ -491,7 +488,7 @@ std::complex<double> ElasticSolver::NuclearAmp(double v, double v0, double theta
             int nJ = (int)(2*S_) + 1;
             for (int idx = 0; idx < nJ; ++idx) {
                 double J = L - S_ + idx;
-                if (J < 0) continue;
+                if (J < 0) continue;  // skip unphysical channels (J must be non-negative)
                 double cg1 = CG(L, v0 - v, S_, v,  J, v0);
                 double cg2 = CG(L, 0.0,    S_, v0,  J, v0);
                 if (std::isnan(cg1) || std::isnan(cg2)) continue;
@@ -516,7 +513,7 @@ std::complex<double> ElasticSolver::NuclearAmp(double v, double v0, double theta
         if (useWynn_) partial_sums.push_back(sum / std::complex<double>(0, 2.0*k_));
     }
 
-    if (useWynn_ && partial_sums.size() >= 4) {
+    if (useWynn_ && (int)partial_sums.size() >= 6) {
         return WynnEpsilon(partial_sums);
     }
     return sum / std::complex<double>(0, 2.0 * k_);
