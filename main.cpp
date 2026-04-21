@@ -57,11 +57,15 @@ int main(int argc, char* argv[]) {
     loadFortranSmat("/tmp/ftn_hg_smat_unique.txt", dwba);
 #endif
 
-    // Print parsed parameters
-    dwba.PrintParameters();
-
-    // Run the calculation
-    dwba.Calculate();
+    // Route to elastic or DWBA calculation
+    if (parser.IsElastic()) {
+        parser.RunElastic(dwba);
+    } else {
+        // Print parsed parameters
+        dwba.PrintParameters();
+        // Run DWBA calculation
+        dwba.Calculate();
+    }
 
     return 0;
 }
