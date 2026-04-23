@@ -640,25 +640,67 @@ Ptolemy prints:
 
 ## 11. Known Quirks and Bugs
 
-### 11.1 VSO Factor for Deuteron (S=1) — CRITICAL
+### 11.1 VSO Convention — Two Coupled Defects (CRITICAL)
 
-**Ptolemy has a defect in the spin-orbit term for S=1 (deuteron, ³He, triton).**
+Ptolemy has **two** non-standard conventions in the spin-orbit potential. They interact
+and cancel for some projectile spins but not others.
 
-In `WAVELJ`, the L·S coupling constant is:
+#### Defect 1: SDOTL coupling divides by 2S instead of 2
+
+In `WAVELJ` (line ~36090) and `WAVETC` (line ~36770):
 ```fortran
-ALS = (J(J+1) - L(L+1) - S(S+1)) / (2 × JSP)
+SDOTL = [J(J+1) - L(L+1) - S(S+1)] / JSPS     ! JSPS = 2S
 ```
-where `JSP = 2S`. For S=½ (proton): JSP=1, no change. For S=1 (deuteron): JSP=2, **ALS is half the correct value**.
+Correct formula: `ℓ·s = [J(J+1) - L(L+1) - S(S+1)] / 2`
 
-**Consequence:** Ptolemy's spin-orbit force for deuteron is half-strength.
+For S=½: JSPS=1, so SDOTL is **2× the correct value**.
+For S=1: JSPS=2, so SDOTL is **correct** (accidentally).
 
-**Fix for comparison:** When running Ptolemy for (d,d) elastic, multiply your physical VSO by 2:
+#### Defect 2: WOODSX type=2 uses factor 2 instead of 4
+
+In `WOODSX` (line ~38400), the spin-orbit radial form is:
 ```
-$ Physical VSO = 3.557 MeV (An-Cai 2006)
-VSO = 7.114   $ Use 2× in Ptolemy to get correct physics
++2*Vso/r × d/dr[1/(1+exp)]      ← Ptolemy (factor 2)
+```
+The standard Thomas form factor uses factor 4:
+```
++4*Vso/r × d/dr[1/(1+exp)]      ← Standard / our C++
 ```
 
-**Does NOT affect unpolarized DCS:** The unpolarized cross section dσ/dΩ is largely insensitive to VSO for S=1 (spin averaging cancels spin-orbit effects). This matters for analyzing powers and spin observables.
+#### How they combine
+
+Total SO contribution = SDOTL × Radial. The net effect depends on spin:
+
+| Particle | S | SDOTL (Ptl/correct) | Radial (Ptl/correct) | Net | Action |
+|----------|---|-------|--------|---------|--------|
+| Proton | ½ | 2× | ½× | **1× (cancels!)** | Same Vso works |
+| Deuteron | 1 | 1× | ½× | **½×** | Halve C++ Vso (or double Ptolemy) |
+| Triton/³He | ½ | 2× | ½× | **1× (cancels!)** | Same Vso works |
+| Alpha | 0 | — | — | No SO | N/A |
+
+**General rule:** C++/Ptolemy effective SO ratio = **2S**. To match Ptolemy with
+our C++ (which uses correct physics), divide input Vso by 2S.
+
+#### Why proton OMPs work as-is
+
+For protons (S=½), the two defects cancel exactly. Published OMP fits
+(e.g., Chapel-Hill, Koning-Delaroche) were done with Ptolemy, so their
+Vso values are the "correct" physical values — no adjustment needed.
+
+#### Deuteron Vso correction
+
+For deuterons (S=1), Ptolemy's SO is half-strength. OMP fits done with
+Ptolemy (e.g., An-Cai 2006) absorbed this, so their Vso is 2× the
+physical value. When using in our C++:
+```
+C++ Vso = Ptolemy_Vso / (2S) = Ptolemy_Vso / 2
+```
+
+#### Verification (2026-04-23)
+
+- 48Ca(p,p) at 20 MeV: same Vso → **0.08% mean agreement** ✓
+- 48Ca(d,d) at 20 MeV: same Vso → 37% error; halved Vso → **0.08% mean, 0.4% max** ✓
+  (after Wynn epsilon fix — see `EPSILON_ALGORITHM.md` §4)
 
 ### 11.2 Radius Convention Mismatch
 

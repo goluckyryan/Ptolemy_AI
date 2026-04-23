@@ -70,3 +70,8 @@ fortran_smat_hi.h
 *.dat
 *.err
 fort.15
+
+# Reference outputs in test_inputs (keep locally, not tracked)
+test_inputs/*.txt
+test_inputs/*.out
+dwuck4/

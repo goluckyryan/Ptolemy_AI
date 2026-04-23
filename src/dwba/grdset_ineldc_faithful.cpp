@@ -547,7 +547,7 @@ void DWBA::InelDcFaithful2()
     // For stripping (d,p): ma=deuteron, mx=neutron → mu=m_d*m_n/(m_d+m_n) \approx 621 MeV
     // For pickup (p,d): ma=proton, mx=neutron → mu=m_p*m_n/(m_p+m_n) \approx 469 MeV
     // This matches Fortran KAPPA = sqrt(2*AM*|E|)/HBARC where AM=mu_prj
-    double mu_prj = ma * mx / (ma + mx) / AMU_MEV;  // AMU (incoming × transferred)
+    double mu_prj = mb * mx / (mb + mx) / AMU_MEV;  // AMU (ejectile × transferred = constituent masses)
     double mu_tgt = mA * mx / (mA + mx) / AMU_MEV;  // AMU (target × transferred) — unchanged
     double ALPHAP = std::sqrt(2.0 * mu_prj * AMU_MEV * std::abs(ProjectileBS.BindingEnergy)) / HBARC_V;
     double ALPHAT = std::sqrt(2.0 * mu_tgt * AMU_MEV * std::abs(TargetBS.BindingEnergy)) / HBARC_V;
@@ -2285,13 +2285,16 @@ void DWBA::InelDcFaithful2()
 
                         if (PVPDX == 0.0) continue;
 
-
+#ifdef DIAG_CONST_VPHI
+                        // Diagnostic: replace PVPDX with constant=1.0 to isolate A12 error
+                        // PVPDX = sign(PVPDX) * 1.0;  // preserve sign, replace magnitude
+                        PVPDX = 1.0;  // full constant
+#endif
 
                         // Accumulate into LHSM1[IH] += PVPDX * A12(PHIT, PHI)
                         for (int IH = 0; IH < IHMAX; ++IH) {
                             double A12_val = EvalA12(A12_table[IH], PHIT, PHI);
                             LHSM1[IH+1] += (float)(PVPDX * A12_val);
-
                         }
                     }
                     // End DO 489

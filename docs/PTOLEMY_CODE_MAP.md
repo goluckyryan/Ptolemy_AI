@@ -104,7 +104,10 @@ flowchart TD
 **Fortran line:** 578 | **C++:** [`xsectn.cpp`](../src/dwba/xsectn.cpp) | Formats and prints dσ/dΩ vs angle table. Also computes analyzing powers if requested.
 
 ### ELDCS — Elastic Cross Section
-**Fortran line:** 12989 | **C++:** [`elastic.cpp`](../src/elastic/elastic.cpp), [`elastic.h`](../include/elastic.h) | Computes elastic dσ/dΩ from optical model S-matrix (separate from transfer).
+**Fortran line:** 12989 | **C++:** [`elastic.cpp`](../src/elastic/elastic.cpp), [`elastic.h`](../include/elastic.h) | Computes elastic dσ/dΩ from optical model S-matrix (separate from transfer). Includes `WynnEpsilon()` (faithful port of Fortran `EPSLON`, line 13330) for partial-wave series acceleration.
+
+### EPSLON — Epsilon Algorithm
+**Fortran line:** 13330 | **C++:** `WynnEpsilon()` in [`elastic.cpp`](../src/elastic/elastic.cpp) | Wynn’s epsilon algorithm for sequence acceleration of partial-wave sums. Anti-diagonal walker with singular-rule and loss-of-significance handling. Called per amplitude in `NuclearAmp()` when `SetWynn(true)`.
 
 ### Math Utilities
 **C++:** [`math_utils.cpp`](../src/dwba/math_utils.cpp), [`math_utils.h`](../include/math_utils.h) | Clebsch-Gordan, Racah W, 6-J, 9-J symbols, Wigner 3-J.

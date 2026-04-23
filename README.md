@@ -11,8 +11,8 @@ A C++ translation of the Fortran [Ptolemy](https://www.phy.anl.gov/theory/resear
 - Ratio to Rutherford (σ/σ_Ruth)
 - Total reaction cross section
 - S-matrix output (magnitude and phase for each L, J)
-- Validated against Raphael (Python) to **< 0.15%** at all angles
-- Validated against Fortran Ptolemy to **< 1.5%** at forward angles
+- Wynn epsilon acceleration (faithful port of Ptolemy's EPSLON subroutine)
+- Validated against Fortran Ptolemy (32-bit Cleopatra): **0.08% mean** for both (p,p) and (d,d)
 
 ### DWBA Transfer Reactions ✅
 - Single-step (d,p), (d,n), (p,d) transfer reactions
@@ -22,12 +22,11 @@ A C++ translation of the Fortran [Ptolemy](https://www.phy.anl.gov/theory/resear
 - GRDSET/InelDc radial integrals (3D grid)
 - SFROMI transfer S-matrix with 9J coupling
 - XSECTN differential cross sections (CM frame)
-- Validated against Fortran Ptolemy: **0.01% mean DCS error** (206Hg benchmark)
+- Validated against Fortran Ptolemy: **0.26% mean** (206Hg benchmark, 0–180°)
 
 ### Known Limitations
 - Single-step transfers only (no coupled channels, no multi-step)
 - CM frame output only (no lab-frame Jacobian conversion yet)
-- Elastic uses relativistic kinematics (Raphael convention); Fortran uses non-relativistic — causes ~1% forward-angle offset and larger differences at DCS minima
 - No tensor analyzing powers yet (elastic mode)
 
 ## Build
@@ -57,13 +56,17 @@ g++ -O2 -std=c++17 -Iinclude \
   src/dwba/a12.cpp \
   src/dwba/av18_potential.cpp \
   src/dwba/bound.cpp \
+  src/dwba/coulin.cpp \
   src/dwba/dwba.cpp \
   src/dwba/grdset_ineldc_faithful.cpp \
+  src/dwba/ineldc_collective.cpp \
   src/dwba/math_utils.cpp \
   src/dwba/potential_eval.cpp \
   src/dwba/rcwfn.cpp \
   src/dwba/setup.cpp \
   src/dwba/spline.cpp \
+  src/dwba/stubs.cpp \
+  src/dwba/thiele_cf.cpp \
   src/dwba/wavelj.cpp \
   src/dwba/xsectn.cpp \
   src/elastic/elastic.cpp \
@@ -71,7 +74,7 @@ g++ -O2 -std=c++17 -Iinclude \
   src/input/Isotope.cpp \
   src/input/Potentials.cpp \
   src/input/PtolemyParser.cpp \
-  -o ptolemy++ -lm
+  -o ptolemy_cpp -lm
 ```
 
 ### Fortran Reference Binary (32-bit)
@@ -242,15 +245,16 @@ Solves the radial Schrödinger equation with complex optical model potential via
 
 | Benchmark | Metric | Result |
 |-----------|--------|--------|
-| ²⁰⁶Hg(d,p) transfer DCS | Mean error vs Fortran | **0.010%** |
-| ²⁰⁶Hg(d,p) transfer DCS | Max error vs Fortran | **0.028%** |
-| d+⁴⁰Ca elastic S-matrix | Mean error vs Fortran | **0.007%** |
-| d+⁴⁰Ca elastic DCS | Forward angles (θ<40°) | **< 1.5%** vs Fortran |
-| d+⁴⁰Ca elastic DCS | All angles vs Raphael | **< 0.15%** |
-| Elastic σ_R | d+⁴⁰Ca total reaction σ | **0.55%** vs Fortran |
+| ⁴⁸Ca(p,p) elastic DCS | Mean error vs Cleopatra | **0.08%** |
+| ⁴⁸Ca(d,d) elastic DCS | Mean error vs Cleopatra (Vso/2S) | **0.08%** |
+| ²⁰⁶Hg(d,p) transfer DCS | Mean error vs Cleopatra (all angles) | **0.26%** |
+| ²⁰⁶Hg(d,p) transfer DCS | Peak region (30–90°) | **0.01–0.05%** |
 
-### ⚠️ Fortran Ptolemy VSO Convention for S=1
-The original Fortran Ptolemy divides the spin-orbit potential by `2S`. For S=1 projectiles (deuteron), this halves the SO strength. Published OM parameters (e.g., An-Cai 2006) are fitted with this convention, so their VSO values are 2× the physical value. This code uses the same convention for compatibility.
+### Fortran Ptolemy Spin-Orbit Convention
+Ptolemy has two coupled SO conventions (SDOTL /2S + WOODSX factor 2) that cancel for S=½
+but give half-strength SO for S=1 (deuterons). Our C++ uses the correct physics formulas.
+To match Ptolemy: divide input Vso by 2S when passing to the solver.
+See `docs/PTOLEMY_THEORY.md` and `docs/EPSILON_ALGORITHM.md` for details.
 
 ## References
 

@@ -100,6 +100,30 @@ double ElasticSolver::NuclearMass(int A, int Z) const {
 // Kinematics (relativistic, matching Raphael)
 // ============================================================
 void ElasticSolver::CalcKinematics() {
+    static constexpr double AMUMEV_PTL = 931.5016;  // Ptolemy AMUMEV
+    static constexpr double HBARC_PTL  = 197.32858; // Ptolemy HBARC
+    static constexpr double AFINE_PTL  = 137.03604; // Ptolemy AFINE
+    static constexpr double E2_PTL     = HBARC_PTL / AFINE_PTL;
+
+    if (ptolemyMass_) {
+        // Ptolemy convention: A*AMUMEV + mass-excess correction (matching Fortran source line ~32371)
+        // Mass excess (MeV): ME = nuclear_mass - A*u  (from AME; Fortran reads from input AMXGPT)
+        // Electron mass correction: -Z * m_e  (Fortran: -IZ*(EMASS/AMUMEV)*AMUMEV = -IZ*EMASS)
+        // For common cases, use hardcoded AME values (same as NuclearMass table but in AMU)
+        static constexpr double EMASS_PTL = 0.511;  // MeV
+        auto ptolMass = [&](int A, int Z) -> double {
+            // Return mass in AMU = (AME_mass_MeV - Z*EMASS) / AMUMEV_PTL
+            // Use exact nuclear masses from NuclearMass() which already exclude electrons
+            return NuclearMass(A, Z) / AMUMEV_PTL;
+        };
+        double ma_amu = ptolMass(Ap_, Zp_);
+        double mA_amu = ptolMass(At_, Zt_);
+        mu_    = AMUMEV_PTL * ma_amu * mA_amu / (ma_amu + mA_amu);
+        Ecm_   = Elab_ * mA_amu / (ma_amu + mA_amu);   // non-relativistic Ecm
+        k_     = std::sqrt(2.0*mu_*Ecm_) / HBARC_PTL;
+        eta_   = Zp_ * Zt_ * E2_PTL * k_ / (2.0 * Ecm_);
+        f_conv_ = 2.0 * mu_ / (HBARC_PTL * HBARC_PTL);
+    } else {
     double ma = NuclearMass(Ap_, Zp_);
     double mA = NuclearMass(At_, Zt_);
     double E_tot = std::sqrt((ma + mA)*(ma + mA) + 2.0*mA*Elab_);
@@ -108,6 +132,7 @@ void ElasticSolver::CalcKinematics() {
     k_     = std::sqrt(2.0*mu_*Ecm_) / HBARC;
     eta_   = Zp_ * Zt_ * E2 * k_ / (2.0 * Ecm_);
     f_conv_ = 2.0 * mu_ / (HBARC * HBARC);
+    }
 
     // Auto Lmax: largest L where S-matrix differs appreciably from 1
     // Classical turning: rho_turn ≈ eta + sqrt(eta² + L(L+1))
@@ -267,7 +292,8 @@ std::complex<double> ElasticSolver::RunNumerov(
 {
     double k2 = k_*k_, h2_12 = h_*h_/12.0;
     double LL1 = (double)L*(L+1);
-    int n1 = N_ - 4, n2 = N_ - 3;
+    // Matching points: back = N_-4, end = N_ (Fortran: NSTEP+1-NBAKCM, NSTEP+1)
+    int n_back = N_ - 4, n_end = N_;
 
     // Build f(r) array
     // f_re = k² - L(L+1)/r² - f_conv*Vc + f_conv*(Vr + LS*VsoRe)
@@ -300,17 +326,20 @@ std::complex<double> ElasticSolver::RunNumerov(
             for (int j = 0; j <= i+1; ++j) u[j] /= std::abs(u[i+1]);
     }
 
-    // Two-point matching: u = A*G_L + B*F_L → S = (B+iA)/(B-iA)
-    double f1 = FC1[L], g1 = GC1[L], f2 = FC2[L], g2 = GC2[L];
-    std::complex<double> u1 = u[n1], u2 = u[n2];
-    double det = f2*g1 - f1*g2;
-    if (std::abs(det) < 1e-30) return {1.0, 0.0};  // fallback: no interaction
-    std::complex<double> A = (f2*u1 - u2*f1) / det;
-    std::complex<double> B = (u2*g1 - g2*u1) / det;
+    // Two-point Wronskian matching: u = A*G_L + B*F_L
+    // Use Fortran-matching points: back=N_-4, end=N_
+    // FC1/GC1 = F,G at back; FC2/GC2 = F1,G1 at end
+    double fb = FC1[L], gb = GC1[L];  // Coulomb at back (SUMMAX-4h)
+    double fe = FC2[L], ge = GC2[L];  // Coulomb at end  (SUMMAX)
+    std::complex<double> ub = u[n_back], ue = u[n_end];
+    // Solve: ub = A*gb + B*fb,  ue = A*ge + B*fe
+    double det = fe*gb - fb*ge;
+    if (std::abs(det) < 1e-30) return {1.0, 0.0};
+    std::complex<double> A = (fe*ub - ue*fb) / det;
+    std::complex<double> B = (ue*gb - ge*ub) / det;
     using namespace std::complex_literals;
-    std::complex<double> norm = B - 1i*A;  // outgoing Coulomb coefficient (same as Raphael)
+    std::complex<double> norm = B - 1i*A;
     if (wf_out) {
-        // Normalize u so asymptotic form is F_L + S*H^+_L (unit incoming flux)
         *wf_out = u;
         if (std::abs(norm) > 1e-30)
             for (auto& v : *wf_out) v /= norm;
@@ -324,18 +353,33 @@ std::complex<double> ElasticSolver::RunNumerov(
 void ElasticSolver::CalcScatteringMatrix() {
     if (k_ <= 0) CalcKinematics();
 
+    // Auto-extend grid to cover classical turning point for all L (matching Fortran WAVPOT).
+    // Fortran: RMAX = MAX(RMAX, (eta + sqrt(eta^2 + L*(L+1))) / k)
+    {
+        double Rmax = N_ * h_;
+        for (int L = 0; L <= Lmax_; ++L) {
+            double LL1 = (double)L * (L + 1);
+            double rTurn = (eta_ + std::sqrt(eta_*eta_ + LL1)) / k_;
+            if (rTurn > Rmax) Rmax = rTurn;
+        }
+        int Nnew = (int)(Rmax / h_ + 0.5);
+        if (Nnew > N_) N_ = Nnew;
+    }
+
     // Build potential arrays
     std::vector<double> Vr, Wi, Vc, VsoRe, VsoIm;
     BuildPotentialArrays(pots_, hasCoulomb_, rc0_, Ap_, Zp_, Zt_, At_,
                          h_, N_, Vr, Wi, Vc, VsoRe, VsoIm);
 
-    // Precompute Coulomb functions at both matching points (MINL=0 critical!)
-    int n1 = N_ - 4, n2 = N_ - 3;
-    double rho1 = k_ * n1 * h_, rho2 = k_ * n2 * h_;
+    // Matching points: n_back = N_-4 (NSTEP+1-NBAKCM in Fortran, NBAKCM=4)
+    //                  n_end  = N_   (NSTEP+1 in Fortran, 1-indexed)
+    // Fortran SETFG: F,G at R1=SUMMAX-4h (back), F1,G1 at R2=SUMMAX (end)
+    int n_back = N_ - 4, n_end = N_;
+    double rho_back = k_ * n_back * h_, rho_end = k_ * n_end * h_;
     std::vector<double> FC1(Lmax_+2), FCP1(Lmax_+2), GC1(Lmax_+2), GCP1(Lmax_+2);
     std::vector<double> FC2(Lmax_+2), FCP2(Lmax_+2), GC2(Lmax_+2), GCP2(Lmax_+2);
-    Rcwfn(rho1, eta_, 0, Lmax_, FC1, FCP1, GC1, GCP1);
-    Rcwfn(rho2, eta_, 0, Lmax_, FC2, FCP2, GC2, GCP2);
+    Rcwfn(rho_back, eta_, 0, Lmax_, FC1, FCP1, GC1, GCP1);  // F,G at back point
+    Rcwfn(rho_end,  eta_, 0, Lmax_, FC2, FCP2, GC2, GCP2);  // F1,G1 at end point
 
     // Coulomb phases
     CoulPhase_.resize(Lmax_ + 1);
@@ -429,35 +473,208 @@ double ElasticSolver::CG(double j1, double m1, double j2, double m2, double J, d
 std::complex<double> ElasticSolver::WynnEpsilon(
     const std::vector<std::complex<double>>& S)
 {
-    int n = (int)S.size();
-    if (n == 0) return {};
-    if (n == 1) return S[0];
+    // Faithful line-by-line port of Ptolemy's EPSLON subroutine
+    // (source_annotated.f lines 13330-13524).  Uses the same anti-diagonal
+    // walking, singular-rule, and loss-of-significance checks.
+    //
+    // Input:  S[0..N-1] = partial sums of the series.
+    // Output: accelerated estimate of the series limit.
+    //
+    // The Fortran uses 1-based indexing; comments note [F:...] for
+    // the original 1-based index.  C++ uses 0-based throughout.
 
-    const double tiny = 1e-300;
+    int N = (int)S.size();
+    if (N < 5) return N > 0 ? S[N-1] : std::complex<double>(0,0);
 
-    // Build ε-table as a 2D array: table[col][row]
-    // col 0 = partial sums, col -1 (stored as col 0 of aux) = zeros
-    // We maintain three columns at a time: prev-prev, prev, cur
-    std::vector<std::complex<double>> em1(n, {0,0}); // ε_{k-1} (init = 0 for k=0)
-    std::vector<std::complex<double>> e0(S.begin(), S.end()); // ε_0 = partial sums
+    // Approximate absolute value (matches Fortran APXABS)
+    auto apx = [](std::complex<double> z) -> double {
+        return std::abs(z.real()) + std::abs(z.imag());
+    };
 
-    std::complex<double> best = S[n-1];  // fallback: last partial sum
+    const double BIG = 1e38;
+    const double SMLNUM = 1e-300;
+    const double DEPS = 1e-5;
+    const std::complex<double> CBIG(BIG, 0.0);
 
-    for (int k = 1; k <= n - 1; ++k) {
-        int sz = n - k;
-        std::vector<std::complex<double>> e1(sz);
-        for (int i = 0; i < sz; ++i) {
-            std::complex<double> diff = e0[i+1] - e0[i];
-            if (std::abs(diff) < tiny) diff = {tiny, 0.0};
-            e1[i] = em1[i] + 1.0 / diff;
+    // Work on a mutable copy (Fortran overwrites X in-place)
+    std::vector<std::complex<double>> X(S);
+    int n = N;
+    double acc = std::max(1e-8, DEPS * DEPS);  // tighter first pass
+
+    // Outer convergence loop (Fortran label 41)
+    for (;;) {
+        if (n <= 0) return S[N-1];
+        std::complex<double> fin = X[n-1];
+        if (n == 1) return fin;
+
+        // Check convergence
+        double derr = 0;
+        for (int i = 0; i < n; i++)
+            derr = std::max(derr, apx(fin - X[i]));
+        derr /= (apx(fin) + SMLNUM);
+        if (derr <= acc) return fin;
+        acc = DEPS;  // relax for subsequent passes
+        if (n < 6) return fin;
+
+        // --- Initialize anti-diagonal (Fortran label 2) ---
+        bool ISW1 = false, ISW2 = false;
+
+        // W1 = 1/(X[3]-X[2])  [F: 1/(X(4)-X(3))]
+        std::complex<double> W1 = CBIG;
+        { auto d = X[3]-X[2]; if (apx(d)!=0) W1 = 1.0/d; }
+
+        // W5 = 1/(X[1]-X[0])  [F: 1/(X(2)-X(1))]
+        std::complex<double> W5 = CBIG;
+        { auto d = X[1]-X[0]; if (apx(d)!=0) W5 = 1.0/d; }
+
+        // W4 = 1/(X[2]-X[1])  [F: 1/(X(3)-X(2))]
+        std::complex<double> W4, T, W2, W3;
+        { auto d = X[2]-X[1];
+          if (apx(d) == 0) {
+              W4 = CBIG; T = X[1]; W2 = X[2]; W3 = CBIG;
+          } else {
+              W4 = 1.0/d;
+              T = CBIG;
+              { auto dd = W4-W5; if (apx(dd)!=0) T = X[1] + 1.0/dd; }
+              auto diff = W1 - W4;
+              if (apx(diff) == 0) {
+                  W2 = CBIG;
+                  ISW2 = (T.real() != BIG);
+                  W3 = W4;
+              } else {
+                  W2 = X[2] + 1.0/diff;
+                  auto dd = W2 - T;
+                  if (apx(dd) == 0) { W3 = CBIG; }
+                  else              { W3 = W4 + 1.0/dd; }
+              }
+          }
         }
-        // Even columns (k=2,4,...) are Shanks estimates of the series limit
-        if (k % 2 == 0 && sz > 0) best = e1[0];
-        em1 = e0;
-        e0  = e1;
-        if (e0.empty()) break;
+
+        ISW1 = ISW2;
+        ISW2 = false;
+        int IMIN = 3;  // 0-based (Fortran IMIN=4)
+        bool truncated = false;
+
+        // --- Main loop (Fortran label 40: DO I=5,N) ---
+        for (int i = 4; i < n; i++) {
+            int iaus = i - IMIN - 1;  // output index [F: I-IMIN]
+            std::complex<double> W6;
+            W4 = CBIG;
+            W5 = X[i-1];
+            auto dX = X[i] - X[i-1];
+
+            enum Action { STORE_W2, COMPUTE_28, TRUNCATE, RESET_IMIN };
+            Action action = STORE_W2;  // default path
+
+            if (apx(dX) != 0) {
+                W4 = 1.0 / dX;
+                if (W1.real() == BIG) {
+                    // goto 25: W6=BIG, goto 26
+                    W6 = CBIG;
+                    action = STORE_W2;
+                } else {
+                    W6 = W4 - W1;
+                    // Singular rule test
+                    if (apx(W6) <= 1e-12 * apx(W4)) {
+                        ISW2 = true;
+                        if (apx(W6) == 0) {
+                            W5 = CBIG;
+                            W6 = W1;
+                            if (W2.real() != BIG) { action = COMPUTE_28; }
+                            else                  { action = STORE_W2; ISW2 = false; }
+                        } else {
+                            // Fall through to W5 = X[i-1]+1/W6
+                            goto compute_w5;
+                        }
+                    } else {
+                        compute_w5:
+                        W5 = X[i-1] + 1.0 / W6;
+                        // Loss of significance
+                        if (apx(W5) < 1e-10 * apx(X[i-1])) {
+                            if (apx(W5) != 0) { n = iaus; truncated = true; break; }
+                            // W5 == 0: fall through to STORE_W2 path
+                        }
+                        // goto 24
+                        auto dd = W5 - W2;
+                        if (apx(dd) != 0) {
+                            W6 = W1 + 1.0 / dd;
+                            action = COMPUTE_28;
+                        } else {
+                            W6 = CBIG;
+                            action = STORE_W2;
+                            ISW2 = false;
+                        }
+                    }
+                }
+            } else {
+                // dX == 0: goto 24 with W4=BIG, W5=X[i-1]
+                auto dd = W5 - W2;
+                if (apx(dd) != 0) {
+                    W6 = W1 + 1.0 / dd;
+                    action = COMPUTE_28;
+                } else {
+                    W6 = CBIG;
+                    action = STORE_W2;
+                    ISW2 = false;
+                }
+            }
+
+            // Execute chosen action
+            if (action == STORE_W2) {
+                X[iaus] = W2;
+            } else if (action == COMPUTE_28) {
+                if (ISW1) {
+                    // Singular rule (Fortran labels 28→32 or 31)
+                    if (W2.real() == BIG) {
+                        X[iaus] = W5 + T - X[i-2];
+                    } else {
+                        auto denom1 = W2 - W5;
+                        auto denom2 = W2 - T;
+                        auto denom3 = X[i-2] - W2;
+                        // Guard against division by zero in singular rule
+                        if (apx(denom1) == 0 || apx(denom2) == 0 || apx(denom3) == 0) {
+                            X[iaus] = CBIG; IMIN = i;
+                            goto next_iter;
+                        }
+                        auto w7 = W5/denom1 + T/denom2 + X[i-2]/denom3;
+                        if (apx(w7 + 1.0) == 0) {
+                            X[iaus] = CBIG; IMIN = i;
+                            goto next_iter;
+                        }
+                        X[iaus] = w7 * W2 / (1.0 + w7);
+                    }
+                } else {
+                    // Normal rule (Fortran label 33)
+                    auto dd = W6 - W3;
+                    if (apx(dd) == 0) {
+                        X[iaus] = CBIG; IMIN = i;
+                        goto next_iter;
+                    }
+                    X[iaus] = W2 + 1.0 / dd;
+                    // Second loss-of-significance
+                    if (apx(X[iaus]) < 1e-10 * apx(W2)) {
+                        if (apx(X[iaus]) != 0) { n = iaus; truncated = true; break; }
+                    }
+                }
+            }
+
+            // label 37: check for BIG W2 → reset IMIN
+            if (W2.real() == BIG) { X[iaus] = CBIG; IMIN = i; }
+
+            next_iter:
+            W1 = W4;
+            T  = W2;
+            W2 = W5;
+            W3 = W6;
+            ISW1 = ISW2;
+            ISW2 = false;
+        }
+
+        // Fortran: N = N - IMIN (1-based), our IMIN is 0-based
+        if (!truncated)
+            n = n - (IMIN + 1);
+        // Loop back to convergence check (label 41)
     }
-    return best;
 }
 
 

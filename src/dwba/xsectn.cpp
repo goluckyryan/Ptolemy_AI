@@ -13,6 +13,7 @@
 
 #include "dwba.h"
 #include "math_utils.h"
+#include "elastic.h"  // for WynnEpsilon
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -678,10 +679,31 @@ void DWBA::XSectn() {
       int LOMNMX = std::max(LOMN, MX);
 
       std::complex<double> F_amp(0.0, 0.0);
+
+      // Collect per-Lo contributions for Wynn acceleration (Ptolemy LEBACK=15)
+      // CONTR[Lo] = BETAS[k][ILO] * PLM(Lo, MX)
+      std::vector<std::complex<double>> contr_Lo(LOMX+1, {0.0, 0.0});
       for (int Lo = LOMNMX; Lo <= LOMX; Lo++) {
         int ILO = Lo - LOMN;
         double plmval = get_PLM(Lo, MX);
-        F_amp += BETAS[k][ILO] * plmval;
+        contr_Lo[Lo] = BETAS[k][ILO] * plmval;
+        F_amp += contr_Lo[Lo];
+      }
+
+      // Apply Wynn epsilon acceleration (Ptolemy AMPCAL lines 479-486)
+      // Build partial sums backwards from full sum, using last LEBACK terms
+      constexpr int LEBACK = 15;
+      int nterms = (LOMX - LOMNMX) + 1;  // total contributing L terms
+      int N = std::min(nterms - 1, LEBACK - 1);
+      if (N > 5) {
+        int NN = N + 1;
+        std::vector<std::complex<double>> fepslo(NN);
+        fepslo[NN-1] = F_amp;  // full sum
+        for (int i = 1; i <= N; i++) {
+          int Lo_sub = LOMX - (i - 1);  // subtract from end
+          fepslo[NN-1-i] = fepslo[NN-i] - contr_Lo[Lo_sub];
+        }
+        F_amp = ElasticSolver::WynnEpsilon(fepslo);
       }
 
       double FMNEG = (MX == 0) ? 1.0 : 2.0;

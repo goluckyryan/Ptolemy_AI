@@ -201,19 +201,53 @@ The algorithm:
 The `EPSLON` subroutine (line ~15261) implements the complex version of
 Wynn's algorithm with convergence checking at tolerance $10^{-5}$.
 
-## 4. Implications for C++ Ptolemy++
+## 4. C++ Implementation
 
-The current C++ elastic solver (`elastic.cpp`) uses a **direct Legendre sum**
-without epsilon acceleration. This means:
+The C++ `ElasticSolver::WynnEpsilon()` in `elastic.cpp` is a faithful port of
+Ptolemy's `EPSLON` subroutine (source lines 13330–13524).  It is enabled by
+`SetWynn(true)` and applied inside `NuclearAmp()` to the partial-sum sequence
+of each scattering amplitude $f(\nu,\nu_0,\theta)$.
 
-- **Forward angles** ($\theta < 40°$): Good convergence, no acceleration needed.
-  The partial wave sum is dominated by high-$L$ terms that converge rapidly.
-- **Backward angles** ($\theta > 90°$): Poor convergence, large truncation errors.
-  The epsilon algorithm is essential for reliable results without extremely large $L_{\max}$.
+### Algorithm (anti-diagonal walking)
 
-**Recommended implementation:** Add Wynn's epsilon algorithm as a post-processing
-step on the partial wave sum in `DCSUnpolarized()`. The algorithm is simple (~50 lines)
-and requires only O($L_{\max}$) additional storage.
+Unlike a naive 2D epsilon table, the Fortran EPSLON walks the **anti-diagonal**
+of the epsilon table, maintaining only O(1) state variables (W1–W7, T) and
+writing results back into the input array.  Key features:
+
+1. **Singular-rule handling:** When $\varepsilon_k^{(n+1)} \approx \varepsilon_k^{(n)}$
+   (near-zero denominator), an alternative formula is used (Fortran labels 28–32)
+   instead of producing inf/NaN.
+
+2. **Loss-of-significance checks:** If a computed estimate becomes negligible
+   relative to the input sequence ($< 10^{-10}$ relative), the iteration truncates
+   early to avoid amplifying round-off errors.
+
+3. **Outer convergence loop:** After one pass of the epsilon table, the shortened
+   output sequence is tested for convergence (max relative spread $\leq 10^{-5}$).
+   If not converged, the algorithm iterates on the shortened sequence.
+
+4. **Convergence bypass:** If the input sequence already satisfies the tolerance
+   ($\leq 10^{-8}$ on first check, $\leq 10^{-5}$ thereafter), it returns the
+   last partial sum directly without modification.
+
+### Previous bug (fixed 2026-04-23)
+
+The original C++ implementation used a naive approach:
+```cpp
+// OLD (BROKEN): picked e1[0] = ε_k^(0), which uses only the earliest partial sums
+if (k % 2 == 0 && sz > 0) best = e1[0];
+```
+This produced **inf at 180°** and wildly wrong values at all angles (10×–1000× errors)
+for both spin-0 and spin-1 elastic scattering.  The fix was a complete rewrite
+following the Fortran EPSLON logic.
+
+### Validation
+
+| System | Vso | Mean % vs Cleopatra | Max % | Notes |
+|--------|-----|---------------------|-------|-------|
+| 48Ca(p,p) 20 MeV | 7.5 (same) | 0.08% | 0.4% | S=½, no Vso scaling needed |
+| 48Ca(d,d) 20 MeV | 1.779 (half) | 0.08% | 0.4% | S=1, Vso/2S applied |
+| 48Ca(d,d) 20 MeV | 3.557 (full) | 31% | 241% | Without Vso/2S correction |
 
 ## 5. Worked Example
 

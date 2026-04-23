@@ -392,9 +392,9 @@ void DWBA::PrintParameters() {
   int Zx_s = std::abs((int)Incoming.Projectile.Z - (int)Outgoing.Projectile.Z);
   int Ax_s = std::abs(Incoming.Projectile.A - Outgoing.Projectile.A);
   double mx = ptolemy_mass_s(Zx_s, Ax_s);
-  // Fortran BOUND: AMP=incoming(a), AMT=transferred(x) → mu = ma*mx/(ma+mx)
-  // NOT mb*mx/(mb+mx). For (p,d): mu = m_proton*m_neutron/(m_proton+m_neutron) ≈ 469 MeV.
-  double mu_pbs = ma * mx / (ma + mx);
+  // Fortran BOUND: AMP=transferred(x), AMT=ejectile(b) → mu = mx*mb/(mx+mb)
+  // For (d,p): projectile d=p+n, so mu = m_p*m_n/(m_p+m_n) ≈ 469 MeV.
+  double mu_pbs = mb * mx / (mb + mx);
   double kappa_pbs = std::sqrt(2.0 * mu_pbs * ProjectileBS.BindingEnergy) / HBARC_L;
 
   std::cout << "        PROJECTILE BOUND STATE PARAMETERS" << std::endl;

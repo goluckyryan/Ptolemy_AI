@@ -69,7 +69,35 @@ where:
 - $\Lambda(L,s,J) = \frac{1}{2}[J(J+1) - L(L+1) - s(s+1)]$ is the spin-orbit coupling factor
 
 > [!WARNING]
-> **Ptolemy's VSO defect for S=1:** The Fortran code divides the L·S coupling constant by 2S (the doubled spin). For S=1/2 this is harmless (2S=1), but for **S=1 (deuteron, ³He, triton) the spin-orbit force is halved**. The effective coupling becomes $\Lambda/(2S)$ instead of $\Lambda$. Published optical model parameter sets (e.g., An-Cai 2006 for deuterons) are fitted with this defect, so their VSO values are 2× the physical value. When using these parameters in codes without the defect, divide VSO by 2. See [MANUAL.md §11.1](PTOLEMY_MANUAL.md) for the full discussion.
+> **Ptolemy's spin-orbit convention — two coupled defects:**
+>
+> Ptolemy has **two** non-standard conventions in the spin-orbit potential that interact:
+>
+> 1. **SDOTL coupling:** divides by `2S` instead of `2`.
+>    - Fortran: `SDOTL = [J(J+1)-L(L+1)-S(S+1)] / JSPS` where `JSPS = 2S`
+>    - Correct: `ℓ·s = [J(J+1)-L(L+1)-S(S+1)] / 2`
+>    - Appears in WAVELJ (line ~36090), WAVETC (line ~36770), BOUND (line ~3960)
+>
+> 2. **Radial form factor (WOODSX type=2):** uses factor `2` instead of the standard Thomas factor `4`.
+>    - Ptolemy: `+2*Vso/r × d/dr[1/(1+exp)]`
+>    - Standard: `+4*Vso/r × d/dr[1/(1+exp)]` (as used in our C++ `elastic.cpp`)
+>
+> The **total SO contribution** = SDOTL × Radial:
+> | Particle | S | SDOTL (Ptl vs correct) | Radial (Ptl vs correct) | Net Ptolemy SO | Notes |
+> |----------|---|----------------------|------------------------|---------------|-------|
+> | Proton | ½ | 2× too big | 2× too small | **Cancels → correct** | Same Vso works |
+> | Deuteron | 1 | Correct (2S=2) | 2× too small | **½× too small** | Halve C++ Vso |
+> | Triton/³He | ½ | 2× too big | 2× too small | **Cancels → correct** | Same Vso works |
+> | Alpha | 0 | — | — | No SO | N/A |
+>
+> **Practical consequence:** For protons (S=½), the bugs cancel and published OMP fits work as-is.
+> For deuterons (S=1), Ptolemy's SO is effectively half-strength. OMP fits done with Ptolemy
+> (e.g., An-Cai 2006) absorb this — their Vso is 2× the physical value.
+> When using these parameters in our C++ code (correct physics), **divide Vso by 2S**.
+>
+> Verified 2026-04-23: 48Ca(p,p) at 20 MeV agrees to 0.08% with same Vso.
+> 48Ca(d,d) at 20 MeV: 37% error with same Vso → **0.08% mean, 0.4% max** with halved Vso
+> (after fixing the Wynn epsilon implementation — see EPSILON_ALGORITHM.md §6).
 
 **Normalization (boundary condition at large r):**
 

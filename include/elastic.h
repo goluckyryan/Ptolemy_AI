@@ -27,6 +27,7 @@ public:
     void SetGrid(double h = 0.05, int N = 601);
     void SetLmax(int Lmax);   // -1 = auto
     void SetWynn(bool enable) { useWynn_ = enable; }  // Enable Wynn epsilon series acceleration
+    void SetPtolemyMass(bool enable) { ptolemyMass_ = enable; } // Use Ptolemy mass convention (A*931.5016 MeV/u, NR kinematics)
 
     // --- Add potentials (Raphael-compatible interface) ---
     // V is a complex depth in MeV: real = real part, imag = imaginary part
@@ -122,7 +123,8 @@ private:
     bool   hasCoulomb_;
 
     // Options
-    bool   useWynn_ = false;  // Enable Wynn epsilon series acceleration for nuclear amp
+    bool   useWynn_ = false;      // Enable Wynn epsilon series acceleration for nuclear amp
+    bool   ptolemyMass_ = false;  // Use Ptolemy mass convention: A*931.5016 MeV/u, NR Ecm
 
     // S-matrix: Smat_[L] is a vector of 2S+1 entries for J = L-S, ..., L+S
     // For spin-0: 1 entry.  spin-1/2: 2 entries (J=L+1/2, J=L-1/2).  spin-1: 3 entries.
@@ -156,7 +158,11 @@ private:
     std::complex<double> NuclearAmp(double v, double v0, double theta_deg) const;
     // Clebsch-Gordan coefficient (thin wrapper around math_utils)
     static double CG(double j1, double m1, double j2, double m2, double J, double M);
-    // Wynn epsilon algorithm: accelerate convergence of partial sum sequence
-    // Returns best estimate of the limit of the series {S_0, S_1, S_2, ...}
+    // Clebsch-Gordan and Legendre are also used by NuclearAmp
+
+public:
+    // Wynn epsilon algorithm: accelerate convergence of partial sum sequence.
+    // Faithful port of Ptolemy EPSLON.  Used by ElasticSolver::NuclearAmp and
+    // DWBA::XSectn for transfer/inelastic partial-wave sums.
     static std::complex<double> WynnEpsilon(const std::vector<std::complex<double>>& partial_sums);
 };
